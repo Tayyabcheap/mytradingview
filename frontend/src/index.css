@@ -1,0 +1,301 @@
+:root {
+  --bg: #131722;
+  --surface: #131722;
+  --surface-2: #1e222d;
+  --surface-3: #2a2e39;
+  --border: #2a2e39;
+  --text: #d1d4dc;
+  --text-muted: #8b949e;
+  --text-hover: #ffffff;
+  --brand: #2962ff;
+  --brand-hover: #1e53e5;
+  --up: #089981;
+  --down: #f23645;
+  
+  --header-h: 46px;
+  --toolbar-w: 52px;
+  --right-panel-w: 330px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+  overflow: hidden;
+  user-select: none;
+}
+
+/* Custom Sleek Dark Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #0e1116;
+}
+::-webkit-scrollbar-thumb {
+  background: #2a2e39;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #3b4252;
+}
+
+/* Layout Shell */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+}
+
+.top-bar {
+  height: var(--header-h);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 12px;
+}
+
+.main-area {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.left-toolbar {
+  width: var(--toolbar-w);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 8px;
+}
+
+.chart-container {
+  flex: 1;
+  background: var(--bg);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-panel {
+  width: var(--right-panel-w);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+}
+
+/* UI Elements */
+.btn-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  border: none;
+  background: transparent;
+  transition: all 0.2s;
+}
+
+.btn-icon:hover {
+  background: var(--surface-3);
+  color: var(--text-hover);
+}
+
+.btn-icon.active {
+  color: var(--brand);
+}
+
+.top-btn {
+  padding: 5px 10px;
+  border-radius: 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text);
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 13px;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.top-btn:hover {
+  background: var(--surface-3);
+}
+
+.symbol-search {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-hover);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.symbol-search:hover {
+  background: var(--surface-3);
+  color: var(--brand);
+}
+
+/* Right Panel Tabs */
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  flex: 1;
+  padding: 10px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  border-bottom: 2px solid transparent;
+}
+.tab:hover {
+  color: var(--text);
+}
+.tab.active {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+}
+
+.watchlist-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+}
+.watchlist-item:hover {
+  background: var(--surface-2);
+}
+.wl-symbol {
+  font-weight: 600;
+  color: var(--text);
+}
+.wl-price {
+  font-family: monospace;
+}
+
+/* Hide TradingView Watermark as requested */
+#tv-attr-logo,
+.tv-lightweight-charts-watermark,
+a[href*="tradingview.com"] {
+  display: none !important;
+}
+
+/* Modals */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.75);
+  backdrop-filter: blur(3px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10000;
+}
+.modal-content {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 440px;
+  max-width: 90vw;
+  box-shadow: 0 16px 40px rgba(0,0,0,0.8);
+  display: flex;
+  flex-direction: column;
+}
+.modal-header {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-weight: 700;
+  font-size: 15px;
+}
+.modal-body {
+  padding: 16px;
+  max-height: 450px;
+  overflow-y: auto;
+}
+.list-item {
+  padding: 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.list-item:hover {
+  background: var(--surface-3);
+}
+
+.modal-input {
+  width: 100%;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.modal-input:focus {
+  border-color: var(--brand);
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(20px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+
+/* --- Accessibility: visible keyboard focus on every interactive element --- */
+/* Applies only to keyboard focus (:focus-visible), so mouse clicks stay clean. */
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible,
+[role="button"]:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--brand) !important;
+  outline-offset: 2px !important;
+  border-radius: 3px;
+}

@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Strategy{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Strategy</h1>
+<p class="page-sub">
+  What <code class="mono">swing_trading_playbook.pdf</code> specifies, against what the engine
+  is doing right now. This page exists because the two silently diverged once already.
+</p>
+
+<div id="clock-box"></div>
+
+<div class="grid g4" style="margin-bottom:14px">
+  <div class="stat">
+    <span class="stat-k">Engine fingerprint</span>
+    <span class="stat-v mono" id="fp" style="font-size:17px">—</span>
+    <span class="stat-n">Hash of every parameter that changes signal generation</span>
+  </div>
+  <div class="stat">
+    <span class="stat-k">Compliance</span>
+    <span class="stat-v" id="compliance">—</span>
+    <span class="stat-n" id="compliance-note">—</span>
+  </div>
+  <div class="stat">
+    <span class="stat-k">Session state</span>
+    <span class="stat-v" id="sess" style="font-size:17px">—</span>
+    <span class="stat-n" id="sess-note">Playbook §4 discipline</span>
+  </div>
+  <div class="stat">
+    <span class="stat-k">Units</span>
+    <span class="stat-v" id="units" style="font-size:17px">—</span>
+    <span class="stat-n">One definition, used everywhere</span>
+  </div>
+</div>
+
+<section class="card" style="margin-bottom:14px">
+  <div class="card-hd">
+    <svg aria-hidden="true"><use href="#i-strategy"></use></svg>
+    <h2>Core SMC — playbook compliance</h2>
+  </div>
+  <div class="table-scroll">
+    <div class="spec-row head">
+      <div>Rule</div><div>Playbook says</div><div>Engine does</div><div>Status</div>
+    </div>
+    <div id="spec-rows">
+      <div class="spec-row"><div class="spec-cell">Loading…</div></div>
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-hd">
+    <svg aria-hidden="true"><use href="#i-bolt"></use></svg>
+    <h2>Swing Pro — in-house strategy</h2>
+    <span class="spacer"></span>
+    <span class="tag" id="custom-state">—</span>
+  </div>
+  <div class="card-bd">
+    <p class="hint" style="margin:0 0 12px;max-width:74ch">
+      Not from the playbook. Rebuilt around a confluence score: each factor contributes
+      points and the setup is skipped below the threshold, rather than firing whenever any
+      one of four unrelated triggers happened to be true.
+    </p>
+    <div class="grid g3" id="custom-grid"></div>
+  </div>
+</section>
+{% endblock %}

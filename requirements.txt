@@ -1,0 +1,19 @@
+# Core
+flask>=3.0
+pandas>=2.0
+numpy>=1.24
+
+# Windows only — the live bridge and the tray icon
+MetaTrader5>=5.0.45 ; platform_system == "Windows"
+pystray>=0.19 ; platform_system == "Windows"
+Pillow>=10.0 ; platform_system == "Windows"
+pywin32>=306 ; platform_system == "Windows"
+
+# Optional. Without it the browser voice is used instead.
+edge-tts>=6.1
+pandas-ta>=0.3.14
+flask-cors>=4.0.0
+
+# Added: imported by app.py but were missing
+flask-socketio>=5.3
+ta>=0.11

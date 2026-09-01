@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block title %}Trade Desk{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Trade desk</h1>
+<p class="page-sub">
+  Position sizing from your balance, the playbook's lot tiers and the 1% risk rule —
+  then a confirmation step before anything reaches the broker.
+</p>
+
+<div id="gate-banner"></div>
+
+<div class="grid g2">
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-bolt"></use></svg>
+      <h2>Setup</h2>
+      <span class="spacer"></span>
+      <span class="tag" id="setup-src">—</span>
+    </div>
+    <div class="card-bd" id="setup-body">
+      <div class="empty">
+        <svg aria-hidden="true"><use href="#i-empty"></use></svg>
+        <div>No live setup. Enter levels manually below.</div>
+      </div>
+    </div>
+
+    <div class="card-bd" style="border-top:1px solid var(--border)">
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:11px">
+        <div class="field" style="margin:0">
+          <label for="f-dir">Direction</label>
+          <select id="f-dir">
+            <option value="BUY">Buy</option>
+            <option value="SELL">Sell</option>
+          </select>
+        </div>
+        <div class="field" style="margin:0">
+          <label for="f-entry">Entry</label>
+          <input type="number" step="0.001" id="f-entry" class="num" placeholder="4656.900">
+        </div>
+        <div class="field" style="margin:0">
+          <label for="f-sl">Stop loss</label>
+          <input type="number" step="0.001" id="f-sl" class="num" placeholder="4652.400">
+        </div>
+        <div class="field" style="margin:0">
+          <label for="f-tp">Take profit</label>
+          <input type="number" step="0.001" id="f-tp" class="num" placeholder="4663.650">
+        </div>
+      </div>
+      <div class="hint" id="rr-hint" style="margin-top:9px">Enter a stop to see risk and reward.</div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-desk"></use></svg>
+      <h2>Position size</h2>
+    </div>
+    <div class="card-bd">
+
+      <div class="grid" style="grid-template-columns:1fr 1fr;gap:11px">
+        <div class="field" style="margin:0">
+          <label for="f-balance">Account balance</label>
+          <input type="number" step="1" id="f-balance" class="num">
+          <span class="hint" id="balance-src">from MetaTrader 5</span>
+        </div>
+        <div class="field" style="margin:0">
+          <label for="f-risk">Risk per trade</label>
+          <input type="number" step="0.1" min="0.1" max="5" id="f-risk" class="num" value="1.0">
+          <span class="hint">Playbook §4 sets this at 1.0%</span>
+        </div>
+      </div>
+
+      <div class="levels" id="size-out" style="margin-top:6px">
+        <div class="level"><span class="level-k">Lot size</span>
+          <span class="level-v" id="o-lots">—</span>
+          <span class="level-n" id="o-binding">—</span></div>
+        <div class="level"><span class="level-k">If stopped out</span>
+          <span class="level-v" id="o-cost">—</span>
+          <span class="level-n" id="o-costpct">—</span></div>
+        <div class="level"><span class="level-k">Stop distance</span>
+          <span class="level-v" id="o-risk">—</span>
+          <span class="level-n">from entry to stop</span></div>
+        <div class="level"><span class="level-k">Balance tier</span>
+          <span class="level-v" id="o-tier">—</span>
+          <span class="level-n">playbook lot table</span></div>
+      </div>
+
+      <div id="size-warning"></div>
+
+      <div class="field" style="margin-top:14px">
+        <label for="f-lots">Lots to send</label>
+        <input type="number" step="0.01" min="0.01" max="{{ cfg.MAX_LOTS }}" id="f-lots" class="num">
+        <span class="hint">Pre-filled with the suggestion. Change it only deliberately.</span>
+      </div>
+
+      <button class="btn btn-xl btn-block btn-buy" id="btn-exec" disabled>
+        <svg aria-hidden="true"><use href="#i-bolt"></use></svg>
+        <span id="exec-label">Execute</span>
+      </button>
+      <p class="hint" style="text-align:center;margin-top:8px">
+        You will be asked to confirm the exact order before it is sent.
+      </p>
+    </div>
+  </section>
+</div>
+
+<section class="card" style="margin-top:14px">
+  <div class="card-hd">
+    <svg aria-hidden="true"><use href="#i-analytics"></use></svg>
+    <h2>Open positions</h2>
+    <span class="spacer"></span>
+    <button class="btn btn-sm" id="btn-reset-session" title="Clear the session trade count and circuit breaker">
+      Reset session
+    </button>
+  </div>
+  <div class="card-bd" id="pos-body">
+    <div class="empty"><div>No open positions.</div></div>
+  </div>
+</section>
+{% endblock %}

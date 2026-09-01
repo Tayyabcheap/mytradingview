@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}Settings{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Settings</h1>
+<p class="page-sub">Voice, mobile alerts and server control.</p>
+
+<div class="grid g2">
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-volume"></use></svg>
+      <h2>Voice</h2>
+      <span class="spacer"></span>
+      <span class="tag" id="engine-tag">—</span>
+    </div>
+    <div class="card-bd">
+
+      <div class="field">
+        <label for="v-persona">Persona</label>
+        <select id="v-persona">
+          <option value="sultry">Sultry — sexy, naughty, aroused & teasing</option>
+          <option value="confident">Confident — clear and professional</option>
+          <option value="silent">Silent — sounds only, no speech</option>
+        </select>
+      </div>
+
+      <div class="field" id="field-neural-voice">
+        <label for="v-neural-voice">Neural voice (Ultra-Natural AI)</label>
+        <select id="v-neural-voice">
+          <option value="en-US-JennyNeural">Jenny — Intimate, breathy & seductive (Recommended)</option>
+          <option value="en-US-AvaNeural">Ava — Warm, silky & natural</option>
+          <option value="en-US-AvaMultilingualNeural">Ava Multilingual — Expressive & lifelike</option>
+          <option value="en-GB-SoniaNeural">Sonia — Sultry British accent</option>
+          <option value="en-US-AriaNeural">Aria — Dynamic & passionate</option>
+          <option value="en-US-EmmaNeural">Emma — Smooth & playful</option>
+        </select>
+        <span class="hint">Edge-TTS HD neural synthesis. Renders human-grade breathy inflection and tone.</span>
+      </div>
+
+      <div class="field">
+        <label for="v-voice">Browser fallback voice</label>
+        <select id="v-voice"></select>
+        <span class="hint" id="v-voice-hint">
+          Used if offline or when neural synthesis is unavailable.
+        </span>
+      </div>
+
+      <div class="field">
+        <label for="v-rate">Speed — <span class="mono" id="v-rate-val">0.88</span></label>
+        <input type="range" id="v-rate" min="0.5" max="1.3" step="0.01">
+      </div>
+
+      <div class="field">
+        <label for="v-pitch">Pitch — <span class="mono" id="v-pitch-val">0.85</span></label>
+        <input type="range" id="v-pitch" min="0.5" max="1.5" step="0.01">
+      </div>
+
+      <div class="field">
+        <label for="v-event">Preview a line</label>
+        <div style="display:flex;gap:7px">
+          <select id="v-event" style="flex:1">
+            <option value="BUY">Buy signal</option>
+            <option value="SELL">Sell signal</option>
+            <option value="CTC">Move stop to breakeven</option>
+            <option value="TP1">First target hit</option>
+            <option value="TP2">Full target hit</option>
+            <option value="SL">Stopped out</option>
+            <option value="ORDER_PLACED">Order placed</option>
+            <option value="PAUSED">Circuit breaker</option>
+            <option value="ALARM">Alarm triggered</option>
+            <option value="READY">Desk online</option>
+          </select>
+          <button class="btn btn-gold" id="btn-preview">Speak</button>
+        </div>
+        <span class="hint mono" id="v-preview-text" style="margin-top:6px"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-alarm"></use></svg>
+      <h2>Mobile alerts</h2>
+    </div>
+    <div class="card-bd">
+      <p class="hint" style="margin:0 0 13px">
+        Signals and alarms are pushed to Telegram so they reach you away from the desk.
+        The token is stored on this machine only and is never shown back in full.
+      </p>
+      <div class="field">
+        <label for="tg-token">Bot token</label>
+        <input type="password" id="tg-token" placeholder="123456789:ABCdef…" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="tg-chat">Chat ID</label>
+        <input type="text" id="tg-chat" class="num" placeholder="987654321">
+      </div>
+      <label class="switch" style="margin-bottom:14px">
+        <input type="checkbox" id="tg-on">
+        <span class="track"></span>
+        <span class="lbl">Forward alerts to Telegram</span>
+      </label>
+      <div style="display:flex;gap:9px">
+        <button class="btn btn-info" id="btn-tg-test" style="flex:1">Send a test</button>
+        <button class="btn btn-gold" id="btn-tg-save" style="flex:1">Save</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-info"></use></svg>
+      <h2>System</h2>
+    </div>
+    <div class="card-bd" id="health-body">
+      <div class="empty"><div>Checking…</div></div>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-settings"></use></svg>
+      <h2>Server</h2>
+    </div>
+    <div class="card-bd">
+      <div class="banner ok" style="margin-bottom:14px">
+        <svg aria-hidden="true"><use href="#i-check"></use></svg>
+        <div class="banner-body">
+          <div class="banner-title">Bound to this machine only</div>
+          <div class="banner-text">
+            The server listens on 127.0.0.1 and every endpoint that can place or close a
+            trade requires a session token. It previously listened on all interfaces with
+            no authentication at all.
+          </div>
+        </div>
+      </div>
+
+      <div class="banner info" style="margin-bottom:14px">
+        <svg aria-hidden="true"><use href="#i-info"></use></svg>
+        <div class="banner-body">
+          <div class="banner-title">Shutdown stops this app only</div>
+          <div class="banner-text">
+            Restart and shutdown terminate the processes this app started, by PID. They no
+            longer run <code class="mono">Stop-Process -Name python,pythonw -Force</code>,
+            which killed every Python process on the machine.
+          </div>
+        </div>
+      </div>
+
+      <div style="display:flex;gap:9px">
+        <button class="btn btn-info" id="btn-restart" style="flex:1">Restart</button>
+        <button class="btn btn-danger" id="btn-shutdown" style="flex:1">Shut down</button>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

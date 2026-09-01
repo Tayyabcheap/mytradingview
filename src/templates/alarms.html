@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Alarms{% endblock %}
+
+{% block content %}
+<h1 class="page-title">Alarms</h1>
+<p class="page-sub">
+  All eight types work. The previous engine offered these in the dropdown and evaluated
+  only the first one, so an armed PDH-sweep alarm would sit there showing ACTIVE and never fire.
+</p>
+
+<div class="grid" style="grid-template-columns:minmax(300px,380px) 1fr;gap:14px;align-items:start">
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-alarm"></use></svg>
+      <h2>Arm an alarm</h2>
+    </div>
+    <div class="card-bd">
+      <div class="field">
+        <label for="a-type">Condition</label>
+        <select id="a-type"></select>
+        <span class="hint" id="a-type-hint"></span>
+      </div>
+
+      <div class="field" id="wrap-price" hidden>
+        <label for="a-price">Target price</label>
+        <input type="number" step="0.001" id="a-price" class="num" placeholder="4675.000">
+        <span class="hint" id="a-price-hint"></span>
+      </div>
+
+      <div class="field" id="wrap-cond" hidden>
+        <label for="a-cond">Trigger when price</label>
+        <select id="a-cond">
+          <option value="CROSSING">crosses the level in either direction</option>
+          <option value="GREATER_EQUAL">rises to or above it</option>
+          <option value="LESS_EQUAL">falls to or below it</option>
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="a-tone">Tone</label>
+        <div style="display:flex;gap:7px">
+          <select id="a-tone" style="flex:1"></select>
+          <button class="btn" id="btn-tone" type="button">Play</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="a-label">Label</label>
+        <input type="text" id="a-label" placeholder="e.g. London high sweep">
+      </div>
+
+      <label class="switch" style="margin-bottom:14px">
+        <input type="checkbox" id="a-speak" checked>
+        <span class="track"></span>
+        <span class="lbl">Announce it out loud too</span>
+      </label>
+
+      <button class="btn btn-gold btn-block" id="btn-arm">Arm alarm</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <div class="card-hd">
+      <svg aria-hidden="true"><use href="#i-check"></use></svg>
+      <h2>Armed</h2>
+      <span class="spacer"></span>
+      <span class="tag" id="armed-count">0</span>
+    </div>
+    <div class="card-bd" id="armed-list">
+      <div class="empty">
+        <svg aria-hidden="true"><use href="#i-empty"></use></svg>
+        <div>Nothing armed yet.</div>
+      </div>
+    </div>
+  </section>
+</div>
+{% endblock %}

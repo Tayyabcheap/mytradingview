@@ -1,0 +1,66 @@
+# ─── Secrets & credentials (NEVER commit) ──────────────────────────────
+.desk_token
+telegram_config.json
+.env
+.env.*
+*.env
+secrets.json
+credentials.json
+config.local.py
+*.pem
+*.key
+*.p12
+
+# ─── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# ─── Node / frontend build ─────────────────────────────────────────────
+node_modules/
+frontend/node_modules/
+dist/
+frontend/dist/
+build/
+*.local
+.npm/
+
+# ─── Runtime data, databases & logs (personal trading data) ─────────────
+data/
+*.log
+backend.log
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+*.csv
+.voice_cache/
+.codelens/
+
+# ─── Archives, Backups & Scratch ───────────────────────────────────────
+*.zip
+*.tgz
+*.tar.gz
+*.rar
+*.7z
+*.bak
+*.bak*
+*.tmp
+_backup*/
+_to_delete/
+_bt_out.txt
+
+# ─── OS / editor cruft ─────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+

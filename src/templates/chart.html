@@ -1,0 +1,159 @@
+{% extends "base.html" %}
+{% block title %}Chart{% endblock %}
+{% block mainclass %}wide{% endblock %}
+
+{% block content %}
+<div class="chart-layout" id="layout">
+
+  <!-- Left Toolbar for Drawing Tools -->
+  <aside class="left-toolbar" aria-label="Drawing Tools">
+    <button class="tool-btn" data-tool="cursor" aria-pressed="true" title="Cursor">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87a.5.5 0 0 0 .35-.85L5.5 3.21z"></path></svg>
+    </button>
+    <button class="tool-btn" data-tool="trendline" title="Trend Line">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="20" x2="20" y2="4"></line><circle cx="4" cy="20" r="2"></circle><circle cx="20" cy="4" r="2"></circle></svg>
+    </button>
+    <button class="tool-btn" data-tool="ray" title="Horizontal Ray">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="12" x2="20" y2="12"></line><circle cx="4" cy="12" r="2"></circle></svg>
+    </button>
+    <button class="tool-btn" data-tool="fib" title="Fibonacci Retracement">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><line x1="4" y1="6" x2="20" y2="6"></line><line x1="4" y1="12" x2="20" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
+    </button>
+    <button class="tool-btn" data-tool="clear" title="Remove all drawings" style="margin-top: auto">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none"><path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
+    </button>
+  </aside>
+
+  <section class="card chart-card">
+    <div class="chart-toolbar">
+      <div class="tf-group" role="group" aria-label="Timeframe">
+        <button data-tf="1M" aria-pressed="false">1M</button>
+        <button data-tf="3M" aria-pressed="true">3M</button>
+        <button data-tf="5M" aria-pressed="false">5M</button>
+        <button data-tf="15M" aria-pressed="false">15M</button>
+        <button data-tf="1H" aria-pressed="false">1H</button>
+      </div>
+
+      <div class="layer-toggles" role="group" aria-label="Chart layers">
+        <label class="chip-toggle" style="color:var(--gold)" title="Classical support and resistance: clustered swing pivots, scored by touch count">
+          <input type="checkbox" data-layer="SR" checked>
+          <span class="swatch"></span> S/R
+        </label>
+        <label class="chip-toggle" style="color:var(--text-muted)" title="Hide signals the risk layer would have blocked (session cap, circuit breaker)">
+          <input type="checkbox" data-layer="BLOCKED">
+          <span class="swatch"></span> Blocked
+        </label>
+        <label class="chip-toggle" style="color:var(--gold)" title="Swing Core Strategy Signals">
+          <input type="checkbox" data-layer="SWING_CORE" checked>
+          <span class="swatch"></span> Swing
+        </label>
+        <label class="chip-toggle" style="color:var(--violet)" title="Swing Pro Strategy Signals">
+          <input type="checkbox" data-layer="SWING_PRO" checked>
+          <span class="swatch"></span> Custom
+        </label>
+        <label class="chip-toggle" style="color:var(--info)" title="Price Alarms & Levels">
+          <input type="checkbox" data-layer="ALARMS" checked>
+          <span class="swatch"></span> Alarms
+        </label>
+      </div>
+
+      <div style="margin-left:auto;display:flex;gap:6px;align-items:center;position:relative">
+        <!-- Shown for three seconds when a new signal is released, directly
+             above the bar clock. -->
+        <div id="sig-flash" class="sig-flash" hidden
+             style="position:absolute;right:0;top:calc(100% + 9px);z-index:30"
+             role="status" aria-live="assertive"></div>
+        <span class="mono" id="bar-timer" style="font-size:11px;color:var(--text-faint)" title="Time until this bar closes">—</span>
+        <button class="btn btn-sm" id="btn-fit">Fit</button>
+        <button class="btn btn-sm" id="btn-panel" aria-pressed="true">Panel</button>
+      </div>
+    </div>
+
+    <div class="chart-wrap" style="position:relative;">
+      <div id="chart"></div>
+      <div id="zones" aria-hidden="true"></div>
+      <div id="signal-blocks"></div>
+      <!-- SVG overlay for custom drawings synced to price/time scales -->
+      <svg id="drawings-layer" style="position:absolute; inset:0; pointer-events:none; z-index:10; width:100%; height:100%;"></svg>
+    </div>
+  </section>
+
+  <aside class="side" id="side">
+
+    <div class="card" id="signal-card">
+      <div class="card-hd">
+        <svg aria-hidden="true"><use href="#i-bolt"></use></svg>
+        <h2>Current setup</h2>
+        <span class="spacer"></span>
+        <span class="tag" id="sig-time">—</span>
+      </div>
+      <div class="card-bd" id="signal-body">
+        <div class="empty">
+          <svg aria-hidden="true"><use href="#i-empty"></use></svg>
+          <div>Scanning for a setup…</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" id="positions-card" hidden>
+      <div class="card-hd">
+        <svg aria-hidden="true"><use href="#i-desk"></use></svg>
+        <h2>Open positions</h2>
+      </div>
+      <div class="card-bd tight" id="positions-body"></div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd">
+        <svg aria-hidden="true"><use href="#i-analytics"></use></svg>
+        <h2>Confluence</h2>
+        <span class="spacer"></span>
+        <span class="tag" id="confluence-tag">—</span>
+      </div>
+      <div class="card-bd" id="matrix-body">
+        <div class="empty"><div>Waiting for market data…</div></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-hd">
+        <svg aria-hidden="true"><use href="#i-chart"></use></svg>
+        <h2>Signals</h2>
+        <span class="spacer"></span>
+        <span class="tag" id="today-count">0</span>
+      </div>
+
+      <div style="padding:8px 12px;border-bottom:1px solid var(--border);background:var(--surface-2)">
+        <div class="tf-group" role="group" aria-label="Signal history range" style="width:100%">
+          <button data-range="0"   aria-pressed="true"  style="flex:1">Today</button>
+          <button data-range="7"   aria-pressed="false" style="flex:1">7d</button>
+          <button data-range="30"  aria-pressed="false" style="flex:1">1M</button>
+          <button data-range="90"  aria-pressed="false" style="flex:1">3M</button>
+          <button data-range="180" aria-pressed="false" style="flex:1">6M</button>
+        </div>
+        <div class="hint" id="scan-note" style="margin-top:6px;font-size:11px">
+          Swing's session is 00:30–07:30 UTC. Outside it, today shows nothing by design —
+          use a longer range to confirm the engine is firing.
+        </div>
+      </div>
+
+      <div id="scan-progress" hidden style="padding:10px 12px;border-bottom:1px solid var(--border)">
+        <div style="display:flex;gap:8px;font-size:11.5px;margin-bottom:5px">
+          <span id="scan-msg" style="color:var(--text-muted)">Starting…</span>
+          <span class="mono" id="scan-pct" style="margin-left:auto;color:var(--gold)">0%</span>
+        </div>
+        <div style="height:5px;background:var(--surface-3);border-radius:3px;overflow:hidden">
+          <div id="scan-bar" style="height:100%;width:0;background:var(--gold);border-radius:3px;transition:width .3s"></div>
+        </div>
+      </div>
+
+      <div id="scan-summary"></div>
+
+      <div class="card-bd tight" id="today-body">
+        <div class="empty"><div>No setups yet today.</div></div>
+      </div>
+    </div>
+
+  </aside>
+</div>
+{% endblock %}
