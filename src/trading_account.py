@@ -76,8 +76,6 @@ def connect() -> AccountStatus:
 
     cfg = load_config()
     login, password, server = cfg.get("login"), cfg.get("password"), cfg.get("server")
-    if not (login and password and server):
-        return AccountStatus(False, "secrets.local.json is missing login, password or server.")
 
     with _lock:
         if not mt5.initialize():
@@ -85,12 +83,22 @@ def connect() -> AccountStatus:
                 return AccountStatus(False, "Could not attach to the MT5 terminal: %s" % (mt5.last_error(),))
 
         info = mt5.account_info()
-        if info is None or int(info.login) != int(login):
-            if not mt5.login(int(login), password=str(password), server=str(server)):
-                return AccountStatus(False, "Login to %s on %s was refused: %s" % (login, server, mt5.last_error()))
-            info = mt5.account_info()
-            if info is None:
-                return AccountStatus(False, "Logged in but the terminal returned no account info.")
+        if info is not None:
+            # If a specific login was configured in secrets.local.json, ensure it matches
+            if login and int(info.login) != int(login):
+                if not (password and server and mt5.login(int(login), password=str(password), server=str(server))):
+                    return AccountStatus(False, "The terminal is on #%s, but configured for #%s." % (info.login, login))
+            return verify()
+
+        # Terminal not already logged into an account; credentials required
+        if not (login and password and server):
+            return AccountStatus(False, "secrets.local.json is missing login, password or server.")
+
+        if not mt5.login(int(login), password=str(password), server=str(server)):
+            return AccountStatus(False, "Login to %s on %s was refused: %s" % (login, server, mt5.last_error()))
+        info = mt5.account_info()
+        if info is None:
+            return AccountStatus(False, "Logged in but the terminal returned no account info.")
         return verify()
 
 
