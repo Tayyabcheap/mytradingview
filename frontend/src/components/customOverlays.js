@@ -1,6 +1,7 @@
 import { registerOverlay, registerIndicator } from 'klinecharts';
 import { runPineById, getPineResult } from './pineEngine';
 import { computeSignalSeries } from './signalCore';
+import { computeThreeGates } from './threeGates';
 
 // 1. RECTANGLE OVERLAY
 const rectOverlay = {
@@ -1267,7 +1268,7 @@ const ichimokuIndicator = {
 };
 
 // ─── Multi-timeframe ZONE indicators: Support/Resistance & Order Blocks ───────
-const TF_MS = { '5M': 300000, '15M': 900000, '1H': 3600000, '4H': 14400000, '1D': 86400000 };
+const TF_MS = { '1M': 60000, '5M': 300000, '15M': 900000, '30M': 1800000, '1H': 3600000, '4H': 14400000, '1D': 86400000 };
 const SR_DEFAULT = { tfs: ['1H', '4H', '1D'], colors: { '5M': '#26a69a', '15M': '#42a5f5', '1H': '#f7a600', '4H': '#ab47bc', '1D': '#ef5350' }, maxZones: 3, pivot: 3 };
 const OB_DEFAULT = { tfs: ['15M', '1H', '4H'], colors: { '5M': '#26a69a', '15M': '#42a5f5', '1H': '#f7a600', '4H': '#ab47bc', '1D': '#ef5350' }, maxZones: 4, atrLen: 14 };
 
@@ -1306,13 +1307,35 @@ function _srZones(c, pivot, maxPerSide, lastClose) {
   return [...pick(mk(cluster(hs))).map(z => ({ ...z, kind: 'R' })), ...pick(mk(cluster(ls))).map(z => ({ ...z, kind: 'S' }))];
 }
 function _obZones(c, atrLen, maxZones) {
-  const atr = _rma(_tr(c), atrLen), z = [];
-  for (let i = 1; i < c.length - 1; i++) {
+  const atr = _rma(_tr(c), atrLen), n = c.length;
+  let raw = [];
+  // 1) Detect: an opposite-colour candle immediately before a strong impulse that breaks its extreme.
+  for (let i = 1; i < n - 1; i++) {
     const a = atr[i]; if (a == null) continue; const nx = c[i + 1];
-    if (c[i].close < c[i].open && nx.close > nx.open && (nx.close - nx.open) > 1.2 * a && nx.close > c[i].high) z.push({ top: c[i].high, bottom: c[i].low, kind: 'BULL' });
-    if (c[i].close > c[i].open && nx.close < nx.open && (nx.open - nx.close) > 1.2 * a && nx.close < c[i].low) z.push({ top: c[i].high, bottom: c[i].low, kind: 'BEAR' });
+    if (c[i].close < c[i].open && nx.close > nx.open && (nx.close - nx.open) > 1.2 * a && nx.close > c[i].high)
+      raw.push({ top: c[i].high, bottom: c[i].low, kind: 'BULL', idx: i });
+    if (c[i].close > c[i].open && nx.close < nx.open && (nx.open - nx.close) > 1.2 * a && nx.close < c[i].low)
+      raw.push({ top: c[i].high, bottom: c[i].low, kind: 'BEAR', idx: i });
   }
-  return z.slice(-maxZones);
+  // 2) Mitigation: a zone is "spent" once a later candle CLOSES through it. Keep only fresh (unmitigated) zones.
+  raw = raw.filter(z => {
+    for (let j = z.idx + 2; j < n; j++) {
+      if (z.kind === 'BULL' && c[j].close < z.bottom) return false;
+      if (z.kind === 'BEAR' && c[j].close > z.top) return false;
+    }
+    return true;
+  });
+  // 3) Merge overlapping/touching zones of the SAME kind into a single band (kills the stacked-duplicate look).
+  raw.sort((p, q) => p.idx - q.idx);
+  const merged = [];
+  for (const z of raw) {
+    const m = merged.find(w => w.kind === z.kind && z.bottom <= w.top && z.top >= w.bottom);
+    if (m) { m.top = Math.max(m.top, z.top); m.bottom = Math.min(m.bottom, z.bottom); m.idx = Math.max(m.idx, z.idx); }
+    else merged.push({ top: z.top, bottom: z.bottom, kind: z.kind, idx: z.idx });
+  }
+  // 4) Freshest first, capped.
+  merged.sort((p, q) => q.idx - p.idx);
+  return merged.slice(0, maxZones);
 }
 const _zoneCache = new Map();   // mode -> { key, zones }  (avoids recomputing on every intra-bar tick)
 function _computeZones(dataList, cfg, mode) {
@@ -1335,10 +1358,11 @@ function _buildZones(dataList, cfg, mode) {
     if (dataList.length < 20) return out;
     const lastTs = dataList[dataList.length - 1].timestamp || 0;
     const key = [mode, dataList.length, lastTs, (cfg.tfs || []).join(','), cfg.maxZones || 0, cfg.pivot || 0, cfg.atrLen || 0, JSON.stringify(cfg.colors || {})].join('|');
-    const cached = _zoneCache.get(mode);
+    const cacheId = mode + '|' + ((cfg.tfs || []).join(','));
+    const cached = _zoneCache.get(cacheId);
     let zones;
     if (cached && cached.key === key) zones = cached.zones;
-    else { zones = _computeZones(dataList, cfg, mode); _zoneCache.set(mode, { key, zones }); }
+    else { zones = _computeZones(dataList, cfg, mode); _zoneCache.set(cacheId, { key, zones }); }
     if (out.length) out[out.length - 1].__zones = zones;
   } catch (e) { /* never break the chart */ }
   return out;
@@ -1375,19 +1399,104 @@ function _drawZones(ctx, indicator, yAxis) {
 
 const srZonesIndicator = {
   name: 'SR_ZONES', shortName: 'S/R Zones', series: 'price',
-  calcParams: [SR_DEFAULT],
+  calcParams: [],
+  extendData: SR_DEFAULT,
   figures: [{ key: '_z', title: '', type: 'line' }],
   styles: { lines: [{ color: 'transparent', size: 0 }] },
-  calc: (dataList, { calcParams }) => _buildZones(dataList, { ...SR_DEFAULT, ...((calcParams && calcParams[0]) || {}) }, 'SR'),
+  calc: (dataList, ind) => _buildZones(dataList, { ...SR_DEFAULT, ...((ind && ind.extendData) || {}) }, 'SR'),
   draw: ({ ctx, indicator, yAxis }) => _drawZones(ctx, indicator, yAxis)
 };
 const orderBlockIndicator = {
   name: 'ORDER_BLOCKS', shortName: 'Order Blocks', series: 'price',
-  calcParams: [OB_DEFAULT],
+  calcParams: [],
+  extendData: OB_DEFAULT,
   figures: [{ key: '_z', title: '', type: 'line' }],
   styles: { lines: [{ color: 'transparent', size: 0 }] },
-  calc: (dataList, { calcParams }) => _buildZones(dataList, { ...OB_DEFAULT, ...((calcParams && calcParams[0]) || {}) }, 'OB'),
+  calc: (dataList, ind) => _buildZones(dataList, { ...OB_DEFAULT, ...((ind && ind.extendData) || {}) }, 'OB'),
   draw: ({ ctx, indicator, yAxis }) => _drawZones(ctx, indicator, yAxis)
+};
+
+// ─── SECRET STRATEGY: Three-Gate Breakout indicator ──────────────────────────
+const SECRET_GATES_DEFAULT = { lookback: 20, retestBars: 6, atrLen: 14 };
+const secretGatesIndicator = {
+  name: 'SECRET_GATES', shortName: '3-Gate Breakout', series: 'price',
+  calcParams: [],
+  extendData: SECRET_GATES_DEFAULT,
+  figures: [{ key: '_g', title: '', type: 'line' }],
+  styles: { lines: [{ color: 'transparent', size: 0 }] },
+  calc: (dataList, ind) => {
+    const cfg = { ...SECRET_GATES_DEFAULT, ...((ind && ind.extendData) || {}) };
+    const out = dataList.map(() => ({}));
+    try {
+      const res = computeThreeGates(dataList, cfg);
+      if (out.length) out[out.length - 1].__gates = res;
+    } catch (e) { /* never break the chart */ }
+    return out;
+  },
+  draw: ({ ctx, indicator, xAxis, yAxis }) => {
+    try {
+      const result = indicator.result || [];
+      const last = result[result.length - 1];
+      const res = last && last.__gates;
+      if (!res) return true;
+      const W = (ctx.canvas && ctx.canvas.width) || 4000;
+      ctx.save();
+      // pending breakout awaiting retest -> bright dashed level + tag
+      if (res.pending) {
+        const y = yAxis.convertToPixel(res.pending.level);
+        ctx.strokeStyle = '#f7a600'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 3]);
+        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
+        ctx.fillStyle = '#f7a600'; ctx.font = 'bold 10px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
+        ctx.fillText('Gates 1-2 ✓ — awaiting retest', 6, y - 3);
+      }
+      const setups = (res.setups || []).slice(-5);
+      setups.forEach(sgl => {
+        const isBuy = sgl.dir === 1;
+        const accent = isBuy ? '#089981' : '#f23645';
+        const resolved = sgl.outcome === 'TP' || sgl.outcome === 'SL';
+        const alpha = resolved ? 0.55 : 1;
+        const x = xAxis.convertToPixel(sgl.retestIdx);
+        if (x < -60 || x > W + 60) return;
+        const yLevel = yAxis.convertToPixel(sgl.level);
+        const yEntry = yAxis.convertToPixel(sgl.entry);
+        // broken level segment
+        const xb = xAxis.convertToPixel(sgl.breakoutIdx);
+        ctx.globalAlpha = alpha * 0.8;
+        ctx.strokeStyle = accent; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+        ctx.beginPath(); ctx.moveTo(Math.min(xb, x) - 4, yLevel); ctx.lineTo(x + 40, yLevel); ctx.stroke(); ctx.setLineDash([]);
+        // arrow at retest bar
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = accent;
+        const ay = isBuy ? yEntry + 14 : yEntry - 14;
+        ctx.beginPath();
+        if (isBuy) { ctx.moveTo(x, ay - 7); ctx.lineTo(x - 5, ay + 2); ctx.lineTo(x + 5, ay + 2); }
+        else { ctx.moveTo(x, ay + 7); ctx.lineTo(x - 5, ay - 2); ctx.lineTo(x + 5, ay - 2); }
+        ctx.closePath(); ctx.fill();
+        // compact tag
+        const tag = `${isBuy ? 'BUY' : 'SELL'} ${sgl.entry.toFixed(1)}`;
+        const sub = `TP ${sgl.tp1.toFixed(1)} / SL ${sgl.sl.toFixed(1)}`;
+        ctx.font = 'bold 10px Inter, sans-serif';
+        const tw = Math.max(ctx.measureText(tag).width, ctx.measureText(sub).width) + 12;
+        const th = 30;
+        let ty = isBuy ? ay + 8 : ay - 8 - th;
+        let tx = Math.max(2, Math.min(x - tw / 2, W - tw - 2));
+        ctx.fillStyle = 'rgba(19,23,34,0.94)'; ctx.strokeStyle = accent; ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(tx, ty, tw, th, 4); else ctx.rect(tx, ty, tw, th);
+        ctx.fill(); ctx.stroke();
+        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
+        ctx.fillStyle = accent; ctx.fillText(tag, tx + 6, ty + 9);
+        ctx.fillStyle = '#b0b4be'; ctx.font = '9px Inter, sans-serif'; ctx.fillText(sub, tx + 6, ty + 21);
+        if (resolved) {
+          ctx.fillStyle = sgl.outcome === 'TP' ? '#089981' : '#f23645';
+          ctx.textAlign = 'right'; ctx.font = 'bold 9px Inter, sans-serif';
+          ctx.fillText(sgl.outcome === 'TP' ? '✓' : '✕', tx + tw - 5, ty + 9);
+        }
+      });
+      ctx.restore();
+    } catch (e) { try { ctx.restore(); } catch (_) {} }
+    return true;
+  }
 };
 
 // Register all custom overlays and indicators
@@ -1419,6 +1528,7 @@ export function initCustomOverlaysAndIndicators() {
     registerIndicator(ichimokuIndicator);
     registerIndicator(srZonesIndicator);
     registerIndicator(orderBlockIndicator);
+    registerIndicator(secretGatesIndicator);
   } catch (e) {
     console.warn("Overlays registration notice:", e);
   }

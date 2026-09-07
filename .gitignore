@@ -7,6 +7,9 @@ telegram_config.json
 secrets.json
 credentials.json
 config.local.py
+secrets.local.json
+approved_strategy.json
+autotrader_state.json
 *.pem
 *.key
 *.p12
@@ -54,9 +57,17 @@ backend.log
 *.bak
 *.bak*
 *.tmp
+*.prepool
+*.prebook
 _backup*/
 _to_delete/
 _bt_out.txt
+
+# ─── Internal Notes, Handover & Non-Mandatory Artifacts ────────────────
+Claude outputs/
+HANDOVER.md
+README_AUTONOMY.md
+CODE_REVIEW_*.md
 
 # ─── OS / editor cruft ─────────────────────────────────────────────────
 .DS_Store
@@ -64,3 +75,5 @@ Thumbs.db
 .idea/
 .vscode/
 
+
+tools/parity.json

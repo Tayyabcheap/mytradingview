@@ -198,6 +198,7 @@ const KLineChartArea = forwardRef(({
       currentActiveIds.add(ind.instanceId);
 
       let calcParams = ind.calcParams;
+      let extendData;
       if (!calcParams) {
         if (ind.id === 'EMA' || ind.id === 'MA' || ind.id === 'SMA') {
           calcParams = [
@@ -233,8 +234,9 @@ const KLineChartArea = forwardRef(({
           ];
         } else if (ind.id === 'SIGNALS') {
           calcParams = [ind.params?.strategy || 'ALL'];
-        } else if (ind.id === 'SR_ZONES' || ind.id === 'ORDER_BLOCKS') {
-          calcParams = [ind.params || {}];
+        } else if (ind.id === 'SR_ZONES' || ind.id === 'ORDER_BLOCKS' || ind.id === 'SECRET_GATES') {
+          extendData = ind.params || {};
+          calcParams = [];
         }
       }
 
@@ -299,6 +301,7 @@ const KLineChartArea = forwardRef(({
             name: ind.id,
             paneId: targetPaneId,
             calcParams: calcParams,
+            extendData: extendData,
             styles: styles || undefined,
             visible: isVisible
           },
@@ -314,6 +317,7 @@ const KLineChartArea = forwardRef(({
         const overrideObj = {
           name: ind.id,
           calcParams: calcParams,
+          extendData: extendData,
           styles: styles || undefined,
           visible: isVisible
         };

@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  TrendingUp, TrendingDown, DollarSign, Activity, ShieldCheck, 
-  ArrowUpRight, ArrowDownRight, ArrowRight, Zap, BookOpen, CandlestickChart, 
-  RefreshCw, CheckCircle2, Clock, BarChart3, Layers
+import {
+  TrendingUp, TrendingDown, DollarSign, Activity, ShieldCheck,
+  ArrowUpRight, ArrowDownRight, ArrowRight, Zap, BookOpen, CandlestickChart,
+  RefreshCw, CheckCircle2, Clock, BarChart3, Layers,
+  DownloadCloud, AlertTriangle, X, GitCommit
 } from 'lucide-react';
 
 export default function DashboardTab({
@@ -17,6 +18,41 @@ export default function DashboardTab({
   const [signals, setSignals] = useState([]);
   const [selectedMarketCat, setSelectedMarketCat] = useState('ALL');
   const [openPositions, setOpenPositions] = useState([]);
+
+  // ── Self-update (Check for Updates against the GitHub repo) ──
+  const [updOpen, setUpdOpen] = useState(false);
+  const [updLoading, setUpdLoading] = useState(false);   // checking status
+  const [updRunning, setUpdRunning] = useState(false);   // pulling + rebuilding
+  const [updStatus, setUpdStatus] = useState(null);      // /update-status payload
+  const [updResult, setUpdResult] = useState(null);      // { ok, msg } | { error }
+
+  const checkForUpdates = async () => {
+    setUpdOpen(true); setUpdResult(null); setUpdStatus(null); setUpdLoading(true);
+    try {
+      const r = await fetch('/api/app/update-status');
+      setUpdStatus(await r.json());
+    } catch (e) {
+      setUpdStatus({ ok: false, reason: 'Could not reach the local server.' });
+    } finally { setUpdLoading(false); }
+  };
+
+  const runUpdate = async () => {
+    setUpdRunning(true); setUpdResult(null);
+    try {
+      const r = await fetch('/api/app/update', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const d = await r.json();
+      if (!r.ok || d.error) {
+        setUpdResult({ error: d.error || 'Update failed', dirty_files: d.dirty_files, detail: d.detail || d.build_error });
+      } else if (d.no_change) {
+        setUpdResult({ ok: true, msg: 'Already up to date.' });
+      } else {
+        setUpdResult({ ok: true, msg: (d.message || 'Update downloaded.') + ' Restart the app (STOP.bat → START.bat), then hard-refresh (Ctrl+Shift+R) to finish.', build_error: d.build_error });
+        setUpdStatus(s => s ? { ...s, behind: 0, up_to_date: true } : s);
+      }
+    } catch (e) {
+      setUpdResult({ error: e.message });
+    } finally { setUpdRunning(false); }
+  };
 
   // Fetch account stats & open positions
   const fetchDashboardData = async () => {
@@ -90,24 +126,45 @@ export default function DashboardTab({
           </div>
         </div>
 
-        <button
-          onClick={fetchDashboardData}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            background: '#1e222d',
-            border: '1px solid #2a2e39',
-            borderRadius: 6,
-            padding: '8px 14px',
-            color: '#d1d4dc',
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: 'pointer'
-          }}
-        >
-          <RefreshCw size={14} className={loadingStats ? 'animate-spin' : ''} /> Refresh Data
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            onClick={fetchDashboardData}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: '#1e222d',
+              border: '1px solid #2a2e39',
+              borderRadius: 6,
+              padding: '8px 14px',
+              color: '#d1d4dc',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            <RefreshCw size={14} className={loadingStats ? 'animate-spin' : ''} /> Refresh Data
+          </button>
+          <button
+            onClick={checkForUpdates}
+            title="Check your GitHub repo for a newer version of the app"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+              background: '#1e222d',
+              border: '1px solid #2a3550',
+              borderRadius: 6,
+              padding: '8px 14px',
+              color: '#7aa2ff',
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: 'pointer'
+            }}
+          >
+            <DownloadCloud size={14} /> Check for Updates
+          </button>
+        </div>
       </div>
 
       {/* 2. KEY METRICS CARDS */}
@@ -569,6 +626,90 @@ export default function DashboardTab({
           )}
         </div>
       </div>
+
+      {/* ── CHECK-FOR-UPDATES MODAL ── */}
+      {updOpen && (
+        <div onClick={() => !updRunning && setUpdOpen(false)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+          <div onClick={e => e.stopPropagation()} style={{ width: 470, maxWidth: '92vw', background: '#131722', border: '1px solid #2a2e39', borderRadius: 10, padding: '18px 20px', color: '#d1d4dc', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <DownloadCloud size={18} color="#7aa2ff" />
+                <span style={{ fontSize: 15, fontWeight: 700, color: '#fff' }}>App Updates</span>
+              </div>
+              <button onClick={() => !updRunning && setUpdOpen(false)} style={{ background: 'none', border: 'none', color: '#8b949e', cursor: updRunning ? 'not-allowed' : 'pointer' }}><X size={18} /></button>
+            </div>
+
+            {updLoading ? (
+              <div style={{ padding: '18px 0', color: '#8b949e', fontSize: 13 }}>Checking GitHub for updates…</div>
+            ) : !updStatus ? null : !updStatus.ok ? (
+              <div style={{ fontSize: 12.5, color: '#f0a5aa', background: 'rgba(242,54,69,0.1)', border: '1px solid rgba(242,54,69,0.3)', borderRadius: 6, padding: '10px 12px' }}>{updStatus.reason || 'Update check unavailable.'}</div>
+            ) : (
+              <>
+                <div style={{ fontSize: 12, color: '#8b949e', marginBottom: 10, display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                  <GitCommit size={13} /> Installed: <code style={{ color: '#c9d1d9' }}>{updStatus.current?.hash || '—'}</code>
+                  <span style={{ color: '#6e7681' }}>{updStatus.current?.subject ? '· ' + updStatus.current.subject.slice(0, 40) : ''}</span>
+                </div>
+
+                {updStatus.fetch_ok === false && (
+                  <div style={{ fontSize: 12, color: '#ffd27a', background: 'rgba(255,214,0,0.08)', border: '1px solid rgba(255,214,0,0.25)', borderRadius: 6, padding: '9px 11px', marginBottom: 10 }}>
+                    Couldn't reach GitHub (offline, or the SSH key isn't available). Showing local status only.
+                  </div>
+                )}
+
+                {updStatus.up_to_date ? (
+                  <div style={{ fontSize: 13, color: '#57d9a3', display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <CheckCircle2 size={16} /> You're on the latest version.
+                  </div>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 13, color: '#e6e9ef', marginBottom: 10 }}>
+                      <strong style={{ color: '#7aa2ff' }}>{updStatus.behind}</strong> update{updStatus.behind === 1 ? '' : 's'} available on GitHub.
+                      {updStatus.latest?.hash && <span style={{ color: '#8b949e' }}> Latest: <code>{updStatus.latest.hash}</code>{updStatus.latest.subject ? ' · ' + updStatus.latest.subject.slice(0, 40) : ''}</span>}
+                    </div>
+
+                    {updStatus.dirty ? (
+                      <div style={{ fontSize: 12.5, color: '#ffd27a', background: 'rgba(255,214,0,0.08)', border: '1px solid rgba(255,214,0,0.3)', borderRadius: 6, padding: '10px 12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, marginBottom: 4 }}><AlertTriangle size={14} /> Local changes present — update blocked</div>
+                        This folder has {updStatus.dirty_count} uncommitted change{updStatus.dirty_count === 1 ? '' : 's'}. Updating would risk your work, so it's disabled. Commit or discard them first, then check again.
+                        <div style={{ marginTop: 6, maxHeight: 92, overflowY: 'auto', fontFamily: 'monospace', fontSize: 10.5, color: '#b0b4be' }}>
+                          {(updStatus.dirty_files || []).slice(0, 12).map((f, i) => <div key={i}>{f}</div>)}
+                          {updStatus.dirty_count > 12 && <div>…and {updStatus.dirty_count - 12} more</div>}
+                        </div>
+                      </div>
+                    ) : (
+                      <button onClick={runUpdate} disabled={updRunning}
+                        style={{ display: 'flex', alignItems: 'center', gap: 7, background: updRunning ? '#2a3550' : '#2962ff', border: 'none', borderRadius: 6, padding: '10px 16px', color: '#fff', fontSize: 13, fontWeight: 700, cursor: updRunning ? 'wait' : 'pointer' }}>
+                        <DownloadCloud size={15} /> {updRunning ? 'Updating… (pulling + rebuilding)' : 'Update now'}
+                      </button>
+                    )}
+                  </>
+                )}
+
+                {updResult && (
+                  <div style={{ marginTop: 12, fontSize: 12.5, borderRadius: 6, padding: '10px 12px',
+                    background: updResult.error ? 'rgba(242,54,69,0.1)' : 'rgba(8,153,129,0.12)',
+                    border: `1px solid ${updResult.error ? 'rgba(242,54,69,0.35)' : 'rgba(8,153,129,0.35)'}`,
+                    color: updResult.error ? '#f0a5aa' : '#7ee3bd' }}>
+                    {updResult.error ? (
+                      <><strong>Update failed:</strong> {updResult.error}
+                        {updResult.detail && <div style={{ marginTop: 6, fontFamily: 'monospace', fontSize: 10.5, color: '#c9a0a3', whiteSpace: 'pre-wrap', maxHeight: 120, overflowY: 'auto' }}>{updResult.detail}</div>}
+                      </>
+                    ) : (
+                      <><CheckCircle2 size={13} style={{ verticalAlign: 'text-bottom' }} /> {updResult.msg}
+                        {updResult.build_error && <div style={{ marginTop: 6, color: '#ffd27a' }}>Note: the rebuild reported issues — {String(updResult.build_error).slice(0, 160)}</div>}
+                      </>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
+            <div style={{ marginTop: 14, fontSize: 10.5, color: '#6e7681' }}>
+              Updates come from your GitHub repo. Local edits are never overwritten.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

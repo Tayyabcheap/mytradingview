@@ -24,6 +24,7 @@ export default function TradeExecutionPanel({
   const [submitting, setSubmitting] = useState(false);
   const [orderError, setOrderError] = useState(null);
   const [orderSuccess, setOrderSuccess] = useState(null);
+  const [preflight, setPreflight] = useState(null); // {ok, reason,...}
 
   // Confirmation Modals
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -58,6 +59,21 @@ export default function TradeExecutionPanel({
     refreshPositions();
     const interval = setInterval(refreshPositions, 2500);
     return () => clearInterval(interval);
+  }, []);
+
+  // Poll whether MT5 can actually place a trade right now (AlgoTrading on, account tradeable).
+  useEffect(() => {
+    let alive = true;
+    const check = async () => {
+      try {
+        const r = await fetch('/api/order/preflight');
+        const d = await r.json();
+        if (alive) setPreflight(d);
+      } catch (e) { if (alive) setPreflight({ ok: false, reason: 'Cannot reach the local server' }); }
+    };
+    check();
+    const iv = setInterval(check, 5000);
+    return () => { alive = false; clearInterval(iv); };
   }, []);
 
   // Update SL and TP prices automatically when currentPrice or pips change
@@ -110,21 +126,25 @@ export default function TradeExecutionPanel({
     setOrderError(null);
     setOrderSuccess(null);
 
+    const payload = {
+      symbol,
+      type: orderType,
+      volume: lotSize,
+      sl: enableSL ? parseFloat(slPrice) || 0.0 : 0.0,
+      tp: enableTP ? parseFloat(tpPrice) || 0.0 : 0.0,
+      comment: `TWR ${orderType}`
+    };
+    console.log('[TWR] Executing order →', payload);
+
     try {
       const res = await fetch('/api/order/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol,
-          type: orderType,
-          volume: lotSize,
-          sl: enableSL ? parseFloat(slPrice) || 0.0 : 0.0,
-          tp: enableTP ? parseFloat(tpPrice) || 0.0 : 0.0,
-          comment: `TWR ${orderType}`
-        })
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
+      console.log('[TWR] Order response ←', res.status, data);
       if (!res.ok || data.error) {
         throw new Error(data.error || "Order execution failed");
       }
@@ -240,6 +260,25 @@ export default function TradeExecutionPanel({
           }}>
             <AlertTriangle size={14} />
             <span>{orderError}</span>
+          </div>
+        )}
+
+        {/* MT5 TRADE-READINESS WARNING */}
+        {preflight && !preflight.ok && (
+          <div style={{
+            padding: '8px 10px',
+            background: 'rgba(242,54,69,0.12)',
+            border: '1px solid rgba(242,54,69,0.45)',
+            borderRadius: 4,
+            color: '#ff6b76',
+            fontSize: 11.5,
+            marginBottom: 10,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6
+          }}>
+            <ShieldAlert size={14} />
+            <span><strong>Can't trade yet:</strong> {preflight.reason}</span>
           </div>
         )}
 

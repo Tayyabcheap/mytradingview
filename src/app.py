@@ -157,6 +157,35 @@ def get_positions():
             out.append(p_dict)
         return jsonify(out)
 
+@app.route("/api/order/preflight", methods=["GET"])
+def order_preflight():
+    """Read-only check of whether a trade could actually be placed right now.
+    Used by the trade panel to warn the user BEFORE they try to execute."""
+    if not init_mt5():
+        return jsonify({"ok": False, "connected": False, "reason": "MT5 not connected"}), 200
+    with mt5_lock:
+        t = mt5.terminal_info()
+        a = mt5.account_info()
+        terminal_algo = bool(t.trade_allowed) if t is not None else False
+        account_trade = bool(a.trade_allowed) if a is not None else False
+        connected = bool(t.connected) if t is not None else False
+        ok = connected and terminal_algo and account_trade
+        reason = "OK"
+        if not connected:
+            reason = "MT5 terminal not connected to broker"
+        elif not terminal_algo:
+            reason = "AlgoTrading is OFF in MT5 (click the Algo Trading button)"
+        elif not account_trade:
+            reason = "Account is not allowed to trade (investor login or market closed)"
+        return jsonify({
+            "ok": ok,
+            "connected": connected,
+            "terminal_algo_trading": terminal_algo,
+            "account_trade_allowed": account_trade,
+            "reason": reason,
+        }), 200
+
+
 @app.route("/api/order/send", methods=["POST"])
 def send_order():
     if _blocked_cross_origin():
@@ -165,6 +194,7 @@ def send_order():
         return jsonify({"error": "MT5 not connected"}), 500
 
     data = request.get_json(force=True) or {}
+    print(f"[ORDER] >>> /api/order/send received: {data}", flush=True)
     symbol = data.get("symbol", "").strip()
     order_type_str = (data.get("type") or "BUY").upper()
     try:
@@ -187,6 +217,16 @@ def send_order():
         }), 400
 
     with mt5_lock:
+        # Pre-flight: MT5 must have AlgoTrading enabled or order_send silently fails.
+        t_info = mt5.terminal_info()
+        if t_info is not None and not t_info.trade_allowed:
+            print("[ORDER] !!! blocked: AlgoTrading disabled in the MT5 terminal", flush=True)
+            return jsonify({"error": "AlgoTrading is DISABLED in MetaTrader 5. Click the 'Algo Trading' button in the MT5 toolbar (it must turn green), then try again."}), 409
+        a_info = mt5.account_info()
+        if a_info is not None and not a_info.trade_allowed:
+            print("[ORDER] !!! blocked: trading not allowed on this account", flush=True)
+            return jsonify({"error": "Trading is not allowed on this MT5 account (it may be read-only / investor login, or the market is closed)."}), 409
+
         if not mt5.symbol_select(symbol, True):
             return jsonify({"error": f"Symbol not found: {symbol}"}), 404
 
@@ -214,16 +254,21 @@ def send_order():
             "type_filling": filling,
         }
 
+        print(f"[ORDER] sending to MT5: {req}", flush=True)
         res = mt5.order_send(req)
         if res is None:
-            return jsonify({"error": "MT5 order_send returned None"}), 500
+            le = mt5.last_error()
+            print(f"[ORDER] !!! order_send returned None. last_error={le}", flush=True)
+            return jsonify({"error": f"MT5 order_send returned None. last_error={le}"}), 500
 
         if res.retcode != mt5.TRADE_RETCODE_DONE:
+            print(f"[ORDER] !!! rejected retcode={res.retcode} comment={res.comment}", flush=True)
             return jsonify({
                 "error": f"Order failed ({res.retcode}): {res.comment}",
                 "retcode": res.retcode,
                 "comment": res.comment
             }), 400
+        print(f"[ORDER] <<< SUCCESS order={res.order} deal={res.deal} price={res.price}", flush=True)
 
         return jsonify({
             "success": True,
@@ -875,11 +920,203 @@ def academy_stats():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Self-update: check the GitHub repo for newer code and pull it (safely).
+#   - GET  /api/app/update-status : fetch + report current vs latest, and whether
+#                                   the working tree is dirty (local uncommitted edits).
+#   - POST /api/app/update        : fast-forward pull + rebuild frontend. REFUSES if
+#                                   there are local changes (never clobbers your work).
+# ─────────────────────────────────────────────────────────────────────────────
+import subprocess as _sp
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+def _git_env():
+    env = dict(os.environ)
+    env["GIT_TERMINAL_PROMPT"] = "0"                      # never hang on a credential prompt
+    env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new")
+    return env
+
+def _run(cmd, timeout=90, cwd=None):
+    """Run a command in the repo; return (ok, stdout+stderr)."""
+    try:
+        r = _sp.run(cmd, cwd=cwd or _REPO_ROOT, env=_git_env(), shell=isinstance(cmd, str),
+                    capture_output=True, text=True, timeout=timeout)
+        return r.returncode == 0, (r.stdout or "") + (r.stderr or "")
+    except _sp.TimeoutExpired:
+        return False, f"Timed out after {timeout}s running: {cmd}"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {e}"
+
+def _is_git_repo():
+    return os.path.isdir(os.path.join(_REPO_ROOT, ".git"))
+
+@app.route("/api/app/update-status", methods=["GET"])
+def app_update_status():
+    if not _is_git_repo():
+        return jsonify({"ok": False, "reason": "This install is not a git checkout, so it can't self-update."}), 200
+
+    ok_fetch, fetch_out = _run("git fetch --quiet", timeout=60)
+    dirty_ok, dirty_out = _run("git status --porcelain", timeout=30)
+    dirty_files = [l for l in (dirty_out or "").splitlines() if l.strip()]
+
+    cur_ok, cur = _run('git log -1 --format=%h|%ci|%s', timeout=15)
+    up_ok, upstream = _run("git rev-parse --abbrev-ref --symbolic-full-name @{u}", timeout=15)
+    behind, ahead = 0, 0
+    if up_ok:
+        b_ok, b = _run("git rev-list --count HEAD..@{u}", timeout=15)
+        a_ok, a = _run("git rev-list --count @{u}..HEAD", timeout=15)
+        try: behind = int((b or "0").strip())
+        except: behind = 0
+        try: ahead = int((a or "0").strip())
+        except: ahead = 0
+
+    latest = ""
+    if up_ok and behind > 0:
+        l_ok, l = _run('git log -1 --format=%h|%ci|%s @{u}', timeout=15)
+        if l_ok: latest = l.strip()
+
+    parts = (cur or "").strip().split("|", 2)
+    current = {"hash": parts[0] if len(parts) > 0 else "", "date": parts[1] if len(parts) > 1 else "", "subject": parts[2] if len(parts) > 2 else ""}
+    lparts = latest.split("|", 2) if latest else []
+    latest_obj = {"hash": lparts[0], "date": lparts[1] if len(lparts) > 1 else "", "subject": lparts[2] if len(lparts) > 2 else ""} if lparts else None
+
+    return jsonify({
+        "ok": True,
+        "fetch_ok": ok_fetch,
+        "fetch_error": None if ok_fetch else (fetch_out or "").strip()[-400:],
+        "has_upstream": up_ok,
+        "behind": behind,
+        "ahead": ahead,
+        "up_to_date": (behind == 0),
+        "dirty": len(dirty_files) > 0,
+        "dirty_files": [f[3:] if len(f) > 3 else f for f in dirty_files][:50],
+        "dirty_count": len(dirty_files),
+        "current": current,
+        "latest": latest_obj,
+    }), 200
+
+@app.route("/api/app/update", methods=["POST"])
+def app_update():
+    if _blocked_cross_origin():
+        return jsonify({"error": "Cross-origin request blocked"}), 403
+    if not _is_git_repo():
+        return jsonify({"error": "This install is not a git checkout, so it can't self-update."}), 400
+
+    # 1) Never run over local edits.
+    _, dirty_out = _run("git status --porcelain", timeout=30)
+    dirty_files = [l[3:] if len(l) > 3 else l for l in (dirty_out or "").splitlines() if l.strip()]
+    if dirty_files:
+        return jsonify({
+            "error": "You have local changes in this folder. Commit or discard them before updating — the updater will not overwrite your work.",
+            "dirty": True, "dirty_files": dirty_files[:50], "dirty_count": len(dirty_files),
+        }), 409
+
+    # 2) Make sure we actually have something to pull.
+    ok_fetch, fetch_out = _run("git fetch --quiet", timeout=60)
+    if not ok_fetch:
+        return jsonify({"error": "Could not reach GitHub. Check your internet / SSH key.", "detail": (fetch_out or "").strip()[-400:]}), 502
+    b_ok, b = _run("git rev-list --count HEAD..@{u}", timeout=15)
+    try: behind = int((b or "0").strip())
+    except: behind = 0
+    if behind == 0:
+        return jsonify({"success": True, "no_change": True, "message": "Already up to date."}), 200
+
+    # 3) Fast-forward only (safe — fails rather than creating a merge/force).
+    ff_ok, ff_out = _run("git pull --ff-only", timeout=120)
+    if not ff_ok:
+        return jsonify({"error": "Update could not be applied cleanly (the branches have diverged). Resolve it in git, then try again.", "detail": (ff_out or "").strip()[-600:]}), 409
+
+    # 4) Rebuild the frontend so the served app reflects the new code.
+    build_ok, build_out = _run("npm run build", timeout=420, cwd=os.path.join(_REPO_ROOT, "frontend"))
+    _, new_head = _run('git log -1 --format=%h|%s', timeout=15)
+
+    return jsonify({
+        "success": True,
+        "no_change": False,
+        "pulled": behind,
+        "new_head": (new_head or "").strip(),
+        "rebuilt": build_ok,
+        "build_error": None if build_ok else (build_out or "").strip()[-600:],
+        "restart_required": True,
+        "message": "Update downloaded and rebuilt." if build_ok else "Update downloaded, but the rebuild reported problems — see details.",
+    }), 200
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Serve the built React frontend (single-server / one-click model).
 # In dev you can still run `npm run dev` (Vite proxies /api here); in production
 # `npm run build` produces frontend/dist which is served from here.
 # ─────────────────────────────────────────────────────────────────────────────
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
+
+# ---------------------------------------------------------------------------
+# Autonomous trading
+# ---------------------------------------------------------------------------
+# The research floor lives in the browser; the robot lives here. The browser
+# publishes an AUDITED strategy, this process trades it. Nothing about the
+# credentials is ever returned to the browser.
+
+try:
+    import autotrader
+    import trading_account as _acct
+    AUTOTRADER_OK = True
+except Exception as _e:
+    autotrader = None
+    _acct = None
+    AUTOTRADER_OK = False
+    print("[AUTO] autotrader unavailable: %s" % _e, flush=True)
+
+
+@app.route("/api/autonomy/status", methods=["GET"])
+def autonomy_status():
+    if not AUTOTRADER_OK:
+        return jsonify({"available": False, "reason": "autotrader module failed to load"})
+    snap = autotrader.snapshot()
+    snap["available"] = True
+    snap["locked_to"] = _acct.expected_login()
+    return jsonify(snap)
+
+
+@app.route("/api/autonomy/strategy", methods=["POST"])
+def autonomy_strategy():
+    """The research floor publishes here after Audit has ruled on a strategy.
+
+    A payload whose audit did not pass is still stored - the robot needs to
+    know it is blocked and why, so it can say so instead of going quiet."""
+    if _blocked_cross_origin():
+        return jsonify({"error": "Cross-origin request blocked"}), 403
+    if not AUTOTRADER_OK:
+        return jsonify({"error": "autotrader unavailable"}), 503
+    data = request.get_json(force=True) or {}
+    if not data.get("champions"):
+        return jsonify({"error": "no champions in payload"}), 400
+    saved = autotrader.save_strategy(data)
+    return jsonify({"ok": True, "signed_at": saved["signed_at"],
+                    "audit_pass": bool((saved.get("audit") or {}).get("pass")),
+                    "executable": saved.get("executable", True),
+                    "executable_reason": saved.get("executable_reason", "")})
+
+
+@app.route("/api/autonomy/control", methods=["POST"])
+def autonomy_control():
+    if _blocked_cross_origin():
+        return jsonify({"error": "Cross-origin request blocked"}), 403
+    if not AUTOTRADER_OK:
+        return jsonify({"error": "autotrader unavailable"}), 503
+    data = request.get_json(force=True) or {}
+    if "enabled" in data:
+        autotrader.STATE["enabled"] = bool(data["enabled"])
+        autotrader._log("control", "Robot switched %s from the app."
+                        % ("ON" if data["enabled"] else "OFF"))
+    if data.get("mode") in ("live", "paper"):
+        autotrader.STATE["mode"] = data["mode"]
+        autotrader._log("control", "Mode set to %s." % data["mode"])
+    if data.get("flatten"):
+        autotrader.STATE["enabled"] = False
+        autotrader._log("control", "Kill switch: robot disabled by the director.")
+    return jsonify({"ok": True, "enabled": autotrader.STATE["enabled"],
+                    "mode": autotrader.STATE["mode"]})
+
 
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
@@ -900,4 +1137,7 @@ def serve_frontend(path):
 
 if __name__ == "__main__":
     init_mt5()
+    if AUTOTRADER_OK:
+        autotrader.start()
+        print("[AUTO] autonomous trading thread started", flush=True)
     socketio.run(app, host="127.0.0.1", port=5000, debug=True, use_reloader=False)
