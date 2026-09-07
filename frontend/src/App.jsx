@@ -12,8 +12,6 @@ import TradeExecutionPanel from './components/TradeExecutionPanel';
 import SymbolSearchModal from './components/SymbolSearchModal';
 import KLineChartArea from './components/KLineChartArea';
 import { computeSignalSeries, scoreSignalSeries } from './components/signalCore';
-import AcademyTab from './components/AcademyTab';
-import SecretStrategyTab from './components/SecretStrategyTab';
 import MyBrainsTab from './components/MyBrainsTab';
 import BrainsActivityTab from './components/BrainsActivityTab';
 import BrainsPerformanceTab from './components/BrainsPerformanceTab';
@@ -231,7 +229,23 @@ function App() {
     fetch('/api/symbols')
       .then(r => r.json())
       .then(data => {
-        if (Array.isArray(data)) setSymbols(data);
+        if (Array.isArray(data) && data.length > 0) {
+          setSymbols(data);
+          // Auto-align symbol if the currently selected symbol does not exist on this broker account
+          setSymbol(curr => {
+            if (data.some(s => s.name === curr)) return curr;
+            const goldMatch = data.find(s => {
+              const u = s.name.toUpperCase();
+              return u.startsWith('XAUUSD') || u.includes('GOLD');
+            });
+            const matched = goldMatch ? goldMatch.name : (data[0]?.name || curr);
+            setWorkspaceTabs(tabs => tabs.map(t => (t.type === 'chart' && !data.some(s => s.name === t.symbol))
+              ? { ...t, symbol: matched, title: `Chart: ${matched}` }
+              : t
+            ));
+            return matched;
+          });
+        }
       })
       .catch(() => {});
   };
@@ -258,18 +272,17 @@ function App() {
   // Persist state to localStorage
   useEffect(() => { saveLS('workspaceTabs', workspaceTabs); }, [workspaceTabs]);
 
-  // Ensure the Trader's Gym tab always exists (older saved layouts won't have it)
+  // Ensure workspace tabs reflect current structure and purge deleted tabs (academy, secret)
   useEffect(() => {
     setWorkspaceTabs(prev => {
-      let next = prev;
-      if (!next.some(t => t.type === 'academy')) next = [...next, { id: 'academy', title: "Trader's Gym", type: 'academy', closable: false }];
-      if (!next.some(t => t.type === 'secret')) next = [...next, { id: 'secret', title: 'SecretStrategy', type: 'secret', closable: false }];
+      let next = prev.filter(t => t.type !== 'academy' && t.type !== 'secret');
       if (!next.some(t => t.type === 'brains')) next = [...next, { id: 'brains', title: 'MyBrains', type: 'brains', closable: false }];
       if (!next.some(t => t.type === 'brainsactivity')) next = [...next, { id: 'brainsactivity', title: 'BrainsActivity', type: 'brainsactivity', closable: false }];
       if (!next.some(t => t.type === 'brainsperf')) next = [...next, { id: 'brainsperf', title: 'BrainsPerformance', type: 'brainsperf', closable: false }];
       if (!next.some(t => t.type === 'manual')) next = [...next, { id: 'manual', title: 'Manual', type: 'manual', closable: false }];
       return next;
     });
+    setActiveTabId(curr => (curr === 'secret' || curr === 'academy' ? 'chart-main' : curr));
   }, []);
 
   // Log a timestamped snapshot of the current signals for future analysis.
@@ -1459,19 +1472,6 @@ function App() {
               )}
             </div>
           </div>
-        </div>
-      )}
-
-      {/* 4. TAB 3: TRADE JOURNAL VIEW */}
-      {activeTab.type === 'secret' && (
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <SecretStrategyTab />
-        </div>
-      )}
-
-      {activeTab.type === 'academy' && (
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <AcademyTab />
         </div>
       )}
 

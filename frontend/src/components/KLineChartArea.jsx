@@ -234,7 +234,7 @@ const KLineChartArea = forwardRef(({
           ];
         } else if (ind.id === 'SIGNALS') {
           calcParams = [ind.params?.strategy || 'ALL'];
-        } else if (ind.id === 'SR_ZONES' || ind.id === 'ORDER_BLOCKS' || ind.id === 'SECRET_GATES') {
+        } else if (ind.id === 'SR_ZONES' || ind.id === 'ORDER_BLOCKS') {
           extendData = ind.params || {};
           calcParams = [];
         }
@@ -547,8 +547,14 @@ const KLineChartArea = forwardRef(({
         // init (first load)
         setLoading(true);
         try {
-          const res = await fetch(`${API_BASE}/api/history?symbol=${ticker}&timeframe=${tfStr}&count=1500`);
-          const data = await res.json();
+          let res = await fetch(`${API_BASE}/api/history?symbol=${ticker}&timeframe=${tfStr}&count=1500`);
+          let data = await res.json();
+          // If empty (e.g. fresh MT5 terminal still synchronizing history with broker), wait and retry once
+          if (!Array.isArray(data) || data.length === 0) {
+            await new Promise(r => setTimeout(r, 1200));
+            res = await fetch(`${API_BASE}/api/history?symbol=${ticker}&timeframe=${tfStr}&count=1500`);
+            data = await res.json();
+          }
           if (Array.isArray(data) && data.length > 0) {
             const klineData = data.map(mapBar);
             fullDataRef.current = klineData;

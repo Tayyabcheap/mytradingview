@@ -21,7 +21,6 @@
      - `BrainsActivityTab`: Live stream of agent decisions, hires, demotions, and audit verdicts.
      - `BrainsPerformanceTab`: Equity curves, Sharpe ratios, expectancy, and portfolio allocation.
      - `ManualTab`: System documentation and user manual for operating the autonomous trading firm.
-     - `SecretStrategyTab`: Dedicated 3-Gate Breakout detector (`threeGates.js`, `confluence.js`).
 
 2. **Backend (`src/`)**:
    - **Flask Application (`src/app.py`)**: REST endpoints and WebSocket/event streaming for quotes, chart data, orders, alarms, and engine control.

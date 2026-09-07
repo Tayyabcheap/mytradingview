@@ -113,6 +113,63 @@ def get_filling_mode(symbol_info):
         return mt5.ORDER_FILLING_RETURN
     return mt5.ORDER_FILLING_IOC
 
+def resolve_broker_symbol(symbol: str) -> str:
+    """Find the exact matching symbol in MT5, handling broker suffix variations
+    (e.g., XAUUSD vs XAUUSDc vs XAUUSDm vs XAUUSD.m)."""
+    if not MT5_IMPORTED or not symbol:
+        return symbol
+    if not init_mt5():
+        return symbol
+
+    with mt5_lock:
+        # 1. Exact match
+        info = mt5.symbol_info(symbol)
+        if info is not None:
+            if not info.visible:
+                mt5.symbol_select(symbol, True)
+            return symbol
+
+        # 2. Try clean base symbol and common broker suffixes
+        base = symbol
+        for suffix in ["c", "m", ".m", ".c", "_i", "k", "pro", "raw", "m.raw", "c.raw"]:
+            if symbol.lower().endswith(suffix):
+                base = symbol[:-len(suffix)]
+                break
+
+        candidates = [
+            base,
+            base + "m",
+            base + "c",
+            base + ".m",
+            base + ".c",
+            base + "_i",
+            base + "k",
+            base + "m.raw",
+            base + "c.raw",
+        ]
+        for cand in candidates:
+            info = mt5.symbol_info(cand)
+            if info is not None:
+                if not info.visible:
+                    mt5.symbol_select(cand, True)
+                return cand
+
+        # 3. Search all available broker symbols for a match
+        try:
+            all_syms = mt5.symbols_get()
+            if all_syms:
+                base_upper = base.upper()
+                for s in all_syms:
+                    s_up = s.name.upper()
+                    if s_up == base_upper or s_up.startswith(base_upper):
+                        if not s.visible:
+                            mt5.symbol_select(s.name, True)
+                        return s.name
+        except Exception:
+            pass
+
+        return symbol
+
 @app.route("/api/account", methods=["GET"])
 def get_account():
     if not init_mt5():
@@ -219,7 +276,7 @@ def send_order():
 
     data = request.get_json(force=True) or {}
     print(f"[ORDER] >>> /api/order/send received: {data}", flush=True)
-    symbol = data.get("symbol", "").strip()
+    symbol = resolve_broker_symbol(data.get("symbol", "").strip())
     order_type_str = (data.get("type") or "BUY").upper()
     try:
         volume = round(float(data.get("volume", 0.01)), 2)
@@ -457,7 +514,8 @@ def get_history():
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 
-    symbol = request.args.get("symbol", "XAUUSD")
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
     tf_str = request.args.get("timeframe", "1H")
     count = int(request.args.get("count", 1000))
     to_param = request.args.get("to")  # unix seconds; load `count` bars strictly older than this
@@ -467,25 +525,31 @@ def get_history():
         return jsonify({"error": f"Invalid timeframe: {tf_str}"}), 400
 
     with mt5_lock:
-        if not mt5.symbol_select(symbol, True):
-            return jsonify({"error": f"Symbol not found: {symbol}"}), 404
+        mt5.symbol_select(symbol, True)
 
-        if to_param:
-            # Paging: fetch a generous window ending at `to`, then keep the
-            # newest `count` bars that are strictly older than `to`.
-            import datetime as _dt
-            to_sec = int(float(to_param))
-            spb = SEC_PER_BAR.get(tf_str, 3600)
-            # x3 window buffer so weekend/holiday gaps still yield `count` bars
-            frm_sec = to_sec - spb * count * 3 - spb * 4
-            dt_from = _dt.datetime.utcfromtimestamp(max(0, frm_sec))
-            dt_to = _dt.datetime.utcfromtimestamp(to_sec)
-            rates = mt5.copy_rates_range(symbol, tf_const, dt_from, dt_to)
-            if rates is not None and len(rates) > 0:
-                rates = [r for r in rates if int(r["time"]) < to_sec]
-                rates = rates[-count:]
-        else:
-            rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, count)
+        rates = None
+        for attempt in range(4):
+            if to_param:
+                # Paging: fetch a generous window ending at `to`, then keep the
+                # newest `count` bars that are strictly older than `to`.
+                import datetime as _dt
+                to_sec = int(float(to_param))
+                spb = SEC_PER_BAR.get(tf_str, 3600)
+                # x3 window buffer so weekend/holiday gaps still yield `count` bars
+                frm_sec = to_sec - spb * count * 3 - spb * 4
+                dt_from = _dt.datetime.utcfromtimestamp(max(0, frm_sec))
+                dt_to = _dt.datetime.utcfromtimestamp(to_sec)
+                rates = mt5.copy_rates_range(symbol, tf_const, dt_from, dt_to)
+                if rates is not None and len(rates) > 0:
+                    rates = [r for r in rates if int(r["time"]) < to_sec]
+                    rates = rates[-count:]
+                    break
+            else:
+                rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, count)
+                if rates is not None and len(rates) > 0:
+                    break
+            if attempt < 3:
+                time.sleep(0.15)  # brief wait for fresh terminal to sync history with broker
 
     if rates is None or len(rates) == 0:
         return jsonify([])
@@ -509,8 +573,10 @@ def get_quote():
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 
-    symbol = request.args.get("symbol", "XAUUSD")
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
     with mt5_lock:
+        mt5.symbol_select(symbol, True)
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
             return jsonify({"error": "No quote available"}), 404
@@ -531,7 +597,8 @@ def get_indicator():
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 
-    symbol = request.args.get("symbol", "XAUUSD")
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
     tf_str = request.args.get("timeframe", "1H")
     ind_type = request.args.get("type", "rsi").lower()
     
@@ -611,7 +678,8 @@ def get_signals():
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 
-    symbol = request.args.get("symbol", "XAUUSDc")
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
     tf_str = request.args.get("timeframe", "1H")
     strategy_filter = request.args.get("strategy", "ALL").upper() # ALL | SWING_CORE | SWING_PRO
     count = int(request.args.get("count", 1500))
@@ -683,9 +751,10 @@ def get_quotes():
     out = []
     with mt5_lock:
         for name in names:
+            resolved_name = resolve_broker_symbol(name)
             try:
-                mt5.symbol_select(name, True)
-                tick = mt5.symbol_info_tick(name)
+                mt5.symbol_select(resolved_name, True)
+                tick = mt5.symbol_info_tick(resolved_name)
                 if tick is None:
                     out.append({"symbol": name, "price": None})
                     continue
@@ -707,7 +776,8 @@ def backtest_gold_scalper():
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 
-    symbol = request.args.get("symbol", "XAUUSDc")
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
     tf_str = request.args.get("timeframe", "1H")
     bars_n = int(request.args.get("bars", 8000))
 
@@ -758,7 +828,8 @@ def signals_accuracy():
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 
-    symbol = request.args.get("symbol", "XAUUSDc")
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
     tf_str = request.args.get("timeframe", "1H")
     strategy_filter = request.args.get("strategy", "ALL").upper()
     count = int(request.args.get("count", 3000))
@@ -883,64 +954,7 @@ def signals_log():
     return jsonify({"success": True, "count": len(log)})
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Academy (Trader's Gym) — knowledge log + stats for the daily skills game.
-# ─────────────────────────────────────────────────────────────────────────────
-@app.route("/api/academy/log", methods=["POST"])
-def academy_log():
-    data = request.get_json(force=True) or {}
-    entry = {
-        "ts": int(time.time()),
-        "date": (data.get("date") or "").strip(),
-        "category": (data.get("category") or "misc").strip(),
-        "kind": (data.get("kind") or "").strip(),
-        "questionId": (data.get("questionId") or "").strip(),
-        "correct": bool(data.get("correct")),
-        "userAnswer": data.get("userAnswer"),
-        "correctAnswer": data.get("correctAnswer"),
-    }
-    log = store.get("academy", "log", [])
-    if not isinstance(log, list):
-        log = []
-    log.append(entry)
-    if len(log) > 5000:
-        log = log[-5000:]
-    store.put("academy", "log", log)
-    return jsonify({"success": True, "count": len(log)})
 
-
-@app.route("/api/academy/stats", methods=["GET"])
-def academy_stats():
-    log = store.get("academy", "log", [])
-    if not isinstance(log, list):
-        log = []
-    by_cat, by_date = {}, {}
-    total = correct = 0
-    for e in log:
-        cat = e.get("category", "misc")
-        c = by_cat.setdefault(cat, {"total": 0, "correct": 0})
-        c["total"] += 1
-        if e.get("correct"):
-            c["correct"] += 1
-            correct += 1
-        total += 1
-        d = e.get("date", "")
-        dd = by_date.setdefault(d, {"total": 0, "correct": 0})
-        dd["total"] += 1
-        if e.get("correct"):
-            dd["correct"] += 1
-    for c in by_cat.values():
-        c["accuracy"] = round(c["correct"] / c["total"] * 100, 1) if c["total"] else 0
-    for d in by_date.values():
-        d["accuracy"] = round(d["correct"] / d["total"] * 100, 1) if d["total"] else 0
-    return jsonify({
-        "total": total,
-        "correct": correct,
-        "accuracy": round(correct / total * 100, 1) if total else 0,
-        "by_category": by_cat,
-        "by_date": by_date,
-        "recent": log[-60:],
-    })
 
 
 # ─────────────────────────────────────────────────────────────────────────────

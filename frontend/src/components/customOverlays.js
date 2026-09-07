@@ -1,7 +1,6 @@
 import { registerOverlay, registerIndicator } from 'klinecharts';
 import { runPineById, getPineResult } from './pineEngine';
 import { computeSignalSeries } from './signalCore';
-import { computeThreeGates } from './threeGates';
 
 // 1. RECTANGLE OVERLAY
 const rectOverlay = {
@@ -1416,89 +1415,6 @@ const orderBlockIndicator = {
   draw: ({ ctx, indicator, yAxis }) => _drawZones(ctx, indicator, yAxis)
 };
 
-// ─── SECRET STRATEGY: Three-Gate Breakout indicator ──────────────────────────
-const SECRET_GATES_DEFAULT = { lookback: 20, retestBars: 6, atrLen: 14 };
-const secretGatesIndicator = {
-  name: 'SECRET_GATES', shortName: '3-Gate Breakout', series: 'price',
-  calcParams: [],
-  extendData: SECRET_GATES_DEFAULT,
-  figures: [{ key: '_g', title: '', type: 'line' }],
-  styles: { lines: [{ color: 'transparent', size: 0 }] },
-  calc: (dataList, ind) => {
-    const cfg = { ...SECRET_GATES_DEFAULT, ...((ind && ind.extendData) || {}) };
-    const out = dataList.map(() => ({}));
-    try {
-      const res = computeThreeGates(dataList, cfg);
-      if (out.length) out[out.length - 1].__gates = res;
-    } catch (e) { /* never break the chart */ }
-    return out;
-  },
-  draw: ({ ctx, indicator, xAxis, yAxis }) => {
-    try {
-      const result = indicator.result || [];
-      const last = result[result.length - 1];
-      const res = last && last.__gates;
-      if (!res) return true;
-      const W = (ctx.canvas && ctx.canvas.width) || 4000;
-      ctx.save();
-      // pending breakout awaiting retest -> bright dashed level + tag
-      if (res.pending) {
-        const y = yAxis.convertToPixel(res.pending.level);
-        ctx.strokeStyle = '#f7a600'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 3]);
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle = '#f7a600'; ctx.font = 'bold 10px Inter, sans-serif'; ctx.textAlign = 'left'; ctx.textBaseline = 'bottom';
-        ctx.fillText('Gates 1-2 ✓ — awaiting retest', 6, y - 3);
-      }
-      const setups = (res.setups || []).slice(-5);
-      setups.forEach(sgl => {
-        const isBuy = sgl.dir === 1;
-        const accent = isBuy ? '#089981' : '#f23645';
-        const resolved = sgl.outcome === 'TP' || sgl.outcome === 'SL';
-        const alpha = resolved ? 0.55 : 1;
-        const x = xAxis.convertToPixel(sgl.retestIdx);
-        if (x < -60 || x > W + 60) return;
-        const yLevel = yAxis.convertToPixel(sgl.level);
-        const yEntry = yAxis.convertToPixel(sgl.entry);
-        // broken level segment
-        const xb = xAxis.convertToPixel(sgl.breakoutIdx);
-        ctx.globalAlpha = alpha * 0.8;
-        ctx.strokeStyle = accent; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
-        ctx.beginPath(); ctx.moveTo(Math.min(xb, x) - 4, yLevel); ctx.lineTo(x + 40, yLevel); ctx.stroke(); ctx.setLineDash([]);
-        // arrow at retest bar
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = accent;
-        const ay = isBuy ? yEntry + 14 : yEntry - 14;
-        ctx.beginPath();
-        if (isBuy) { ctx.moveTo(x, ay - 7); ctx.lineTo(x - 5, ay + 2); ctx.lineTo(x + 5, ay + 2); }
-        else { ctx.moveTo(x, ay + 7); ctx.lineTo(x - 5, ay - 2); ctx.lineTo(x + 5, ay - 2); }
-        ctx.closePath(); ctx.fill();
-        // compact tag
-        const tag = `${isBuy ? 'BUY' : 'SELL'} ${sgl.entry.toFixed(1)}`;
-        const sub = `TP ${sgl.tp1.toFixed(1)} / SL ${sgl.sl.toFixed(1)}`;
-        ctx.font = 'bold 10px Inter, sans-serif';
-        const tw = Math.max(ctx.measureText(tag).width, ctx.measureText(sub).width) + 12;
-        const th = 30;
-        let ty = isBuy ? ay + 8 : ay - 8 - th;
-        let tx = Math.max(2, Math.min(x - tw / 2, W - tw - 2));
-        ctx.fillStyle = 'rgba(19,23,34,0.94)'; ctx.strokeStyle = accent; ctx.lineWidth = 1.2;
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(tx, ty, tw, th, 4); else ctx.rect(tx, ty, tw, th);
-        ctx.fill(); ctx.stroke();
-        ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-        ctx.fillStyle = accent; ctx.fillText(tag, tx + 6, ty + 9);
-        ctx.fillStyle = '#b0b4be'; ctx.font = '9px Inter, sans-serif'; ctx.fillText(sub, tx + 6, ty + 21);
-        if (resolved) {
-          ctx.fillStyle = sgl.outcome === 'TP' ? '#089981' : '#f23645';
-          ctx.textAlign = 'right'; ctx.font = 'bold 9px Inter, sans-serif';
-          ctx.fillText(sgl.outcome === 'TP' ? '✓' : '✕', tx + tw - 5, ty + 9);
-        }
-      });
-      ctx.restore();
-    } catch (e) { try { ctx.restore(); } catch (_) {} }
-    return true;
-  }
-};
-
 // Register all custom overlays and indicators
 export function initCustomOverlaysAndIndicators() {
   try {
@@ -1528,7 +1444,6 @@ export function initCustomOverlaysAndIndicators() {
     registerIndicator(ichimokuIndicator);
     registerIndicator(srZonesIndicator);
     registerIndicator(orderBlockIndicator);
-    registerIndicator(secretGatesIndicator);
   } catch (e) {
     console.warn("Overlays registration notice:", e);
   }
