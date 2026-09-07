@@ -106,9 +106,46 @@ Create `secrets.local.json` in the root folder (git-ignored):
 # Run pytest test suite (29 tests)
 python -m pytest
 
-# Run parity check
+# Run parity check (17 test cases, 0 drift)
 python tools/parity_check.py
 ```
+
+### Step 6: Launch the Workstation Server
+- **On Windows (Interactive / GUI)**:
+  Double-click `start.bat` or run:
+  ```powershell
+  .\start.bat
+  ```
+- **Direct Python Launch (Windows or Linux)**:
+  ```bash
+  python src/app.py
+  ```
+  *(The server listens on port `5000` and automatically logs activity to `backend.log`)*
+
+### Step 7: Connecting to the Workstation
+
+#### Option A: Secure SSH Port Forwarding (Recommended from Local PC)
+From your local terminal, create an encrypted SSH tunnel to the remote VM:
+```bash
+ssh -L 5000:127.0.0.1:5000 <user>@<VM_IP_OR_HOSTNAME>
+```
+Once connected, open your **local** browser to:
+`http://127.0.0.1:5000`
+
+#### Option B: Remote Desktop (RDP / VNC) Inside VM
+If logged into the Windows VM desktop via RDP, launch `start.bat` and open the browser inside the RDP session to:
+`http://127.0.0.1:5000`
+
+#### Option C: Direct Remote IP Access
+To access directly via `http://<VM_IP>:5000`:
+1. Ensure the VM cloud firewall / security group allows inbound TCP on port `5000`.
+2. The server binds to `0.0.0.0` by default and dynamically validates same-host requests.
+
+### Troubleshooting `127.0.0.1 refused to connect`:
+1. **Local vs. Remote Browser Confusion**: If you type `127.0.0.1:5000` into your local machine's browser without an active SSH tunnel (`ssh -L 5000:127.0.0.1:5000 ...`), the connection connects to your laptop instead of the remote VM.
+2. **Server Not Running**: Check `backend.log` in the project root to inspect any Python runtime errors.
+3. **Virtual Environment**: Ensure packages were installed into `.venv` and Python is pointing to `.venv\Scripts\python.exe`.
+4. **Port In Use**: Run `stop.bat` to terminate any stale listeners on port `5000`.
 
 ---
 

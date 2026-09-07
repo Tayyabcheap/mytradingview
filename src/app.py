@@ -1,14 +1,19 @@
 import os
+import sys
 import time
 import threading
+
+# Ensure the src directory is in sys.path so modules can import each other
+_src_dir = os.path.dirname(os.path.abspath(__file__))
+if _src_dir not in sys.path:
+    sys.path.insert(0, _src_dir)
+
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO
 import store
 import pandas as pd
 import ta
-import threading
-import time
 
 try:
     import MetaTrader5 as mt5
@@ -19,6 +24,10 @@ except Exception:
 
 app = Flask(__name__)
 
+# Server host and port configuration (defaults to 0.0.0.0 so remote VMs and local bind work seamlessly)
+HOST = os.environ.get("HOST", "0.0.0.0")
+PORT = int(os.environ.get("PORT", 5000))
+
 # Only the app's own local origins may call the API from a browser. This blocks
 # a malicious web page you have open from POSTing to the local trade endpoints
 # (drive-by CSRF against a money-moving localhost server).
@@ -26,14 +35,29 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:5000", "http://localhost:5000",
     "http://127.0.0.1:5173", "http://localhost:5173",
 ]
-CORS(app, resources={r"/api/*": {"origins": ALLOWED_ORIGINS}})
-socketio = SocketIO(app, cors_allowed_origins=ALLOWED_ORIGINS)
+custom_origin = os.environ.get("ALLOWED_ORIGIN")
+if custom_origin and custom_origin not in ALLOWED_ORIGINS:
+    ALLOWED_ORIGINS.append(custom_origin)
+
+CORS(app, resources={r"/api/*": {"origins": "*" if HOST == "0.0.0.0" else ALLOWED_ORIGINS}})
+socketio = SocketIO(app, cors_allowed_origins="*" if HOST == "0.0.0.0" else ALLOWED_ORIGINS)
 
 def _blocked_cross_origin():
     """True when a browser sends a cross-origin request to a protected endpoint.
     Non-browser clients (curl, the user's own scripts) send no Origin and are allowed."""
     origin = request.headers.get("Origin")
-    return origin is not None and origin not in ALLOWED_ORIGINS
+    if origin is None:
+        return False
+    if origin in ALLOWED_ORIGINS:
+        return False
+    # Dynamic same-origin check for remote VMs or custom IP/domain access
+    try:
+        req_root = request.host_url.rstrip("/")
+        if origin == req_root:
+            return False
+    except Exception:
+        pass
+    return True
 
 mt5_lock = threading.RLock()
 _initialized = False
@@ -1140,4 +1164,4 @@ if __name__ == "__main__":
     if AUTOTRADER_OK:
         autotrader.start()
         print("[AUTO] autonomous trading thread started", flush=True)
-    socketio.run(app, host="127.0.0.1", port=5000, debug=True, use_reloader=False)
+    socketio.run(app, host=HOST, port=PORT, debug=True, use_reloader=False)
