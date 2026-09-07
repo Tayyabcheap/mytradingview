@@ -72,15 +72,11 @@ cd MyFinanceAdvisor
 ```
 
 ### Step 2: Python Environment Setup
+Install dependencies directly using system Python (no virtual environment required):
 ```bash
-python -m venv .venv
-# On Linux:
-source .venv/bin/activate
-# On Windows:
-.venv\Scripts\Activate.ps1
-
 pip install -r requirements.txt
 ```
+*(Note: Python 3.10 through 3.14+ are supported. Unused dependencies like `pandas-ta`/`numba` have been removed to ensure seamless compatibility with Python 3.14.)*
 
 ### Step 3: Frontend Build
 ```bash

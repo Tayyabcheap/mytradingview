@@ -525,7 +525,7 @@ def get_quote():
 @app.route("/api/indicator", methods=["GET"])
 def get_indicator():
     """
-    Generic endpoint to calculate indicators via pandas-ta.
+    Generic endpoint to calculate indicators via ta library.
     Example: /api/indicator?symbol=EURUSD&timeframe=1H&type=rsi&length=14
     """
     if not init_mt5():

@@ -7,14 +7,12 @@ echo ==================================================
 echo   Trade with Rakhi  -  starting up
 echo ==================================================
 
-REM --- 0. Detect Python executable (prefer .venv if present) ---
+REM --- 0. Python executable ---
 set "PY_CMD=python"
-if exist ".venv\Scripts\python.exe" (
-  set "PY_CMD=.venv\Scripts\python.exe"
-  echo [info] Using virtual environment .venv
-) else if exist "venv\Scripts\python.exe" (
-  set "PY_CMD=venv\Scripts\python.exe"
-  echo [info] Using virtual environment venv
+if defined VIRTUAL_ENV (
+  echo [info] Running in virtual environment: %VIRTUAL_ENV%
+) else (
+  echo [info] Running with system Python
 )
 
 REM --- 1. Python dependencies (only if Flask is missing) ---
