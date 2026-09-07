@@ -85,8 +85,9 @@ npm run build
 cd ..
 ```
 
-### Step 4: Local Configuration
-Create `secrets.local.json` in the root folder (git-ignored):
+### Step 4: Local Configuration (Optional)
+If your MT5 terminal is already logged into your demo account on the desktop, the workstation will attach to it automatically.
+Optionally, create `secrets.local.json` in the root folder (git-ignored) if you want the backend to automatically log in or lock to a specific account:
 ```json
 {
   "login": 12345678,
@@ -136,25 +137,36 @@ To access directly via `http://<VM_IP>:5000`:
 1. Ensure the VM cloud firewall / security group allows inbound TCP on port `5000`.
 2. The server binds to `0.0.0.0` by default and dynamically validates same-host requests.
 
-### Troubleshooting `127.0.0.1 refused to connect`:
-1. **Local vs. Remote Browser Confusion**: If you type `127.0.0.1:5000` into your local machine's browser without an active SSH tunnel (`ssh -L 5000:127.0.0.1:5000 ...`), the connection connects to your laptop instead of the remote VM.
-2. **Server Not Running**: Check `backend.log` in the project root to inspect any Python runtime errors.
-3. **Virtual Environment**: Ensure packages were installed into `.venv` and Python is pointing to `.venv\Scripts\python.exe`.
-4. **Port In Use**: Run `stop.bat` to terminate any stale listeners on port `5000`.
-
 ---
 
-## 4. Safety & Trading Constraints
+## 4. Key Architectural Mechanisms & Safety Constraints
 
-1. **Demo Account Only**: The trading engine refuses to execute on live accounts unless `allow_live_account: true` is explicitly configured.
-2. **Gold / XAUUSD Lot Cap**: Never execute or allow lot sizes greater than **`1.0`** on Gold (`XAUUSD`, `XAUUSDc`).
-3. **Risk Cap**: `MAX_RISK_PERCENT` must not exceed `1.0%` of account equity per trade.
-4. **Autotrader 8 Gates**:
-   1. Robot enabled in UI / config.
-   2. MT5 logged into authorized demo account.
-   3. Market open (weekday hours, flat prior to weekend close).
-   4. Published strategy has passed full Audit sign-off.
-   5. Strategy sign-off is less than 24 hours old.
-   6. Strategy discipline is reproducible by Python runtime.
-   7. Today's loss stop and max trades cap (Legal dept) not hit.
-   8. Valid setup confirmed on the last closed bar.
+### Broker Symbol Auto-Resolution
+Brokers use varied symbol naming conventions (e.g. `XAUUSD`, `XAUUSDm`, `XAUUSDc`, `XAUUSD.m`).
+- Backend `resolve_broker_symbol(symbol)` in `src/app.py` queries `mt5.symbols_get()` and falls back through known suffixes.
+- Applied across `/api/history`, `/api/quote`, `/api/quotes`, `/api/indicator`, `/api/signals`, `/api/order/send`, `/api/backtest/gold_scalper`, and `/api/signals/accuracy`.
+- Frontend `App.jsx` auto-aligns the user's active symbol to the broker's real gold symbol on startup.
+
+### Cold MT5 History Synchronization
+On fresh MT5 installations or new symbols, the local cache may be empty until MT5 downloads rates from the server.
+- `/api/history` implements an automatic retry loop (3 attempts with 250ms delay).
+- Frontend chart (`KLineChartArea.jsx`) automatically retries bar fetching if the initial sync is empty.
+
+### Active MT5 Session Attachment (`trading_account.py`)
+- If MT5 is already running and authenticated on the desktop, `trading_account.connect()` safely attaches and verifies the active session without requiring manual credentials in `secrets.local.json`.
+- Strict gates remain enforced:
+  1. **Demo Account Only**: Blocks immediately if the terminal is logged into a live account (unless `allow_live_account` is explicitly set).
+  2. **Algo Trading Check**: Requires the MT5 "Algo Trading" button to be enabled (green) before placing orders.
+  3. **Gold / XAUUSD Lot Cap**: Strictly capped at **`1.0`** (`XAUUSD`, `XAUUSDc`, `XAUUSDm`).
+  4. **Risk Cap**: `MAX_RISK_PERCENT` <= `1.0%` of account equity.
+
+### Autotrader 8 Gates:
+1. Robot enabled in UI / config.
+2. MT5 attached to authorized demo account with Algo Trading enabled.
+3. Market open (weekday hours, flat prior to weekend close).
+4. Published strategy has passed full Audit sign-off.
+5. Strategy sign-off is less than 24 hours old.
+6. Strategy discipline is reproducible by Python runtime.
+7. Today's loss stop and max trades cap (Legal dept) not hit.
+8. Valid setup confirmed on the last closed bar.
+
