@@ -123,7 +123,7 @@ export function ensureSession(symbol = 'XAUUSDc', timeframe = '1H') {
     S.org = restored || createOrg();
   }
 
-  discoverUniverse(symbol, timeframe, 20).then(disc => {
+  discoverUniverse(symbol, timeframe, 50).then(disc => {
     S.discovery = disc;
     S.note = disc.discovered
       ? `Found ${disc.brokerCount} symbols at your broker — loading ${disc.specs.length} instruments…`

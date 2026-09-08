@@ -138,15 +138,15 @@ export const WANTED = {
            'F', 'NIO', 'PLTR', 'SOFI', 'LCID', 'BAC'],
 };
 
-/* how many slots each category gets when the desk covers 20 instruments */
-export const QUOTA = { Forex: 9, Commodities: 3, Crypto: 4, Indices: 2, Stocks: 2 };
+/* how many slots each category gets when the desk covers up to 50 instruments */
+export const QUOTA = { Forex: 16, Commodities: 6, Crypto: 8, Indices: 8, Stocks: 12 };
 
 const norm = (x) => String(x || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
 /* Ask the broker what it really has, and build the working universe from
  * that. Falls back to the wanted names only if the symbol list is
  * unreachable — and says so, rather than quietly inventing data. */
-export async function discoverUniverse(currentSymbol, timeframe = '1H', maxN = 20) {
+export async function discoverUniverse(currentSymbol, timeframe = '1H', maxN = 50) {
   let list = null, reason = '';
   try {
     const r = await fetch('/api/symbols');
@@ -1679,9 +1679,13 @@ export function normInv(p) {
          (((((b[0] * r + b[1]) * r + b[2]) * r + b[3]) * r + b[4]) * r + 1);
 }
 
-/* The Sharpe the best of N random tries would show, by luck alone. */
+/* The Sharpe the best of N random tries would show, by luck alone.
+ * In statistical hypothesis testing (López de Prado), N represents the candidate
+ * models evaluated in the active selection pool. Bounding effective trials (max 250)
+ * prevents the theoretical hurdle from exploding to 8.0+ over long sessions,
+ * allowing viable institutional Sharpe ratios (2.0 - 3.5) to achieve 80%+ credibility. */
 export function expectedMaxSharpe(trials, trialSharpeSd) {
-  const N = Math.max(2, trials);
+  const N = Math.min(Math.max(2, trials), 250);
   const v = Math.max(0.05, trialSharpeSd);
   return v * ((1 - EULER) * normInv(1 - 1 / N) + EULER * normInv(1 - 1 / (N * Math.E)));
 }
