@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url';
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(HERE, 'parity.json');
 let s = 20260905; const rnd = () => { s = (s*1664525+1013904223)>>>0; return s/4294967296; };
+Date.now = () => 1788764440000;
 const bars = L.syntheticBars(3000, 424242);
 const F = new L.Features(bars);
 const cases = [];

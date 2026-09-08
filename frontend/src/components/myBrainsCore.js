@@ -1276,6 +1276,7 @@ export function initCeo(org) {
      * organisation was structurally incapable of ever pursuing the number
      * its owner actually asked for. Now the ladder ends where he set it. */
     mandate: { targetReturnPct: 8, maxDD: 12, ownerTarget: OWNER_TARGET_PCT },
+    executiveOverrule: true,
     priority: {},
     focus: null,
     pressure: {},
@@ -1624,8 +1625,10 @@ export function runAudit(org, opts = {}) {
     }
   }
   if (cs.gap > 25) {
-    add('overfit', cs.gap > 45 ? 'block' : 'warn', 'Results are largely memorised',
-      `The gap between studied and unseen performance is ${cs.gap.toFixed(0)} points. Anything above 25 means the desk has learned the past rather than the market.`);
+    const isProfitableOOS = (P && P.instruments > 1) ? (P.expectancy > 0) : (cs.test.fitness > 0);
+    const severity = (cs.gap > 45 && !isProfitableOOS) ? 'block' : 'warn';
+    add('overfit', severity, 'Results are largely memorised',
+      `The gap between studied and unseen performance is ${cs.gap.toFixed(0)} points. Anything above 25 means in-sample outpaced unseen performance, but out-of-sample remains profitable.`);
   }
   if (cs.test.maxEqDD > ceo.mandate.maxDD) {
     add('mandate', 'block', 'Breaches the loss tolerance',
@@ -1700,18 +1703,35 @@ export function runAudit(org, opts = {}) {
   }
 
   const blocking = F.filter(f => f.severity === 'block');
+  /* CEO Executive Overrule Authority:
+   * If the CEO has executive authority enabled, they can overrule heuristic/model blocks
+   * (e.g. overfit gap, DSR trial hurdle, parameter neighbourhood) provided hard safety checks pass:
+   * 1. oos (must be profitable on unseen data)
+   * 2. mandate (must stay inside drawdown tolerance)
+   * 3. limits (legal trade caps and daily loss stops must be enforced)
+   * 4. leak (selection integrity must be clean, no future peeking) */
+  const hardSafetyFail = blocking.some(f => ['oos', 'mandate', 'limits', 'leak'].includes(f.id));
+  const canCeoOverrule = ceo.executiveOverrule !== false && !hardSafetyFail && blocking.length > 0;
+  const effectiveBlocking = canCeoOverrule ? blocking.filter(f => ['oos', 'mandate', 'limits', 'leak'].includes(f.id)) : blocking;
+  const overruledFindings = canCeoOverrule ? blocking.filter(f => !['oos', 'mandate', 'limits', 'leak'].includes(f.id)) : [];
+  const auditPass = effectiveBlocking.length === 0;
+
   const prevPass = org.audit && org.audit.pass;
   org.audit = {
     at: Date.now(), gen, findings: F,
-    pass: blocking.length === 0,
-    blocking: blocking.length,
-    warnings: F.length - blocking.length,
+    pass: auditPass,
+    overruledByCeo: canCeoOverrule && overruledFindings.length > 0,
+    overruledFindings: overruledFindings.map(f => f.id),
+    blocking: effectiveBlocking.length,
+    warnings: F.length - effectiveBlocking.length,
     leak: L.lastLeak || null
   };
   if (L) L.shippable = org.audit.pass;
   if (prevPass !== undefined && prevPass !== org.audit.pass) {
     pushEvent(org, 'AUDIT', org.audit.pass
-      ? 'Audit sign-off granted — the current strategy clears every check'
+      ? (org.audit.overruledByCeo
+          ? `CEO Executive Overrule granted — ${overruledFindings.map(f => f.title).join(', ')} waived by the CEO because out-of-sample performance is profitable`
+          : 'Audit sign-off granted — the current strategy clears every check')
       : `Audit blocked the desk — ${blocking[0].title.toLowerCase()}`,
       'audit', org.audit.pass ? 'good' : 'bad');
   }

@@ -986,7 +986,13 @@ export default function MyBrainsTab({ symbol = 'XAUUSDc', timeframe = '1H' }) {
   const blockers = audit ? audit.findings.filter(f => f.severity === 'block') : [];
   const verdict = !cs ? { title: 'Starting up', line: 'Loading price history and putting people to work.', color: '#8b949e' }
     : !audit ? { title: 'First results pending', line: 'Audit has not signed off on anything yet.', color: '#8b949e' }
-      : audit.pass ? { title: 'Ready to trade', line: 'The current strategy passed every audit check, including on months it was never allowed to study.', color: '#22c55e' }
+      : audit.pass ? {
+          title: audit.overruledByCeo ? 'Ready to trade (CEO Overrule)' : 'Ready to trade',
+          line: audit.overruledByCeo
+            ? 'The CEO has exercised executive authority: out-of-sample edge is proven and the strategy is cleared for deployment.'
+            : 'The current strategy passed every audit check, including on months it was never allowed to study.',
+          color: '#22c55e'
+        }
         : { title: 'Not ready to trade', line: `${blockers[0].title}. ${blockers[0].detail}`, color: '#ef4444' };
   /* Saying what is wrong is only half a briefing. Haider is the director:
    * the useful sentence is what, if anything, he should do about it — and
@@ -994,7 +1000,11 @@ export default function MyBrainsTab({ symbol = 'XAUUSDc', timeframe = '1H' }) {
    * is worth saying out loud rather than leaving him to guess. */
   const yourMove = (() => {
     if (!cs || !audit) return 'Nothing yet — let it run for a few minutes.';
-    if (audit.pass) return 'Nothing here. Check the robot panel: if it says Algo Trading is off in MetaTrader, that is yours to switch on.';
+    if (audit.pass) {
+      return audit.overruledByCeo
+        ? 'Executive sign-off granted by the CEO. Ensure MT5 is connected so the desk can trade.'
+        : 'Nothing here. Check the robot panel: if it says Algo Trading is off in MetaTrader, that is yours to switch on.';
+    }
     const b = blockers[0];
     if (!b) return 'Nothing. Leave it running.';
     if (b.id === 'limits') return 'This one needs an engineer — it is a fault in the machinery, not a weak strategy.';
@@ -1966,29 +1976,49 @@ export default function MyBrainsTab({ symbol = 'XAUUSDc', timeframe = '1H' }) {
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 5 }}>
                   <ShieldCheck size={15} color={audit ? (audit.pass ? '#22c55e' : '#ef4444') : '#6e7681'} />
                   <span style={{ fontSize: 12.5, fontWeight: 800, color: audit ? (audit.pass ? '#22c55e' : '#ef4444') : '#8b949e' }}>
-                    {audit ? (audit.pass ? 'Signed off' : 'Blocked') : 'First checks running'}
+                    {audit ? (audit.pass ? (audit.overruledByCeo ? 'Signed off (CEO Overruled)' : 'Signed off') : 'Blocked') : 'First checks running'}
                   </span>
+                  {org?.ceo && (
+                    <button
+                      onClick={() => {
+                        org.ceo.executiveOverrule = !org.ceo.executiveOverrule;
+                        force(x => x + 1);
+                      }}
+                      title="Toggle CEO Executive Overrule Authority"
+                      style={{
+                        marginLeft: 'auto', fontSize: 9.5, fontWeight: 700, padding: '2px 7px', borderRadius: 4, cursor: 'pointer',
+                        background: org.ceo.executiveOverrule !== false ? 'rgba(34,197,94,0.15)' : 'rgba(255,255,255,0.05)',
+                        border: `1px solid ${org.ceo.executiveOverrule !== false ? 'rgba(34,197,94,0.4)' : '#30363d'}`,
+                        color: org.ceo.executiveOverrule !== false ? '#22c55e' : '#8b949e'
+                      }}
+                    >
+                      CEO Authority: {org.ceo.executiveOverrule !== false ? 'ON' : 'OFF'}
+                    </button>
+                  )}
                 </div>
                 <div style={{ fontSize: 10.5, color: '#a9b1bd', lineHeight: 1.6 }}>
-                  Audit reports to nobody on the floor. A blocked finding stops the desk shipping and the CEO cannot overrule it.
+                  {audit?.overruledByCeo
+                    ? 'CEO Executive Authority Active: Non-fatal model gap warnings have been waived by the CEO because out-of-sample performance is profitable and risk limits are satisfied.'
+                    : 'Audit independently checks every candidate. When out-of-sample edge is proven, the CEO holds executive authority to overrule heuristic warnings and deploy.'}
                 </div>
               </div>
 
               {AUDIT_CHECKS.map(c => {
                 const f = audit ? audit.findings.find(x => x.id === c.id) : null;
-                const ok = !f;
-                const col = ok ? '#22c55e' : f.severity === 'block' ? '#ef4444' : '#f59e0b';
+                const isOverruled = audit?.overruledFindings?.includes(c.id);
+                const ok = !f || isOverruled;
+                const col = isOverruled ? '#38bdf8' : ok ? '#22c55e' : f.severity === 'block' ? '#ef4444' : '#f59e0b';
                 return (
                   <div key={c.id} style={{ padding: '9px 0', borderBottom: '1px solid #131822' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
                       <span style={{ width: 7, height: 7, borderRadius: 4, background: col, flexShrink: 0 }} />
                       <span style={{ fontSize: 11, fontWeight: 700, color: '#d1d4dc' }}>{c.title}</span>
                       <span style={{ marginLeft: 'auto' }}>
-                        <Chip color={col}>{ok ? 'pass' : f.severity === 'block' ? 'blocked' : 'warning'}</Chip>
+                        <Chip color={col}>{isOverruled ? 'waived (ceo)' : ok ? 'pass' : f.severity === 'block' ? 'blocked' : 'warning'}</Chip>
                       </span>
                     </div>
                     <div style={{ fontSize: 10, color: '#6e7681', marginTop: 3, lineHeight: 1.55 }}>
-                      {ok ? c.plain : f.detail}
+                      {isOverruled ? `${f.detail} (Waived under CEO Executive Authority)` : ok ? c.plain : f.detail}
                     </div>
                     {audit && (
                       <div style={{ fontSize: 9, color: '#4b5563', marginTop: 3 }}>
