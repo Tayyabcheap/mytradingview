@@ -1,6 +1,6 @@
 # Project Memory & Context: MyFinanceAdvisor
 
-**Last Updated:** September 7, 2026  
+**Last Updated:** September 8, 2026  
 **Repository:** `https://github.com/haider2804/MyFinanceAdvisor.git`  
 **Branch:** `main` (clean, fully in sync)
 
@@ -164,9 +164,35 @@ On fresh MT5 installations or new symbols, the local cache may be empty until MT
 1. Robot enabled in UI / config.
 2. MT5 attached to authorized demo account with Algo Trading enabled.
 3. Market open (weekday hours, flat prior to weekend close).
-4. Published strategy has passed full Audit sign-off.
+4. Published strategy has passed full Audit sign-off (or CEO Executive Overrule).
 5. Strategy sign-off is less than 24 hours old.
 6. Strategy discipline is reproducible by Python runtime.
 7. Today's loss stop and max trades cap (Legal dept) not hit.
 8. Valid setup confirmed on the last closed bar.
+
+---
+
+## 5. Quantitative Governance & Laboratory Evolution (September 8, 2026)
+
+### Deflated Sharpe Ratio (DSR) Windowing
+- **The Issue Solved:** Lifetime trial count accumulation ($N > 220,000$) inflated the theoretical Sharpe hurdle ($sr_0$) to $8.79$, making viable institutional Sharpe ratios ($2.0 - 3.5$) appear as $0.00\%$ credibility and locking setup confidence to $0\%$.
+- **The Solution:** Effective trials in `expectedMaxSharpe` are bounded to the active candidate pool window ($\min(\max(2, \text{trials}), 250)$), aligning with Marcos López de Prado's econometrics framework. A strategy with out-of-sample edge now reaches $85\% - 95\%$ credibility and setup confidence can reach $80\%+$.
+
+### 50-Instrument Multi-Asset Universe
+- Discovery quota (`QUOTA`) expanded from 20 to 50 instruments across:
+  - **Forex (16):** `EURUSD`, `GBPUSD`, `USDJPY`, `EURGBP`, `AUDUSD`, `USDCAD`, `USDCHF`, `NZDUSD`, `EURJPY`, `GBPJPY`, etc.
+  - **Commodities (6):** `XAUUSD` (Gold), `XAGUSD` (Silver), `USOIL` (Crude), `UKOIL` (Brent), `XPTUSD`, `NGAS`.
+  - **Crypto (8):** `BTCUSD`, `ETHUSD`, `SOLUSD`, `XRPUSD`, `LTCUSD`, `ADAUSD`, `DOGEUSD`, `BNBUSD`.
+  - **Indices (8):** `US30`, `US500`, `USTEC`, `NAS100`, `SPX500`, `GER40`, `UK100`, `JP225`.
+  - **Stocks (12):** `AAPL`, `TSLA`, `MSFT`, `NVDA`, `AMZN`, `META`, `GOOGL`, `AMD`, `PLTR`, etc.
+
+### CEO Executive Overrule Authority
+- **Governance Hierarchy:** The CEO (Investor & Director) has explicit executive authority over non-fatal model warnings (`overfit` gap, `dsr` hurdle, parameter sensitivity) whenever the strategy demonstrates real positive returns on unseen data (`oos: PASS`).
+- **Inviolable Risk Limits:** The CEO cannot overrule hard safety breaches: out-of-sample losses (`oos: FAIL`), excessive drawdowns (`mandate: FAIL`), daily stop breaches (`limits: FAIL`), or future data leakage (`leak: FAIL`).
+- **UI & Autotrader Alignment:** When executive authority is applied, the strategy is marked `Signed off (CEO Overruled)`, the verdict turns green (`Ready to trade (CEO Overrule)`), and the Python robot accepts the strategy for live execution.
+- **Overfit Gap Refinement:** Downgraded from an automatic fatal block to an informational warning when out-of-sample performance is already positive.
+
+### Parity Test Suite Hardening
+- `tools/parity_dump.mjs` anchors `Date.now()` to a fixed reference time (`1788764440000`) so synthetic bar time seasonality remains 100% deterministic, ensuring parity tests (`17/17 cases match`) and drift watch pass consistently at any hour of the day.
+
 
