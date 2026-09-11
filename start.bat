@@ -43,13 +43,9 @@ if not errorlevel 1 (
   )
 )
 
-REM --- 3. Is it already running? ---
-powershell -NoProfile -Command "if(Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue){exit 0}else{exit 1}" 1>nul 2>nul
-if not errorlevel 1 (
-  echo [info] Server already running. Opening browser...
-  start "" http://127.0.0.1:5000
-  exit /b 0
-)
+REM --- 3. Stop any existing server on port 5000 to ensure latest code runs ---
+powershell -NoProfile -Command "$p = Get-NetTCPConnection -LocalPort 5000 -State Listen -ErrorAction SilentlyContinue | Select-Object -Expand OwningProcess -Unique; if($p){ $p | ForEach-Object { try{ Stop-Process -Id $_ -Force -ErrorAction Stop; Write-Host ('[info] Stopped existing server PID ' + $_) }catch{} } }"
+
 
 REM --- 4. Start the server (minimized, logging to backend.log) ---
 echo [run] Starting server on port 5000 ...

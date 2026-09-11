@@ -44,7 +44,8 @@ export default function MonteCarloTab({ accountInfo, onSelectSymbolAndGoToChart 
   const handleLotChange = (val) => {
     const clamped = Math.max(0.01, Math.min(1.0, parseFloat(val) || 0.01));
     setLotSize(clamped);
-    setRiskPerTrade(Math.round(clamped * 1000)); // rough benchmark
+    // Gold ~25 pips: 0.10 lot = $25, 0.01 lot = $2.50, 1.0 lot = $250
+    setRiskPerTrade(Math.max(5, Math.round(clamped * 250)));
   };
 
   const runSimulation = async () => {
@@ -55,19 +56,30 @@ export default function MonteCarloTab({ accountInfo, onSelectSymbolAndGoToChart 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          initial_balance: initialBalance,
-          simulations: simulations,
-          num_trades: numTrades,
-          win_rate: winRate,
-          reward_risk: rewardRisk,
-          risk_per_trade: riskPerTrade,
-          lot_size: lotSize,
-          ruin_threshold_pct: ruinThresholdPct
+          initial_balance: parseFloat(initialBalance) || 1000,
+          simulations: parseInt(simulations) || 1000,
+          num_trades: parseInt(numTrades) || 100,
+          win_rate: parseFloat(winRate) || 60,
+          reward_risk: parseFloat(rewardRisk) || 1.5,
+          risk_per_trade: parseFloat(riskPerTrade) || 25,
+          lot_size: parseFloat(lotSize) || 0.10,
+          ruin_threshold_pct: parseFloat(ruinThresholdPct) || 20
         })
       });
-      const data = await res.json();
+
+      const rawText = await res.text();
+      let data = null;
+      try {
+        data = JSON.parse(rawText);
+      } catch (parseErr) {
+        if (!res.ok) {
+          throw new Error(`Server returned HTTP ${res.status} (${res.statusText || 'Unavailable'}). Please ensure backend server is restarted.`);
+        }
+        throw new Error('Server returned non-JSON response.');
+      }
+
       if (!res.ok || data.error) {
-        throw new Error(data.error || 'Simulation failed');
+        throw new Error(data.error || `Simulation failed (HTTP ${res.status})`);
       }
       setResults(data);
     } catch (err) {

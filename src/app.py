@@ -1232,20 +1232,24 @@ def signals_log():
 # ─────────────────────────────────────────────────────────────────────────────
 # Monte Carlo Stress Lab, Market Screener, and Discord Notification Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
-@app.route("/api/stress_test/monte_carlo", methods=["POST"])
+@app.route("/api/stress_test/monte_carlo", methods=["GET", "POST"])
+@app.route("/api/monte_carlo", methods=["GET", "POST"])
 def api_monte_carlo():
     """Execute vectorized Monte Carlo stress test simulation."""
-    data = request.get_json(force=True) or {}
+    if request.method == "POST":
+        data = request.get_json(silent=True) or {}
+    else:
+        data = request.args.to_dict()
     try:
         res = run_monte_carlo_simulation(
-            initial_balance=data.get("initial_balance", 10000.0),
-            simulations=data.get("simulations", 1000),
-            num_trades=data.get("num_trades", 100),
-            win_rate=data.get("win_rate", 60.0),
-            reward_risk=data.get("reward_risk", 1.5),
-            risk_per_trade=data.get("risk_per_trade", 100.0),
-            lot_size=data.get("lot_size", 0.10),
-            ruin_threshold_pct=data.get("ruin_threshold_pct", 20.0),
+            initial_balance=float(data.get("initial_balance", 10000.0)),
+            simulations=int(data.get("simulations", 1000)),
+            num_trades=int(data.get("num_trades", 100)),
+            win_rate=float(data.get("win_rate", 60.0)),
+            reward_risk=float(data.get("reward_risk", 1.5)),
+            risk_per_trade=float(data.get("risk_per_trade", 100.0)),
+            lot_size=float(data.get("lot_size", 0.10)),
+            ruin_threshold_pct=float(data.get("ruin_threshold_pct", 20.0)),
             trade_returns=data.get("trade_returns", None)
         )
         return jsonify(res)
@@ -1341,7 +1345,7 @@ def app_update_status():
     dirty_ok, dirty_out = _run("git status --porcelain", timeout=30)
     dirty_files = [l for l in (dirty_out or "").splitlines() if l.strip()]
 
-    cur_ok, cur = _run('git log -1 --format=%h|%ci|%s', timeout=15)
+    cur_ok, cur = _run('git log -1 --format="%h|%ci|%s"', timeout=15)
     up_ok, upstream = _run("git rev-parse --abbrev-ref --symbolic-full-name @{u}", timeout=15)
     behind, ahead = 0, 0
     if up_ok:
@@ -1354,7 +1358,7 @@ def app_update_status():
 
     latest = ""
     if up_ok and behind > 0:
-        l_ok, l = _run('git log -1 --format=%h|%ci|%s @{u}', timeout=15)
+        l_ok, l = _run('git log -1 --format="%h|%ci|%s" @{u}', timeout=15)
         if l_ok: latest = l.strip()
 
     parts = (cur or "").strip().split("|", 2)
@@ -1383,7 +1387,7 @@ def app_update_status():
 
 @app.route("/api/system/version", methods=["GET"])
 def system_version():
-    cur_ok, cur = _run('git log -1 --format=%h|%ci|%s', timeout=15)
+    cur_ok, cur = _run('git log -1 --format="%h|%ci|%s"', timeout=15)
     parts = (cur or "").strip().split("|", 2)
     return jsonify({
         "app_name": getattr(config, "APP_NAME", "MyTradingView"),
@@ -1433,7 +1437,7 @@ def app_update():
 
     # 4) Rebuild the frontend so the served app reflects the new code.
     build_ok, build_out = _run("npm run build", timeout=420, cwd=os.path.join(_REPO_ROOT, "frontend"))
-    _, new_head = _run('git log -1 --format=%h|%s', timeout=15)
+    _, new_head = _run('git log -1 --format="%h|%s"', timeout=15)
 
     return jsonify({
         "success": True,
@@ -1445,6 +1449,15 @@ def app_update():
         "restart_required": True,
         "message": "Update downloaded and rebuilt." if build_ok else "Update downloaded, but the rebuild reported problems — see details.",
     }), 200
+
+@app.route("/api/system/restart", methods=["POST"])
+def system_restart():
+    """Cleanly restarts the backend server process."""
+    def _do_restart():
+        time.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=_do_restart, daemon=True).start()
+    return jsonify({"success": True, "message": "Backend server restarting..."})
 
 @app.route("/api/intelligence/summary", methods=["GET"])
 def intelligence_summary():
