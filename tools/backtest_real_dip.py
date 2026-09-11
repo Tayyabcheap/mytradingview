@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Backtester for "Real Dip Reversal [SL Buffer]" (Pine Script v6)
-==============================================================
+Backtester for "Haider-Gold-Scalper [SL Buffer]" (Pine Script v6)
+================================================================
 Replicates the user's Pine Script v6 indicator & strategy in Python,
 connecting directly to MT5 or CSV data.
 
@@ -433,11 +433,11 @@ def run_backtest(
 
 def print_stats_table(stats: Dict[str, Any], symbol: str, tf: str, num_bars: int) -> None:
     print("\n" + "=" * 62)
-    print(f"      REAL DIP REVERSAL [SL BUFFER] — BACKTEST REPORT")
+    print(f"      HAIDER-GOLD-SCALPER [SL BUFFER] — BACKTEST REPORT")
     print("=" * 62)
     print(f"  Asset: {symbol:<12} Timeframe: {tf:<8} Total Bars: {num_bars:,}")
     print("-" * 62)
-    print(f"  {'Real Dip Stats':<30} | {'Count / Value':<24}")
+    print(f"  {'Haider-Gold-Scalper Stats':<30} | {'Count / Value':<24}")
     print("-" * 62)
     print(f"  {'Total Signals':<30} | {stats['total_signals']:<24}")
     print(f"  {'Wins (Hit TP)':<30} | {stats['win_count']:<24}")
@@ -497,7 +497,7 @@ def fetch_mt5_bars(symbol: str, tf_str: str, count: int) -> List[Bar]:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Real Dip Reversal [SL Buffer] Pine Script Backtester")
+    parser = argparse.ArgumentParser(description="Haider-Gold-Scalper [SL Buffer] Pine Script Backtester")
     parser.add_argument("--symbol", "-s", default="XAUUSDc", help="MT5 Symbol name (default: XAUUSDc)")
     parser.add_argument("--tf", "-t", default="1H", help="Timeframe: 1M, 5M, 15M, 1H, 4H, 1D (default: 1H)")
     parser.add_argument("--bars", "-b", type=int, default=5000, help="Number of bars to backtest (default: 5000)")

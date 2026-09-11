@@ -821,9 +821,10 @@ def backtest_gold_scalper():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/backtest/haider_gold_scalper", methods=["GET"])
 @app.route("/api/backtest/real_dip", methods=["GET"])
-def backtest_real_dip():
-    """Run the Real Dip Reversal [SL Buffer] strategy against real MT5 history and return stats."""
+def backtest_haider_gold_scalper():
+    """Run the Haider-Gold-Scalper [SL Buffer] strategy against real MT5 history and return stats."""
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 

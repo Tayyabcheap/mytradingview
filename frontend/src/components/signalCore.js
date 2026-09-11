@@ -67,8 +67,8 @@ export function computeSignalSeries(dataList, strategy = 'ALL', partialUsd = 20)
     }
   }
 
-  // --- REAL DIP REVERSAL [SL BUFFER] ENGINE ---
-  if (strategy === 'REAL_DIP') {
+  // --- HAIDER-GOLD-SCALPER [SL BUFFER] ENGINE ---
+  if (strategy === 'REAL_DIP' || strategy === 'HAIDER_GOLD_SCALPER') {
     const impulseMult = 1.0;
     const rsiBuyLevel = 35.0;
     const rsiSellLevel = 65.0;
@@ -98,7 +98,7 @@ export function computeSignalSeries(dataList, strategy = 'ALL', partialUsd = 20)
         const tpDist = Math.max(Math.abs(entry - tpLevel), 0.01);
         out[i] = {
           signalType: 'SELL',
-          strategy: 'REAL_DIP',
+          strategy: 'Haider-Gold-Scalper',
           entryPrice: entry,
           slPrice: slLevel,
           tp1Price: tpLevel,
@@ -116,7 +116,7 @@ export function computeSignalSeries(dataList, strategy = 'ALL', partialUsd = 20)
         const tpDist = Math.max(Math.abs(tpLevel - entry), 0.01);
         out[i] = {
           signalType: 'BUY',
-          strategy: 'REAL_DIP',
+          strategy: 'Haider-Gold-Scalper',
           entryPrice: entry,
           slPrice: slLevel,
           tp1Price: tpLevel,

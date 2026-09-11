@@ -1,6 +1,6 @@
 """
-Real Dip Reversal [SL Buffer] backtest engine.
-Shared by /api/backtest/real_dip endpoint, the CLI tool, and strategy evaluations.
+Haider-Gold-Scalper [SL Buffer] backtest engine.
+Shared by /api/backtest/haider_gold_scalper and /api/backtest/real_dip endpoints, CLI tool, and strategy evaluations.
 Replicates the user's Pine Script v6:
   - Big Candle Detection: candleBody > atr * impulseMult
   - RSI Exhaustion Filter: Buy: close < open & rsi < 35; Sell: close > open & rsi > 65
@@ -289,7 +289,7 @@ def backtest(
             max_dd = dd
 
     return {
-        "strategy": "Real Dip Reversal [SL Buffer]",
+        "strategy": "Haider-Gold-Scalper [SL Buffer]",
         "total_signals": total_signals,
         "win_count": win_count,
         "loss_count": loss_count,

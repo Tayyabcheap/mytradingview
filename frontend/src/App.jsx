@@ -63,7 +63,7 @@ plotshape(buy, style=shape.triangleup, location=location.belowbar, color=color.g
 plotshape(sell, style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")`;
 
 const REAL_DIP_PINE = `//@version=6
-indicator("Real Dip Reversal [SL Buffer]", overlay=true, max_labels_count=500)
+indicator("Haider-Gold-Scalper [SL Buffer]", overlay=true, max_labels_count=500)
 
 // ==========================================
 // 1. INPUTS
@@ -1264,7 +1264,7 @@ function App() {
                 }}>
                   {[
                     { id: 'ALL', label: 'Dual Engine (All Signals)', desc: 'Swing Core + Swing Pro' },
-                    { id: 'REAL_DIP', label: 'Real Dip Reversal', desc: 'ATR Impulse + RSI Exhaustion' },
+                    { id: 'REAL_DIP', label: 'Haider-Gold-Scalper', desc: 'ATR Impulse + RSI Exhaustion' },
                     { id: 'SWING_CORE', label: 'Swing Core (Pullback)', desc: 'Trend Pullback' },
                     { id: 'SWING_PRO', label: 'Swing Pro (Breakout)', desc: 'EMA 50 Breakout' }
                   ].map(strat => (
@@ -1684,7 +1684,7 @@ function App() {
                 </button>
                 <button className="top-btn" onClick={() => { setPineSource(REAL_DIP_PINE); setPineResult(null); }}
                   style={{ background: 'rgba(8,153,129,0.18)', color: '#089981', border: '1px solid #089981', fontWeight: 600, padding: '8px 14px' }}>
-                  Load Real Dip Reversal
+                  Load Haider-Gold-Scalper
                 </button>
                 <button className="top-btn" onClick={() => { setPineSource(DEFAULT_PINE); setPineResult(null); }}
                   style={{ color: 'var(--text-muted)' }}>
@@ -1763,7 +1763,7 @@ function App() {
               {/* Strategy Selector */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, background: '#131722', padding: 4, borderRadius: 6, border: '1px solid var(--border)' }}>
                 {[
-                  { id: 'real_dip', label: 'Real Dip Reversal' },
+                  { id: 'real_dip', label: 'Haider-Gold-Scalper' },
                   { id: 'gold_scalper', label: 'Gold Scalper Pro' }
                 ].map(s => (
                   <button
