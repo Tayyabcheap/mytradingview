@@ -12,10 +12,7 @@ import TradeExecutionPanel from './components/TradeExecutionPanel';
 import SymbolSearchModal from './components/SymbolSearchModal';
 import KLineChartArea from './components/KLineChartArea';
 import { computeSignalSeries, scoreSignalSeries } from './components/signalCore';
-import MyBrainsTab from './components/MyBrainsTab';
-import BrainsActivityTab from './components/BrainsActivityTab';
-import BrainsPerformanceTab from './components/BrainsPerformanceTab';
-import ManualTab from './components/ManualTab';
+
 import FlyoutToolbar from './components/FlyoutToolbar';
 import IndicatorsModal from './components/IndicatorsModal';
 import IndicatorSettingsModal from './components/IndicatorSettingsModal';
@@ -272,17 +269,13 @@ function App() {
   // Persist state to localStorage
   useEffect(() => { saveLS('workspaceTabs', workspaceTabs); }, [workspaceTabs]);
 
-  // Ensure workspace tabs reflect current structure and purge deleted tabs (academy, secret)
+  // Ensure workspace tabs reflect current structure and purge deleted tabs (academy, secret, brains, manual)
   useEffect(() => {
     setWorkspaceTabs(prev => {
-      let next = prev.filter(t => t.type !== 'academy' && t.type !== 'secret');
-      if (!next.some(t => t.type === 'brains')) next = [...next, { id: 'brains', title: 'MyBrains', type: 'brains', closable: false }];
-      if (!next.some(t => t.type === 'brainsactivity')) next = [...next, { id: 'brainsactivity', title: 'BrainsActivity', type: 'brainsactivity', closable: false }];
-      if (!next.some(t => t.type === 'brainsperf')) next = [...next, { id: 'brainsperf', title: 'BrainsPerformance', type: 'brainsperf', closable: false }];
-      if (!next.some(t => t.type === 'manual')) next = [...next, { id: 'manual', title: 'Manual', type: 'manual', closable: false }];
+      let next = prev.filter(t => !['academy', 'secret', 'brains', 'brainsactivity', 'brainsperf', 'manual'].includes(t.type));
       return next;
     });
-    setActiveTabId(curr => (curr === 'secret' || curr === 'academy' ? 'chart-main' : curr));
+    setActiveTabId(curr => (['secret', 'academy', 'brains', 'brainsactivity', 'brainsperf', 'manual'].includes(curr) ? 'chart-main' : curr));
   }, []);
 
   // Log a timestamped snapshot of the current signals for future analysis.
@@ -1475,29 +1468,7 @@ function App() {
         </div>
       )}
 
-      {activeTab.type === 'brains' && (
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <MyBrainsTab symbol={symbol} timeframe={timeframe} />
-        </div>
-      )}
 
-      {activeTab.type === 'brainsactivity' && (
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <BrainsActivityTab symbol={symbol} timeframe={timeframe} />
-        </div>
-      )}
-
-      {activeTab.type === 'brainsperf' && (
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <BrainsPerformanceTab accountInfo={accountInfo} />
-        </div>
-      )}
-
-      {activeTab.type === 'manual' && (
-        <div style={{ flex: 1, overflow: 'hidden' }}>
-          <ManualTab />
-        </div>
-      )}
 
       {activeTab.type === 'journal' && (
         <div style={{ flex: 1, overflow: 'hidden' }}>

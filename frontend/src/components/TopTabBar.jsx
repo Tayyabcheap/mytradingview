@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Brain, Radar, BarChart3 } from 'lucide-react';
+import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell } from 'lucide-react';
 
 export default function TopTabBar({
   tabs = [],
@@ -33,10 +33,6 @@ export default function TopTabBar({
           let Icon = CandlestickChart;
           if (tab.type === 'dashboard') Icon = LayoutDashboard;
           else if (tab.type === 'journal') Icon = BookOpen;
-          else if (tab.type === 'brains') Icon = Brain;
-          else if (tab.type === 'brainsactivity') Icon = Radar;
-          else if (tab.type === 'brainsperf') Icon = BarChart3;
-          else if (tab.type === 'manual') Icon = BookOpen;
 
           return (
             <div

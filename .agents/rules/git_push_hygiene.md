@@ -9,5 +9,5 @@
    - NEVER commit screenshots, image dumps (`Claude outputs/`), or temporary backup files (`*.prepool`, `*.prebook`, `*.bak`).
    - NEVER commit internal handover notes or documents containing account IDs, passwords, or sensitive infrastructure notes (`HANDOVER.md`, `README_AUTONOMY.md`, `CODE_REVIEW_*.md`).
 3. **Account Sanitization**: Never commit real broker account numbers. Ensure all UI copy and documentation refer to "configured demo account".
-4. **Remote Target**: Ensure git remote pushes to `git@github-personal:haider2804/MyFinanceAdvisor.git` using personal SSH keys.
-5. **Pre-Push Validation**: Always execute `python -m pytest` and `python tools/parity_check.py` to confirm zero regression before pushing.
+4. **Remote Target**: Ensure git remote pushes to `git@github-personal:haider2804/mytradingview.git` using personal SSH keys.
+5. **Pre-Push Validation**: Always execute `python -m unittest discover tests` and ensure `npm run build` succeeds in frontend to confirm zero regression before pushing.

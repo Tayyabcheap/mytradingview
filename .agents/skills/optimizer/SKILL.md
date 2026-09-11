@@ -5,7 +5,7 @@ description: An automated workflow for running iterative backtests to hunt for o
 
 # The Optimizer Agent
 
-When asked to run the Optimizer, you are taking control of a hyper-parameter tuning loop for MyFinanceAdvisor.
+When asked to run the Optimizer, you are taking control of a hyper-parameter tuning loop for MyTradingView.
 
 ## The Goal
 Find the exact `config.py` parameters that yield the highest Net PnL while maintaining a Win Rate > 50% and R:R > 1:1.5.

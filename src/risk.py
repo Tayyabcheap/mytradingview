@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor — Position Sizing & Session Discipline
-========================================================
+MyTradingView — Position Sizing & Session Discipline
+====================================================
 
 Implements playbook §4, which the previous version declared in config and then
 never referenced anywhere:

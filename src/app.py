@@ -1087,75 +1087,6 @@ def app_update():
 # ─────────────────────────────────────────────────────────────────────────────
 FRONTEND_DIST = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend", "dist")
 
-# ---------------------------------------------------------------------------
-# Autonomous trading
-# ---------------------------------------------------------------------------
-# The research floor lives in the browser; the robot lives here. The browser
-# publishes an AUDITED strategy, this process trades it. Nothing about the
-# credentials is ever returned to the browser.
-
-try:
-    import autotrader
-    import trading_account as _acct
-    AUTOTRADER_OK = True
-except Exception as _e:
-    autotrader = None
-    _acct = None
-    AUTOTRADER_OK = False
-    print("[AUTO] autotrader unavailable: %s" % _e, flush=True)
-
-
-@app.route("/api/autonomy/status", methods=["GET"])
-def autonomy_status():
-    if not AUTOTRADER_OK:
-        return jsonify({"available": False, "reason": "autotrader module failed to load"})
-    snap = autotrader.snapshot()
-    snap["available"] = True
-    snap["locked_to"] = _acct.expected_login()
-    return jsonify(snap)
-
-
-@app.route("/api/autonomy/strategy", methods=["POST"])
-def autonomy_strategy():
-    """The research floor publishes here after Audit has ruled on a strategy.
-
-    A payload whose audit did not pass is still stored - the robot needs to
-    know it is blocked and why, so it can say so instead of going quiet."""
-    if _blocked_cross_origin():
-        return jsonify({"error": "Cross-origin request blocked"}), 403
-    if not AUTOTRADER_OK:
-        return jsonify({"error": "autotrader unavailable"}), 503
-    data = request.get_json(force=True) or {}
-    if not data.get("champions"):
-        return jsonify({"error": "no champions in payload"}), 400
-    saved = autotrader.save_strategy(data)
-    return jsonify({"ok": True, "signed_at": saved["signed_at"],
-                    "audit_pass": bool((saved.get("audit") or {}).get("pass")),
-                    "executable": saved.get("executable", True),
-                    "executable_reason": saved.get("executable_reason", "")})
-
-
-@app.route("/api/autonomy/control", methods=["POST"])
-def autonomy_control():
-    if _blocked_cross_origin():
-        return jsonify({"error": "Cross-origin request blocked"}), 403
-    if not AUTOTRADER_OK:
-        return jsonify({"error": "autotrader unavailable"}), 503
-    data = request.get_json(force=True) or {}
-    if "enabled" in data:
-        autotrader.STATE["enabled"] = bool(data["enabled"])
-        autotrader._log("control", "Robot switched %s from the app."
-                        % ("ON" if data["enabled"] else "OFF"))
-    if data.get("mode") in ("live", "paper"):
-        autotrader.STATE["mode"] = data["mode"]
-        autotrader._log("control", "Mode set to %s." % data["mode"])
-    if data.get("flatten"):
-        autotrader.STATE["enabled"] = False
-        autotrader._log("control", "Kill switch: robot disabled by the director.")
-    return jsonify({"ok": True, "enabled": autotrader.STATE["enabled"],
-                    "mode": autotrader.STATE["mode"]})
-
-
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
 def serve_frontend(path):
@@ -1175,7 +1106,4 @@ def serve_frontend(path):
 
 if __name__ == "__main__":
     init_mt5()
-    if AUTOTRADER_OK:
-        autotrader.start()
-        print("[AUTO] autonomous trading thread started", flush=True)
     socketio.run(app, host=HOST, port=PORT, debug=True, use_reloader=False)

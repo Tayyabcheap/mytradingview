@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-title Trade with Rakhi
+title MyTradingView
 
 echo ==================================================
-echo   Trade with Rakhi  -  starting up
+echo   MyTradingView  -  starting up
 echo ==================================================
 
 REM --- 0. Python executable ---

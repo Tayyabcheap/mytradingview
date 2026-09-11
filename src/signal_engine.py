@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor - Dual Strategy Signal Engine
-==============================================
+MyTradingView - Dual Strategy Signal Engine
+===========================================
 """
 
 from typing import Dict, List, Optional, Tuple

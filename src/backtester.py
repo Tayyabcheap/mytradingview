@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor — Backtester
-==============================
+MyTradingView — Backtester
+==========================
 
 Simulates the playbook's full trade management, which no previous version did:
 
@@ -405,7 +405,7 @@ class Backtester:
 
 
 def main():
-    p = argparse.ArgumentParser(description="MyFinanceAdvisor backtester")
+    p = argparse.ArgumentParser(description="MyTradingView backtester")
     p.add_argument("--days", "-d", type=int, default=365)
     p.add_argument("--lots", "-l", type=float, default=0.10)
     p.add_argument("--strategy", "-s", default="both",

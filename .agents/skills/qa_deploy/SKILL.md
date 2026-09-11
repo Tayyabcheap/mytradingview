@@ -20,7 +20,7 @@ When asked to "run QA" or "deploy", you must execute this checklist strictly. Do
 2. Verify that the output does not throw Python tracebacks or `KeyError` exceptions (meaning the data processing pipeline is intact).
 
 ## Step 4: UI Verification
-1. Check that the `START_MY_FINANCE_ADVISOR.bat` script has the correct paths and commands to start the backend and frontend.
+1. Check that the `start.bat` script has the correct paths and commands to start the backend and frontend.
 
 ## Step 5: Final Report
-Write a short markdown summary indicating that the MyFinanceAdvisor engine is 100% green and ready for live trading.
+Write a short markdown summary indicating that the MyTradingView engine is 100% green and ready for live trading.

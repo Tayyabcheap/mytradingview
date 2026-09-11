@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor — Honest Performance Metrics
-==============================================
+MyTradingView — Honest Performance Metrics
+==========================================
 
 The old dashboard reported Rakhi Core as "67.7% win rate" while the strategy
 lost $13,574 over 440 trades. Nothing was wrong with that percentage. The

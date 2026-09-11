@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor — Voice
-========================
+MyTradingView — Voice
+=====================
 
 Two engines, one script library.
 

@@ -1,10 +1,10 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
-title Trade with Rakhi - Stop
+title MyTradingView - Stop
 
 echo ==================================================
-echo   Trade with Rakhi  -  stopping
+echo   MyTradingView  -  stopping
 echo ==================================================
 
 REM Kill whatever is listening on port 5000 (the server), robustly.

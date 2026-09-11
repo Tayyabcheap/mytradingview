@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor — Windows tray ticker
-=======================================
+MyTradingView — Windows tray ticker
+===================================
 
 Three fixes from the previous version:
 
@@ -187,7 +187,7 @@ class Tray:
         self.alert_since = time.time()
         if self.icon:
             try:
-                self.icon.notify(f"{message}\nClick to open the chart.", "MyFinanceAdvisor")
+                self.icon.notify(f"{message}\nClick to open the chart.", "MyTradingView")
             except Exception:
                 pass
 
@@ -222,9 +222,9 @@ class Tray:
                                  "STRONG_BEARISH": "Bearish"}.get(b, "Range")
                     if self.icon:
                         self.icon.title = (f"XAUUSD {self.price:.2f} · {self.bias}\n"
-                                           f"MyFinanceAdvisor")
+                                           f"MyTradingView")
                 elif self.icon:
-                    self.icon.title = "MyFinanceAdvisor — MetaTrader 5 offline"
+                    self.icon.title = "MyTradingView — MetaTrader 5 offline"
 
                 for a in self._get("/api/notify_tray").get("alerts", []):
                     msg = sanitize(a.get("message", ""), 300)
@@ -236,14 +236,14 @@ class Tray:
 
             except Exception:
                 if self.icon:
-                    self.icon.title = "MyFinanceAdvisor — desk not running"
+                    self.icon.title = "MyTradingView — desk not running"
             time.sleep(POLL_SEC)
 
     # -- run ----------------------------------------------------------------
 
     def run(self):
         self.icon = pystray.Icon(
-            "MyFinanceAdvisor", ICON_IDLE, "MyFinanceAdvisor",
+            "MyTradingView", ICON_IDLE, "MyTradingView",
             pystray.Menu(
                 pystray.MenuItem("Open chart", self.open_dashboard, default=True),
                 pystray.MenuItem("Open trade desk", self.open_desk),

@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor - Market Structure & Indicator Engine
-======================================================
+MyTradingView - Market Structure & Indicator Engine
+===================================================
 """
 
 import bisect

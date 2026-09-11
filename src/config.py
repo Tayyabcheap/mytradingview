@@ -1,6 +1,6 @@
 """
-MyFinanceAdvisor - System Specification
-=======================================
+MyTradingView - System Specification
+====================================
 Single source of truth for every strategy parameter for authentic Swing Trading.
 """
 

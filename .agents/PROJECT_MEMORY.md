@@ -1,44 +1,38 @@
-# Project Memory & Context: MyFinanceAdvisor
+# Project Memory & Context: MyTradingView
 
-**Last Updated:** September 8, 2026  
-**Repository:** `https://github.com/haider2804/MyFinanceAdvisor.git`  
+**Last Updated:** September 11, 2026  
+**Repository:** `https://github.com/haider2804/mytradingview.git`  
 **Branch:** `main` (clean, fully in sync)
 
 ---
 
 ## 1. System Architecture & Components
 
-`MyFinanceAdvisor` is a full-stack algorithmic trading workstation and autonomous strategy laboratory consisting of:
+`MyTradingView` is a full-stack algorithmic trading workstation consisting of:
 
 1. **Frontend (`frontend/`)**:
    - Built with **React 19 + Vite**, modern dark glassmorphic terminal aesthetic.
-   - **TradingView-style Charting**: Advanced candlestick chart rendering, timeframes (1M, 5M, 15M, 1H, 4H, 1D), custom indicators (EMA, MACD, RSI, ATR, Order Blocks, Liquidity, SR Zones).
-   - **MyBrains Research Floor (`MyBrainsTab.jsx`, `myBrainsLab.js`, `myBrainsCore.js`, `myBrainsStructure.js`)**:
-     - Interactive neural-network org chart simulation of an investment firm with 18 departments and ~87 agents.
-     - Genetic evolution and crossover algorithms that breed trading disciplines, cross-test across instruments, and audit strategy expectancy.
+   - **TradingView-style Charting**: Advanced candlestick chart rendering, multi-timeframe navigation (1M, 5M, 15M, 1H, 4H, 1D), custom indicators (EMA, MACD, RSI, ATR, Order Blocks, Liquidity, SR Zones).
+   - **Pine Script v6 Engine (`pineEngine.js`)**: Interactive script execution directly in the browser with full overlay/study support.
    - **Operational Tabs**:
-     - `DashboardTab`: Core charting, trade execution panel, manual orders, and broker connection status.
-     - `BrainsActivityTab`: Live stream of agent decisions, hires, demotions, and audit verdicts.
-     - `BrainsPerformanceTab`: Equity curves, Sharpe ratios, expectancy, and portfolio allocation.
-     - `ManualTab`: System documentation and user manual for operating the autonomous trading firm.
+     - `DashboardTab`: Core overview, market activity, active orders, and broker connection status.
+     - `Chart`: Full-featured KLine trading chart with drawing tools and order management.
+     - `TradeJournalTab`: Deal-pairing trade journal with statistics, performance metrics, and history logs.
 
 2. **Backend (`src/`)**:
    - **Flask Application (`src/app.py`)**: REST endpoints and WebSocket/event streaming for quotes, chart data, orders, alarms, and engine control.
-   - **Autonomous Robot (`src/autotrader.py`)**: 5-second polling loop executing vetted strategies.
-   - **Strategy Runtime (`src/strategy_runtime.py`)**: Pure Python execution engine mirroring `myBrainsLab.js` JavaScript research logic.
+   - **Signal Engine (`src/signal_engine.py`)**: Real-time SMC and Swing strategy setup generator.
    - **Account Guardian (`src/trading_account.py`)**: Strict gate ensuring MT5 connects only to configured demo accounts, preventing real money exposure.
    - **Market Clock (`src/market_clock.py`)**: Time management enforcing weekend flat rules and Friday wind-down.
    - **MetaTrader 5 Bridge**: Interfaces with MetaTrader 5 terminal Python API for order placement and market data.
-
-3. **Parity Verification (`tools/`)**:
-   - `tools/parity_check.py`, `tools/parity_dump.mjs`: Ensures Python live execution (`strategy_runtime.py`) and JavaScript research engine (`myBrainsLab.js`) produce mathematically identical entries and exits (17 test cases, 0 drift).
+   - **Backtester (`src/backtester.py`)**: Comprehensive trade management simulation and backtesting.
 
 ---
 
 ## 2. Git & Repository Configuration
 
-- **Remote URL**: `https://github.com/haider2804/MyFinanceAdvisor.git`
-- **SSH Endpoint**: `git@github-personal:haider2804/MyFinanceAdvisor.git`
+- **Remote URL**: `https://github.com/haider2804/mytradingview.git`
+- **SSH Endpoint**: `git@github-personal:haider2804/mytradingview.git`
 - **SSH Key**: Configured in `~/.ssh/config` under `github-personal` mapping to `D:/gitKeys/haider2804github`.
 - **Primary Branch**: `main`
 
@@ -62,8 +56,8 @@ To set up and run this codebase on a remote VM (Linux or Windows):
 ssh-keygen -t ed25519 -C "trading-vm"
 cat ~/.ssh/id_ed25519.pub
 # (Add this public key under GitHub Repo -> Settings -> Deploy keys)
-git clone git@github.com:haider2804/MyFinanceAdvisor.git
-cd MyFinanceAdvisor
+git clone git@github.com:haider2804/mytradingview.git
+cd mytradingview
 
 # Option B: Via Personal Access Token (HTTPS)
 git clone https://<GITHUB_USER>:<PAT_TOKEN>@github.com/haider2804/MyFinanceAdvisor.git
@@ -160,39 +154,11 @@ On fresh MT5 installations or new symbols, the local cache may be empty until MT
   3. **Gold / XAUUSD Lot Cap**: Strictly capped at **`1.0`** (`XAUUSD`, `XAUUSDc`, `XAUUSDm`).
   4. **Risk Cap**: `MAX_RISK_PERCENT` <= `1.0%` of account equity.
 
-### Autotrader 8 Gates:
-1. Robot enabled in UI / config.
-2. MT5 attached to authorized demo account with Algo Trading enabled.
-3. Market open (weekday hours, flat prior to weekend close).
-4. Published strategy has passed full Audit sign-off (or CEO Executive Overrule).
-5. Strategy sign-off is less than 24 hours old.
-6. Strategy discipline is reproducible by Python runtime.
-7. Today's loss stop and max trades cap (Legal dept) not hit.
-8. Valid setup confirmed on the last closed bar.
+### Safety Limits & Trading Gates
+1. **Demo Account Only**: Blocks immediately if the terminal is logged into a live account (unless `allow_live_account` is explicitly set).
+2. **Algo Trading Check**: Requires the MT5 "Algo Trading" button to be enabled (green) before placing automated or script orders.
+3. **Gold / XAUUSD Lot Cap**: Strictly capped at **`1.0`** (`XAUUSD`, `XAUUSDc`, `XAUUSDm`).
+4. **Risk Cap**: `MAX_RISK_PERCENT` <= `1.0%` of account equity.
 
----
-
-## 5. Quantitative Governance & Laboratory Evolution (September 8, 2026)
-
-### Deflated Sharpe Ratio (DSR) Windowing
-- **The Issue Solved:** Lifetime trial count accumulation ($N > 220,000$) inflated the theoretical Sharpe hurdle ($sr_0$) to $8.79$, making viable institutional Sharpe ratios ($2.0 - 3.5$) appear as $0.00\%$ credibility and locking setup confidence to $0\%$.
-- **The Solution:** Effective trials in `expectedMaxSharpe` are bounded to the active candidate pool window ($\min(\max(2, \text{trials}), 250)$), aligning with Marcos López de Prado's econometrics framework. A strategy with out-of-sample edge now reaches $85\% - 95\%$ credibility and setup confidence can reach $80\%+$.
-
-### 50-Instrument Multi-Asset Universe
-- Discovery quota (`QUOTA`) expanded from 20 to 50 instruments across:
-  - **Forex (16):** `EURUSD`, `GBPUSD`, `USDJPY`, `EURGBP`, `AUDUSD`, `USDCAD`, `USDCHF`, `NZDUSD`, `EURJPY`, `GBPJPY`, etc.
-  - **Commodities (6):** `XAUUSD` (Gold), `XAGUSD` (Silver), `USOIL` (Crude), `UKOIL` (Brent), `XPTUSD`, `NGAS`.
-  - **Crypto (8):** `BTCUSD`, `ETHUSD`, `SOLUSD`, `XRPUSD`, `LTCUSD`, `ADAUSD`, `DOGEUSD`, `BNBUSD`.
-  - **Indices (8):** `US30`, `US500`, `USTEC`, `NAS100`, `SPX500`, `GER40`, `UK100`, `JP225`.
-  - **Stocks (12):** `AAPL`, `TSLA`, `MSFT`, `NVDA`, `AMZN`, `META`, `GOOGL`, `AMD`, `PLTR`, etc.
-
-### CEO Executive Overrule Authority
-- **Governance Hierarchy:** The CEO (Investor & Director) has explicit executive authority over non-fatal model warnings (`overfit` gap, `dsr` hurdle, parameter sensitivity) whenever the strategy demonstrates real positive returns on unseen data (`oos: PASS`).
-- **Inviolable Risk Limits:** The CEO cannot overrule hard safety breaches: out-of-sample losses (`oos: FAIL`), excessive drawdowns (`mandate: FAIL`), daily stop breaches (`limits: FAIL`), or future data leakage (`leak: FAIL`).
-- **UI & Autotrader Alignment:** When executive authority is applied, the strategy is marked `Signed off (CEO Overruled)`, the verdict turns green (`Ready to trade (CEO Overrule)`), and the Python robot accepts the strategy for live execution.
-- **Overfit Gap Refinement:** Downgraded from an automatic fatal block to an informational warning when out-of-sample performance is already positive.
-
-### Parity Test Suite Hardening
-- `tools/parity_dump.mjs` anchors `Date.now()` to a fixed reference time (`1788764440000`) so synthetic bar time seasonality remains 100% deterministic, ensuring parity tests (`17/17 cases match`) and drift watch pass consistently at any hour of the day.
 
 

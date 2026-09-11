@@ -1,10 +1,10 @@
 //+------------------------------------------------------------------+
-//|                                           MyFinanceAdvisor_SMC.mq5 |
-//|                                  Copyright 2026, MyFinanceAdvisor  |
+//|                                             MyTradingView_SMC.mq5 |
+//|                                    Copyright 2026, MyTradingView  |
 //|                    Smart Money Concepts (SMC) & Liquidity Sweeps |
 //+------------------------------------------------------------------+
-#property copyright "MyFinanceAdvisor (@Tradewithrakhi)"
-#property link      "https://myfinanceadvisor.com"
+#property copyright "MyTradingView"
+#property link      "https://mytradingview.com"
 #property version   "1.00"
 #property indicator_chart_window
 #property indicator_buffers 2
@@ -55,7 +55,7 @@ int OnInit()
    PlotIndexSetInteger(0, PLOT_ARROW, 233); // Wingdings Up Arrow
    PlotIndexSetInteger(1, PLOT_ARROW, 234); // Wingdings Down Arrow
 
-   IndicatorSetString(INDICATOR_SHORTNAME, "MyFinanceAdvisor_SMC");
+   IndicatorSetString(INDICATOR_SHORTNAME, "MyTradingView_SMC");
    IndicatorSetInteger(INDICATOR_DIGITS, _Digits);
 
    return(INIT_SUCCEEDED);
