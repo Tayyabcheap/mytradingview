@@ -11,6 +11,9 @@ import TradeJournalTab from './components/TradeJournalTab';
 import TradeExecutionPanel from './components/TradeExecutionPanel';
 import SymbolSearchModal from './components/SymbolSearchModal';
 import KLineChartArea from './components/KLineChartArea';
+import MonteCarloTab from './components/MonteCarloTab';
+import MarketScreenerModal from './components/MarketScreenerModal';
+import NotificationSettingsModal from './components/NotificationSettingsModal';
 import { computeSignalSeries, scoreSignalSeries } from './components/signalCore';
 
 import FlyoutToolbar from './components/FlyoutToolbar';
@@ -214,12 +217,19 @@ const INITIAL_INDICATORS = [
 const INITIAL_WORKSPACE_TABS = [
   { id: 'dashboard', title: 'Dashboard', type: 'dashboard', closable: false },
   { id: 'chart-main', title: 'Chart: XAUUSDc', type: 'chart', symbol: 'XAUUSDc', timeframe: '1H', closable: false },
-  { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false }
+  { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false },
+  { id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false }
 ];
 
 function App() {
   // Top Workspace Tabs
-  const [workspaceTabs, setWorkspaceTabs] = useState(() => loadLS('workspaceTabs', INITIAL_WORKSPACE_TABS));
+  const [workspaceTabs, setWorkspaceTabs] = useState(() => {
+    const loaded = loadLS('workspaceTabs', INITIAL_WORKSPACE_TABS);
+    if (!loaded.some(t => t.id === 'monte_carlo')) {
+      loaded.push({ id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false });
+    }
+    return loaded;
+  });
   const [activeTabId, setActiveTabId] = useState(() => loadLS('activeTabId', 'chart-main'));
 
   // Current Chart state
@@ -252,6 +262,8 @@ function App() {
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showSnapshotModal, setShowSnapshotModal] = useState(false);
   const [snapshotUrl, setSnapshotUrl] = useState(null);
+  const [showScreenerModal, setShowScreenerModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
 
   // Indicators State
   const [indicators, setIndicators] = useState(() => loadLS('indicators', INITIAL_INDICATORS));
@@ -1140,6 +1152,8 @@ function App() {
         onReorderTab={handleReorderTab}
         accountInfo={accountInfo}
         onOpenSymbolSearch={() => setShowSymbolSearch(true)}
+        onOpenScreener={() => setShowScreenerModal(true)}
+        onOpenNotificationSettings={() => setShowNotificationModal(true)}
       />
 
       {/* 2. TAB 1: DASHBOARD VIEW */}
@@ -1696,7 +1710,30 @@ function App() {
         </div>
       )}
 
+      {/* 4. TAB 4: MONTE CARLO STRESS LAB VIEW */}
+      {activeTab.type === 'monte_carlo' && (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <MonteCarloTab
+            accountInfo={accountInfo}
+            onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
+          />
+        </div>
+      )}
+
       {/* 5. GLOBAL MODALS */}
+
+      {/* MARKET SCREENER MODAL */}
+      <MarketScreenerModal
+        isOpen={showScreenerModal}
+        onClose={() => setShowScreenerModal(false)}
+        onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
+      />
+
+      {/* NOTIFICATION CHANNELS MODAL (DISCORD & DESKTOP) */}
+      <NotificationSettingsModal
+        isOpen={showNotificationModal}
+        onClose={() => setShowNotificationModal(false)}
+      />
 
       {/* SYMBOL SEARCH MODAL (TRADINGVIEW CATEGORIZED BROKER SYMBOLS) */}
       <SymbolSearchModal

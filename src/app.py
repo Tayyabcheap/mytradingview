@@ -14,6 +14,9 @@ from flask_socketio import SocketIO
 import store
 import pandas as pd
 import ta
+from stress_test import run_monte_carlo_simulation
+from screener import scan_symbols
+from notifications import get_discord_config, save_discord_config, send_discord_alert
 
 try:
     import MetaTrader5 as mt5
@@ -219,6 +222,55 @@ def get_symbols():
             })
         return jsonify(res)
 
+# Global in-memory tracking registry for Auto-Breakeven at TP1
+AUTO_BE_TRACKER = {}
+
+def _check_auto_breakeven(positions):
+    """Checks open positions and moves SL to breakeven if TP1 has been crossed."""
+    global AUTO_BE_TRACKER
+    if not AUTO_BE_TRACKER or not positions:
+        return
+    for p in positions:
+        ticket = p.ticket
+        if ticket in AUTO_BE_TRACKER:
+            track = AUTO_BE_TRACKER[ticket]
+            if track.get("be_done"):
+                continue
+            tp1 = track.get("tp1")
+            open_price = track.get("open_price", p.price_open)
+            current_sl = p.sl
+
+            should_move_be = False
+            if p.type == 0:  # BUY
+                if p.price_current >= tp1 and (current_sl < open_price or current_sl == 0.0):
+                    should_move_be = True
+            elif p.type == 1:  # SELL
+                if p.price_current <= tp1 and (current_sl > open_price or current_sl == 0.0):
+                    should_move_be = True
+
+            if should_move_be:
+                req = {
+                    "action": mt5.TRADE_ACTION_SLTP,
+                    "position": ticket,
+                    "symbol": p.symbol,
+                    "sl": float(open_price),
+                    "tp": float(p.tp),
+                }
+                res = mt5.order_send(req)
+                if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                    track["be_done"] = True
+                    print(f"[AUTO-BE] >>> Moved SL for #{ticket} ({p.symbol}) to Breakeven ({open_price})!", flush=True)
+                    send_discord_alert(
+                        title=f"🛡️ Auto-Breakeven Primed: #{ticket} ({p.symbol})",
+                        description=f"Position #{ticket} reached TP1 ({tp1}). Stop Loss was moved to Breakeven at entry price ({open_price}). Trade is now 100% risk-free!",
+                        color=0x089981,
+                        fields=[
+                            {"name": "Symbol", "value": p.symbol, "inline": True},
+                            {"name": "Entry", "value": str(open_price), "inline": True},
+                            {"name": "TP1 Target", "value": str(tp1), "inline": True}
+                        ]
+                    )
+
 @app.route("/api/positions", methods=["GET"])
 def get_positions():
     if not init_mt5():
@@ -229,12 +281,19 @@ def get_positions():
         if not positions:
             return jsonify([])
 
+        # Check and apply Auto-Breakeven at TP1
+        _check_auto_breakeven(positions)
+
         out = []
         for p in positions:
             p_dict = p._asdict()
             p_dict["type_str"] = "BUY" if p_dict.get("type") == 0 else "SELL"
             p_dict["category"] = categorize_symbol(p_dict.get("symbol", ""))
             p_dict["time_str"] = datetime.datetime.fromtimestamp(p_dict.get("time", 0)).strftime("%Y-%m-%d %H:%M:%S") if p_dict.get("time") else ""
+            if p.ticket in AUTO_BE_TRACKER:
+                p_dict["auto_be"] = True
+                p_dict["auto_be_tp1"] = AUTO_BE_TRACKER[p.ticket].get("tp1")
+                p_dict["auto_be_done"] = AUTO_BE_TRACKER[p.ticket].get("be_done", False)
             out.append(p_dict)
         return jsonify(out)
 
@@ -351,6 +410,38 @@ def send_order():
             }), 400
         print(f"[ORDER] <<< SUCCESS order={res.order} deal={res.deal} price={res.price}", flush=True)
 
+        # Register for Auto-Breakeven if requested
+        if (data.get("auto_be_tp1") or data.get("auto_be")) and tp > 0:
+            tp1_val = float(data.get("tp1") or 0.0)
+            if not tp1_val:
+                # Default TP1 is 50% of the distance from entry to TP
+                tp1_val = round(price + (tp - price) * 0.5, 3)
+            AUTO_BE_TRACKER[res.order] = {
+                "symbol": symbol,
+                "type": order_type_str,
+                "open_price": res.price or price,
+                "tp1": tp1_val,
+                "tp": tp,
+                "sl": sl,
+                "be_done": False
+            }
+            print(f"[AUTO-BE] Registered #{res.order} for Auto-Breakeven at TP1={tp1_val}", flush=True)
+
+        # Dispatch Discord trade notification if enabled
+        send_discord_alert(
+            title=f"⚡ Order Placed: {order_type_str} {volume:.2f} {symbol}",
+            description=f"Order #{res.order} executed successfully at {res.price or price:.3f}.",
+            color=0x089981 if order_type_str == "BUY" else 0xF23645,
+            fields=[
+                {"name": "Symbol", "value": symbol, "inline": True},
+                {"name": "Type", "value": order_type_str, "inline": True},
+                {"name": "Volume", "value": f"{volume:.2f} Lots", "inline": True},
+                {"name": "Price", "value": f"{res.price or price:.3f}", "inline": True},
+                {"name": "SL", "value": f"{sl:.3f}" if sl else "None", "inline": True},
+                {"name": "TP", "value": f"{tp:.3f}" if tp else "None", "inline": True},
+            ]
+        )
+
         return jsonify({
             "success": True,
             "order": res.order,
@@ -432,6 +523,84 @@ def close_order():
             "profit": pos.profit,
             "comment": res.comment
         })
+
+@app.route("/api/order/modify", methods=["POST"])
+def modify_order():
+    """Modify SL/TP of an open position using MT5 TRADE_ACTION_SLTP."""
+    if _blocked_cross_origin():
+        return jsonify({"error": "Cross-origin trade request blocked"}), 403
+    if not init_mt5():
+        return jsonify({"error": "MT5 not connected"}), 500
+
+    data = request.get_json(force=True) or {}
+    try:
+        ticket = int(data.get("ticket", 0))
+    except (ValueError, TypeError):
+        ticket = 0
+    if not ticket:
+        return jsonify({"error": "Ticket is required"}), 400
+
+    new_sl = data.get("sl")
+    new_tp = data.get("tp")
+
+    with mt5_lock:
+        positions = mt5.positions_get(ticket=ticket)
+        if not positions:
+            all_pos = mt5.positions_get()
+            match = [p for p in all_pos if p.ticket == ticket] if all_pos else []
+            if not match:
+                return jsonify({"error": f"Position #{ticket} not found"}), 404
+            pos = match[0]
+        else:
+            pos = positions[0]
+
+        sl_val = float(new_sl) if new_sl is not None else float(pos.sl)
+        tp_val = float(new_tp) if new_tp is not None else float(pos.tp)
+
+        req = {
+            "action": mt5.TRADE_ACTION_SLTP,
+            "position": ticket,
+            "symbol": pos.symbol,
+            "sl": sl_val,
+            "tp": tp_val,
+        }
+        res = mt5.order_send(req)
+        if res is None:
+            return jsonify({"error": f"MT5 order_send returned None: {mt5.last_error()}"}), 500
+        if res.retcode != mt5.TRADE_RETCODE_DONE:
+            return jsonify({"error": f"Modify failed ({res.retcode}): {res.comment}"}), 400
+
+        return jsonify({
+            "success": True,
+            "ticket": ticket,
+            "sl": sl_val,
+            "tp": tp_val,
+            "comment": res.comment
+        })
+
+@app.route("/api/order/auto_be", methods=["GET", "POST"])
+def manage_auto_be():
+    """Register or inspect Auto-Breakeven tracking for positions."""
+    global AUTO_BE_TRACKER
+    if request.method == "GET":
+        return jsonify({"tracker": AUTO_BE_TRACKER})
+    data = request.get_json(force=True) or {}
+    ticket = data.get("ticket")
+    if not ticket:
+        return jsonify({"error": "ticket required"}), 400
+    ticket = int(ticket)
+    tp1 = float(data.get("tp1", 0.0))
+    open_price = float(data.get("open_price", 0.0))
+    symbol = data.get("symbol", "")
+    type_str = (data.get("type") or "BUY").upper()
+    AUTO_BE_TRACKER[ticket] = {
+        "symbol": symbol,
+        "type": type_str,
+        "open_price": open_price,
+        "tp1": tp1,
+        "be_done": False
+    }
+    return jsonify({"success": True, "ticket": ticket, "tp1": tp1})
 
 @app.route("/api/journal/trades", methods=["GET"])
 def get_journal_trades():
@@ -986,7 +1155,10 @@ def app_settings():
     """Persist user settings (lot size, auto-trade, preferences) in database."""
     default_settings = {
         "lot_size": 0.01,
-        "auto_trade": False
+        "auto_trade": False,
+        "auto_be_tp1": False,
+        "discord_webhook_url": "",
+        "discord_enabled": False
     }
     if request.method == "GET":
         key = request.args.get("key")
@@ -1045,6 +1217,75 @@ def signals_log():
         log = log[-2000:]
     store.put("signal_log", "entries", log)
     return jsonify({"success": True, "count": len(log)})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Monte Carlo Stress Lab, Market Screener, and Discord Notification Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route("/api/stress_test/monte_carlo", methods=["POST"])
+def api_monte_carlo():
+    """Execute vectorized Monte Carlo stress test simulation."""
+    data = request.get_json(force=True) or {}
+    try:
+        res = run_monte_carlo_simulation(
+            initial_balance=data.get("initial_balance", 10000.0),
+            simulations=data.get("simulations", 1000),
+            num_trades=data.get("num_trades", 100),
+            win_rate=data.get("win_rate", 60.0),
+            reward_risk=data.get("reward_risk", 1.5),
+            risk_per_trade=data.get("risk_per_trade", 100.0),
+            lot_size=data.get("lot_size", 0.10),
+            ruin_threshold_pct=data.get("ruin_threshold_pct", 20.0),
+            trade_returns=data.get("trade_returns", None)
+        )
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/screener/scan", methods=["GET"])
+def api_screener_scan():
+    """Scan multi-asset markets in real-time for trade opportunities."""
+    if not init_mt5():
+        return jsonify({"error": "MT5 not connected"}), 500
+    try:
+        data = scan_symbols(
+            mt5_module=mt5,
+            mt5_lock=mt5_lock,
+            tf_map=TF_MAP,
+            resolve_symbol_fn=resolve_broker_symbol
+        )
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/notifications/discord/config", methods=["GET", "POST"])
+def api_discord_config():
+    """Manage Discord notification webhook settings."""
+    if request.method == "GET":
+        return jsonify(get_discord_config())
+    data = request.get_json(force=True) or {}
+    saved = save_discord_config(data)
+    return jsonify({"success": True, "config": saved})
+
+
+@app.route("/api/notifications/discord/test", methods=["POST"])
+def api_discord_test():
+    """Send a test embed to verify Discord webhook connectivity."""
+    data = request.get_json(force=True) or {}
+    url = data.get("webhook_url")
+    ok, msg = send_discord_alert(
+        title="🔔 MyTradingView Test Notification",
+        description="Your Discord Webhook is configured and working perfectly! Real-time signals, order executions, and Auto-Breakeven events will be delivered here.",
+        color=0x2962FF,
+        fields=[
+            {"name": "Status", "value": "Active & Verified", "inline": True},
+            {"name": "Mode", "value": "Direct Webhook (No Bot Token)", "inline": True},
+        ],
+        webhook_url=url
+    )
+    return jsonify({"success": ok, "message": msg})
 
 
 

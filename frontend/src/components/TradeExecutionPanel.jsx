@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   TrendingUp, TrendingDown, ShieldAlert, AlertTriangle, CheckCircle2, 
-  X, RefreshCw, Layers, ArrowRight, DollarSign, Percent, Lock
+  X, RefreshCw, Layers, ArrowRight, DollarSign, Percent, Lock, Shield
 } from 'lucide-react';
 
 export default function TradeExecutionPanel({
@@ -30,6 +30,7 @@ export default function TradeExecutionPanel({
   const [tpPrice, setTpPrice] = useState('');
   const [slPips, setSlPips] = useState(25);
   const [tpPips, setTpPips] = useState(50);
+  const [autoBeAtTP1, setAutoBeAtTP1] = useState(() => localStorage.getItem('twr_auto_be_tp1') === 'true');
   const [positions, setPositions] = useState([]);
   const [loadingPositions, setLoadingPositions] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -211,6 +212,7 @@ export default function TradeExecutionPanel({
       volume: lotSize,
       sl: enableSL ? parseFloat(slPrice) || 0.0 : 0.0,
       tp: enableTP ? parseFloat(tpPrice) || 0.0 : 0.0,
+      auto_be_tp1: autoBeAtTP1,
       comment: `TWR ${orderType}`
     };
     console.log('[TWR] Executing order →', payload);
@@ -635,6 +637,43 @@ export default function TradeExecutionPanel({
           </div>
         </div>
 
+        {/* SMART EXECUTION: AUTO-BE AT TP1 */}
+        <div 
+          onClick={() => {
+            const next = !autoBeAtTP1;
+            setAutoBeAtTP1(next);
+            localStorage.setItem('twr_auto_be_tp1', next ? 'true' : 'false');
+          }}
+          style={{
+            background: autoBeAtTP1 ? 'rgba(8, 153, 129, 0.08)' : '#0e1116',
+            border: autoBeAtTP1 ? '1px solid rgba(8, 153, 129, 0.3)' : '1px solid #1f2430',
+            borderRadius: 4,
+            padding: '6px 10px',
+            marginBottom: 12,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            transition: 'all 0.15s ease'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Shield size={13} color={autoBeAtTP1 ? '#089981' : '#8b949e'} />
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: autoBeAtTP1 ? '#089981' : '#8b949e' }}>
+              Auto SL to Breakeven at TP1
+            </span>
+          </div>
+          <input
+            type="checkbox"
+            checked={autoBeAtTP1}
+            onChange={(e) => {
+              setAutoBeAtTP1(e.target.checked);
+              localStorage.setItem('twr_auto_be_tp1', e.target.checked ? 'true' : 'false');
+            }}
+            style={{ accentColor: '#089981', cursor: 'pointer' }}
+          />
+        </div>
+
         {/* EXECUTE BUTTON */}
         <button
           disabled={submitting || isLotOverLimit}
@@ -711,8 +750,20 @@ export default function TradeExecutionPanel({
                         {p.type_str} {p.volume}
                       </span>
                     </div>
-                    <div style={{ color: '#8b949e', fontSize: 10, marginTop: 2 }}>
-                      #{p.ticket} · Open: {p.price_open}
+                    <div style={{ color: '#8b949e', fontSize: 10, marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>#{p.ticket} · Open: {p.price_open}</span>
+                      {p.auto_be && (
+                        <span style={{ 
+                          color: p.auto_be_done ? '#089981' : '#f7a600', 
+                          background: p.auto_be_done ? 'rgba(8,153,129,0.15)' : 'rgba(247,166,0,0.15)',
+                          padding: '1px 4px',
+                          borderRadius: 2,
+                          fontWeight: 700,
+                          fontSize: 9
+                        }}>
+                          {p.auto_be_done ? 'BE: PROTECTED' : 'BE: ARMED'}
+                        </span>
+                      )}
                     </div>
                   </div>
 

@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell } from 'lucide-react';
+import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Sliders, Zap, Settings } from 'lucide-react';
 
 export default function TopTabBar({
   tabs = [],
@@ -10,7 +10,9 @@ export default function TopTabBar({
   onReorderTab,
   accountInfo,
   unreadCount = 0,
-  onToggleNotifications
+  onToggleNotifications,
+  onOpenScreener,
+  onOpenNotificationSettings
 }) {
   const [dragId, setDragId] = useState(null);
   return (
@@ -33,6 +35,7 @@ export default function TopTabBar({
           let Icon = CandlestickChart;
           if (tab.type === 'dashboard') Icon = LayoutDashboard;
           else if (tab.type === 'journal') Icon = BookOpen;
+          else if (tab.type === 'monte_carlo') Icon = Sliders;
 
           return (
             <div
@@ -122,8 +125,51 @@ export default function TopTabBar({
         </button>
       </div>
 
-      {/* RIGHT: BROKER ACCOUNT STATUS PILL */}
+      {/* RIGHT: BROKER ACCOUNT STATUS PILL & QUICK TOOLS */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, paddingLeft: 12 }}>
+        {/* Market Screener quick button */}
+        {onOpenScreener && (
+          <button
+            onClick={onOpenScreener}
+            title="Open Market Screener"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 5,
+              background: 'rgba(41, 98, 255, 0.12)',
+              border: '1px solid rgba(41, 98, 255, 0.3)',
+              borderRadius: 4,
+              padding: '3px 8px',
+              color: '#2962ff',
+              fontSize: 11.5,
+              fontWeight: 700,
+              cursor: 'pointer'
+            }}
+          >
+            <Zap size={13} />
+            <span>Screener</span>
+          </button>
+        )}
+
+        {/* Discord / Push Notifications Settings */}
+        {onOpenNotificationSettings && (
+          <button
+            onClick={onOpenNotificationSettings}
+            title="Notification channels (Discord & Desktop)"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#8b949e',
+              cursor: 'pointer',
+              padding: 4,
+              display: 'flex',
+              alignItems: 'center'
+            }}
+          >
+            <Settings size={15} />
+          </button>
+        )}
+
         {/* Signal notifications bell */}
         <button
           onClick={onToggleNotifications}
