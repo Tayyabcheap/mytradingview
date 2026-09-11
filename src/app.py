@@ -27,7 +27,8 @@ from intelligence import (
     get_macro_sentinel_status,
     get_gold_liquidity_fixes,
     calculate_order_blocks,
-    find_order_block_confluences
+    find_order_block_confluences,
+    get_primary_order_block_setup
 )
 
 try:
@@ -1584,13 +1585,15 @@ def api_order_blocks():
     ob_tf1 = calculate_order_blocks(c1, timeframe=tf1_str, current_price=current_price or c1[-1]["close"])
     ob_tf2 = calculate_order_blocks(c2, timeframe=tf2_str, current_price=current_price or c2[-1]["close"])
     confluences = find_order_block_confluences(ob_tf1, ob_tf2)
+    primary_setup = get_primary_order_block_setup(confluences, ob_tf1, ob_tf2, current_price or (c1[-1]["close"] if c1 else 2650.0))
 
     return jsonify({
         "symbol": symbol,
         "current_price": current_price or (c1[-1]["close"] if c1 else 2650.0),
         "tf1": ob_tf1,
         "tf2": ob_tf2,
-        "confluences": confluences
+        "confluences": confluences,
+        "primary_setup": primary_setup
     })
 
 

@@ -658,6 +658,8 @@ def find_order_block_confluences(
     tf1 = ob_tf1.get("timeframe", "5M")
     tf2 = ob_tf2.get("timeframe", "15M")
 
+    current_p = ob_tf1.get("current_price") or ob_tf2.get("current_price") or 2650.0
+
     for z1 in zones1:
         for z2 in zones2:
             # Same directional bias (both Demand or both Supply)
@@ -669,9 +671,52 @@ def find_order_block_confluences(
                 if overlap_bot <= overlap_top:
                     overlap_range = round(overlap_top - overlap_bot, 2)
                     midpoint = round((overlap_top + overlap_bot) / 2.0, 3)
+                    action = "BUY" if z1["type"] == "BULL" else "SELL"
+                    
+                    # Risk and SL/TP configuration
+                    buffer = max(1.5, overlap_range * 0.4)
+                    if action == "BUY":
+                        sl_price = round(overlap_bot - buffer, 3)
+                        risk_pts = round(max(1.0, midpoint - sl_price), 3)
+                        tp1_price = round(midpoint + risk_pts * 2.0, 3)
+                        tp2_price = round(midpoint + risk_pts * 3.5, 3)
+                    else:
+                        sl_price = round(overlap_top + buffer, 3)
+                        risk_pts = round(max(1.0, sl_price - midpoint), 3)
+                        tp1_price = round(midpoint - risk_pts * 2.0, 3)
+                        tp2_price = round(midpoint - risk_pts * 3.5, 3)
+
+                    # Dynamic Condition Tracking
+                    if overlap_bot <= current_p <= overlap_top:
+                        cond_state = "TRIGGER_READY"
+                        cond_title = f"⚡ CONDITION MET: IN {z1['kind'].upper()} ZONE"
+                        cond_desc = f"Gold is inside the {tf1}/{tf2} Confluence Zone (${overlap_bot} - ${overlap_top}). Ready to open {action} trade!"
+                        dist_val = 0.0
+                    elif action == "BUY":
+                        dist_val = round(current_p - overlap_top, 2) if current_p > overlap_top else round(overlap_bot - current_p, 2)
+                        if abs(dist_val) <= 1.0:
+                            cond_state = "APPROACHING"
+                            cond_title = "⚡ APPROACHING DEMAND ZONE"
+                            cond_desc = f"Gold (${current_p:.2f}) is only ${abs(dist_val):.2f} away ({abs(dist_val)*10:.1f} pips) from Institutional Demand Zone."
+                        else:
+                            cond_state = "WAITING"
+                            cond_title = "⏳ WAITING FOR PULLBACK TO DEMAND"
+                            cond_desc = f"Waiting for Gold (${current_p:.2f}) to pull back ${abs(dist_val):.2f} ({abs(dist_val)*10:.1f} pips) into Demand Zone (${overlap_bot} - ${overlap_top})."
+                    else:
+                        dist_val = round(overlap_bot - current_p, 2) if current_p < overlap_bot else round(current_p - overlap_top, 2)
+                        if abs(dist_val) <= 1.0:
+                            cond_state = "APPROACHING"
+                            cond_title = "⚡ APPROACHING SUPPLY ZONE"
+                            cond_desc = f"Gold (${current_p:.2f}) is only ${abs(dist_val):.2f} away ({abs(dist_val)*10:.1f} pips) from Institutional Supply Zone."
+                        else:
+                            cond_state = "WAITING"
+                            cond_title = "⏳ WAITING FOR RALLY TO SUPPLY"
+                            cond_desc = f"Waiting for Gold (${current_p:.2f}) to rally ${abs(dist_val):.2f} ({abs(dist_val)*10:.1f} pips) into Supply Zone (${overlap_bot} - ${overlap_top})."
+
                     confluences.append({
                         "type": z1["type"],
                         "kind": z1["kind"],
+                        "action": action,
                         "tf_lower": tf1,
                         "tf_higher": tf2,
                         "lower_zone": f"{z1['bottom']} - {z1['top']}",
@@ -680,7 +725,112 @@ def find_order_block_confluences(
                         "overlap_span": overlap_range,
                         "midpoint": midpoint,
                         "status": "UNMITIGATED" if (z1["status"] == "UNMITIGATED" and z2["status"] == "UNMITIGATED") else "TESTED",
-                        "quality": "A+ Institutional Confluence" if (z1["status"] == "UNMITIGATED" and z2["status"] == "UNMITIGATED") else "Moderate Confluence"
+                        "quality": "A+ Institutional Confluence" if (z1["status"] == "UNMITIGATED" and z2["status"] == "UNMITIGATED") else "Moderate Confluence",
+                        "condition": {
+                            "state": cond_state,
+                            "title": cond_title,
+                            "description": cond_desc,
+                            "distance_usd": abs(dist_val),
+                            "distance_pips": round(abs(dist_val) * 10.0, 1)
+                        },
+                        "trade_setup": {
+                            "action": action,
+                            "entry": midpoint,
+                            "sl": sl_price,
+                            "tp1": tp1_price,
+                            "tp2": tp2_price,
+                            "risk_pts": risk_pts,
+                            "reward_pts": round(risk_pts * 2.0, 3),
+                            "risk_pips": round(risk_pts * 10.0, 1),
+                            "reward_pips": round(risk_pts * 20.0, 1),
+                            "rr_ratio": "1:2.0"
+                        }
                     })
 
     return confluences
+
+
+def get_primary_order_block_setup(
+    confluences: List[Dict[str, Any]], 
+    ob_tf1: Dict[str, Any], 
+    ob_tf2: Dict[str, Any], 
+    current_price: float
+) -> Optional[Dict[str, Any]]:
+    """
+    Selects the primary active trading setup for Gold:
+    Prioritizes:
+    1. Active dual-timeframe confluence zones closest to price.
+    2. Nearest unmitigated single-timeframe order block.
+    """
+    if confluences:
+        # Sort by distance
+        sorted_conf = sorted(confluences, key=lambda c: c["condition"]["distance_usd"])
+        return sorted_conf[0]
+
+    # Fallback to closest zone in lower or higher timeframe
+    all_candidates = ob_tf1.get("all_zones", []) + ob_tf2.get("all_zones", [])
+    if not all_candidates:
+        return None
+
+    # Filter unmitigated first, then closest
+    candidates = sorted(all_candidates, key=lambda z: (0 if z.get("status") == "UNMITIGATED" else 1, z.get("distance_usd", 9999)))
+    top_z = candidates[0]
+
+    action = "BUY" if top_z["type"] == "BULL" else "SELL"
+    midpoint = top_z["mid"]
+    zone_span = top_z["top"] - top_z["bottom"]
+    buffer = max(1.5, zone_span * 0.4)
+
+    if action == "BUY":
+        sl_price = round(top_z["bottom"] - buffer, 3)
+        risk_pts = round(max(1.0, midpoint - sl_price), 3)
+        tp1_price = round(midpoint + risk_pts * 2.0, 3)
+        tp2_price = round(midpoint + risk_pts * 3.5, 3)
+        dist_val = round(current_price - top_z["top"], 2) if current_price > top_z["top"] else round(top_z["bottom"] - current_price, 2)
+        cond_title = "WAITING FOR PULLBACK TO DEMAND"
+        cond_desc = f"Waiting for Gold (${current_price:.2f}) to pull back ${abs(dist_val):.2f} into {top_z['timeframe']} Demand Zone (${top_z['bottom']} - ${top_z['top']})."
+    else:
+        sl_price = round(top_z["top"] + buffer, 3)
+        risk_pts = round(max(1.0, sl_price - midpoint), 3)
+        tp1_price = round(midpoint - risk_pts * 2.0, 3)
+        tp2_price = round(midpoint - risk_pts * 3.5, 3)
+        dist_val = round(top_z["bottom"] - current_price, 2) if current_price < top_z["bottom"] else round(current_price - top_z["top"], 2)
+        cond_title = "WAITING FOR RALLY TO SUPPLY"
+        cond_desc = f"Waiting for Gold (${current_price:.2f}) to rally ${abs(dist_val):.2f} into {top_z['timeframe']} Supply Zone (${top_z['bottom']} - ${top_z['top']})."
+
+    in_zone = top_z["bottom"] <= current_price <= top_z["top"]
+
+    return {
+        "type": top_z["type"],
+        "kind": top_z["kind"],
+        "action": action,
+        "tf_lower": top_z["timeframe"],
+        "tf_higher": top_z["timeframe"],
+        "lower_zone": f"{top_z['bottom']} - {top_z['top']}",
+        "higher_zone": f"{top_z['bottom']} - {top_z['top']}",
+        "confluence_range": f"{top_z['bottom']} - {top_z['top']}",
+        "overlap_span": zone_span,
+        "midpoint": midpoint,
+        "status": top_z.get("status", "UNMITIGATED"),
+        "quality": f"{top_z['timeframe']} Institutional {top_z['kind']}",
+        "condition": {
+            "state": "TRIGGER_READY" if in_zone else ("APPROACHING" if abs(dist_val) <= 1.0 else "WAITING"),
+            "title": f"⚡ CONDITION MET: IN {top_z['kind'].upper()} ZONE" if in_zone else cond_title,
+            "description": f"Gold is inside the {top_z['timeframe']} {top_z['kind']} zone (${top_z['bottom']} - ${top_z['top']}). Open {action} trade!" if in_zone else cond_desc,
+            "distance_usd": abs(dist_val),
+            "distance_pips": round(abs(dist_val) * 10.0, 1)
+        },
+        "trade_setup": {
+            "action": action,
+            "entry": midpoint,
+            "sl": sl_price,
+            "tp1": tp1_price,
+            "tp2": tp2_price,
+            "risk_pts": risk_pts,
+            "reward_pts": round(risk_pts * 2.0, 3),
+            "risk_pips": round(risk_pts * 10.0, 1),
+            "reward_pips": round(risk_pts * 20.0, 1),
+            "rr_ratio": "1:2.0"
+        }
+    }
+

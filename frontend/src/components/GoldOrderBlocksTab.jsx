@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Layers, ChevronDown, SplitSquareVertical, SplitSquareHorizontal, 
   RefreshCw, TrendingUp, TrendingDown, Target, Shield, Zap, Info, ArrowUpRight, 
-  CheckCircle2, AlertCircle, Maximize2, Minimize2, BarChart2, DollarSign 
+  CheckCircle2, AlertCircle, Maximize2, Minimize2, BarChart2, DollarSign,
+  Crosshair, Clock, AlertTriangle, ArrowRight, Play, Check
 } from 'lucide-react';
 import KLineChartArea from './KLineChartArea';
 
@@ -102,7 +103,59 @@ export default function GoldOrderBlocksTab({
     return () => clearInterval(timer);
   }, [goldSymbol, tf1, tf2]);
 
+  const [lotSize, setLotSize] = useState(() => {
+    try {
+      const saved = localStorage.getItem('twr_lot_size');
+      return saved ? Math.min(1.0, parseFloat(saved) || 0.10) : 0.10;
+    } catch { return 0.10; }
+  });
+  const [executingTrade, setExecutingTrade] = useState(false);
+  const [tradeFeedback, setTradeFeedback] = useState(null);
+
+  const handleLotChange = (val) => {
+    const clamped = Math.max(0.01, Math.min(1.0, Math.round(val * 100) / 100));
+    setLotSize(clamped);
+    try { localStorage.setItem('twr_lot_size', clamped.toString()); } catch {}
+  };
+
+  const handleExecuteTrade = async (rawSetup) => {
+    const setup = rawSetup?.trade_setup || rawSetup;
+    if (!setup || !setup.action) return;
+    setExecutingTrade(true);
+    setTradeFeedback(null);
+    try {
+      const res = await fetch('/api/order/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          symbol: goldSymbol,
+          type: setup.action,
+          volume: lotSize,
+          sl: setup.sl,
+          tp: setup.tp1,
+          comment: `Gold-OB-${setup.action}`
+        })
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        throw new Error(data.error || 'Failed to send order to MT5');
+      }
+      setTradeFeedback({
+        type: 'success',
+        text: `Order Sent! Ticket #${data.ticket || data.order_id || 'OK'} (${setup.action} ${lotSize.toFixed(2)} Lot @ $${setup.entry ? setup.entry.toFixed(3) : ''})`
+      });
+      setTimeout(() => setTradeFeedback(null), 6000);
+    } catch (err) {
+      setTradeFeedback({ type: 'error', text: err.message });
+      setTimeout(() => setTradeFeedback(null), 7000);
+    } finally {
+      setExecutingTrade(false);
+    }
+  };
+
   const confluences = obData?.confluences || [];
+  const primarySetup = obData?.primary_setup || confluences[0] || null;
+  const isTriggerReady = primarySetup?.condition?.state === 'TRIGGER_READY';
   const tf1Zones = obData?.tf1?.all_zones || [];
   const tf2Zones = obData?.tf2?.all_zones || [];
 
@@ -424,13 +477,349 @@ export default function GoldOrderBlocksTab({
         {/* ─── RIGHT SIDEBAR: SMC INTELLIGENCE & CONFLUENCE RADAR ─────────── */}
         {showDrawer && (
           <div style={{
-            width: 380,
+            width: 390,
+            minWidth: 360,
             background: '#0d1117',
             borderLeft: '1px solid #1f2430',
             display: 'flex',
             flexDirection: 'column',
             overflowY: 'auto'
           }}>
+            {/* ─── LIVE SIGNAL RADAR & TRIGGER BOX ─── */}
+            <div style={{
+              background: isTriggerReady 
+                ? 'linear-gradient(180deg, rgba(8, 153, 129, 0.2) 0%, rgba(13, 17, 23, 0.98) 100%)'
+                : 'linear-gradient(180deg, rgba(245, 158, 11, 0.12) 0%, rgba(13, 17, 23, 0.98) 100%)',
+              borderBottom: '1px solid #1f2430',
+              padding: '14px 14px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12
+            }}>
+              {/* Radar Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <div style={{
+                    width: 9,
+                    height: 9,
+                    borderRadius: '50%',
+                    background: isTriggerReady ? '#089981' : (primarySetup?.condition?.state === 'APPROACHING' ? '#eab308' : '#38bdf8'),
+                    boxShadow: isTriggerReady 
+                      ? '0 0 10px #089981, 0 0 18px #089981' 
+                      : (primarySetup?.condition?.state === 'APPROACHING' ? '0 0 8px #eab308' : '0 0 6px #38bdf8')
+                  }} />
+                  <span style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '0.5px', color: '#e6edf3' }}>
+                    LIVE SIGNAL RADAR
+                  </span>
+                </div>
+
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  padding: '2px 8px',
+                  borderRadius: 12,
+                  background: isTriggerReady ? 'rgba(8, 153, 129, 0.2)' : 'rgba(255, 255, 255, 0.06)',
+                  color: isTriggerReady ? '#089981' : '#8b949e',
+                  border: isTriggerReady ? '1px solid rgba(8, 153, 129, 0.4)' : '1px solid #2a2e39'
+                }}>
+                  {primarySetup?.source_label || (primarySetup?.tf_lower && primarySetup?.tf_higher ? `${primarySetup.tf_lower}/${primarySetup.tf_higher} Confluence` : `${tf1}/${tf2}`)}
+                </span>
+              </div>
+
+              {/* What is it waiting for / Trigger State Card */}
+              <div style={{
+                background: isTriggerReady 
+                  ? 'rgba(8, 153, 129, 0.12)' 
+                  : 'rgba(22, 27, 34, 0.9)',
+                border: isTriggerReady 
+                  ? '1px solid rgba(8, 153, 129, 0.5)' 
+                  : (primarySetup?.condition?.state === 'APPROACHING' ? '1px solid rgba(234, 179, 8, 0.4)' : '1px solid #21262d'),
+                borderRadius: 6,
+                padding: '10px 12px'
+              }}>
+                <div style={{
+                  fontSize: 11.5,
+                  fontWeight: 800,
+                  color: isTriggerReady 
+                    ? '#26a69a' 
+                    : (primarySetup?.condition?.state === 'APPROACHING' ? '#f59e0b' : '#58a6ff'),
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  marginBottom: 4
+                }}>
+                  {isTriggerReady ? <Zap size={14} /> : (primarySetup?.condition?.state === 'APPROACHING' ? <Crosshair size={14} /> : <Clock size={14} />)}
+                  {primarySetup?.condition?.title || 'Scanning Gold Liquidity Zones...'}
+                </div>
+
+                <div style={{
+                  fontSize: 11,
+                  color: '#c9d1d9',
+                  lineHeight: 1.5,
+                  marginBottom: 8
+                }}>
+                  {primarySetup?.condition?.description || 'Waiting for price to enter confirmed institutional footprints.'}
+                </div>
+
+                {/* Distance Metric Strip */}
+                {primarySetup?.condition?.distance_pips !== undefined && (
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    fontSize: 10.5,
+                    background: 'rgba(0, 0, 0, 0.35)',
+                    padding: '5px 8px',
+                    borderRadius: 4,
+                    color: '#8b949e'
+                  }}>
+                    <span>Distance to Zone:</span>
+                    <strong style={{ 
+                      color: isTriggerReady ? '#26a69a' : (primarySetup.condition.distance_pips <= 10 ? '#f59e0b' : '#fff'),
+                      fontSize: 11 
+                    }}>
+                      {isTriggerReady ? '0.0 pips (Active Inside Zone)' : `${primarySetup.condition.distance_pips} pips ($${primarySetup.condition.distance_usd})`}
+                    </strong>
+                  </div>
+                )}
+              </div>
+
+              {/* Trade Setup Parameters (Entry, SL, TP1, TP2) */}
+              {primarySetup?.trade_setup && (
+                <div style={{
+                  background: 'rgba(22, 27, 34, 0.7)',
+                  border: '1px solid #21262d',
+                  borderRadius: 6,
+                  padding: 10
+                }}>
+                  {/* Action Banner */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: 10,
+                    paddingBottom: 8,
+                    borderBottom: '1px solid #21262d'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{
+                        fontSize: 12,
+                        fontWeight: 900,
+                        padding: '3px 8px',
+                        borderRadius: 4,
+                        background: primarySetup.trade_setup.action === 'BUY' ? '#089981' : '#f23645',
+                        color: '#fff',
+                        letterSpacing: '0.5px'
+                      }}>
+                        {primarySetup.trade_setup.action} SETUP
+                      </span>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>
+                        R:R {primarySetup.trade_setup.rr_ratio}
+                      </span>
+                    </div>
+
+                    <div style={{ fontSize: 11, color: '#f59e0b', fontWeight: 600 }}>
+                      50% EQ Entry
+                    </div>
+                  </div>
+
+                  {/* 4-Box Levels Grid with 3-decimal display */}
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 8,
+                    marginBottom: 10
+                  }}>
+                    {/* ENTRY */}
+                    <div style={{
+                      background: 'rgba(0, 0, 0, 0.35)',
+                      borderRadius: 4,
+                      padding: '6px 8px',
+                      borderLeft: '3px solid #38bdf8'
+                    }}>
+                      <div style={{ fontSize: 9.5, color: '#8b949e', fontWeight: 600 }}>ENTRY (50% EQ)</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#38bdf8', fontFamily: 'monospace' }}>
+                        ${primarySetup.trade_setup.entry.toFixed(3)}
+                      </div>
+                    </div>
+
+                    {/* STOP LOSS */}
+                    <div style={{
+                      background: 'rgba(0, 0, 0, 0.35)',
+                      borderRadius: 4,
+                      padding: '6px 8px',
+                      borderLeft: '3px solid #f23645'
+                    }}>
+                      <div style={{ fontSize: 9.5, color: '#8b949e', fontWeight: 600 }}>
+                        STOP LOSS (-{primarySetup.trade_setup.risk_pips} pips)
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#f87171', fontFamily: 'monospace' }}>
+                        ${primarySetup.trade_setup.sl.toFixed(3)}
+                      </div>
+                    </div>
+
+                    {/* TAKE PROFIT 1 */}
+                    <div style={{
+                      background: 'rgba(0, 0, 0, 0.35)',
+                      borderRadius: 4,
+                      padding: '6px 8px',
+                      borderLeft: '3px solid #089981'
+                    }}>
+                      <div style={{ fontSize: 9.5, color: '#8b949e', fontWeight: 600 }}>
+                        TP 1 (+{primarySetup.trade_setup.reward_pips} pips • 1:2)
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#4ade80', fontFamily: 'monospace' }}>
+                        ${primarySetup.trade_setup.tp1.toFixed(3)}
+                      </div>
+                    </div>
+
+                    {/* TAKE PROFIT 2 */}
+                    <div style={{
+                      background: 'rgba(0, 0, 0, 0.35)',
+                      borderRadius: 4,
+                      padding: '6px 8px',
+                      borderLeft: '3px solid #10b981'
+                    }}>
+                      <div style={{ fontSize: 9.5, color: '#8b949e', fontWeight: 600 }}>
+                        TP 2 (Runner • 1:3.5)
+                      </div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: '#34d399', fontFamily: 'monospace' }}>
+                        ${primarySetup.trade_setup.tp2.toFixed(3)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Lot Size Selector */}
+                  <div style={{
+                    marginBottom: 10,
+                    background: 'rgba(0, 0, 0, 0.25)',
+                    padding: '8px 10px',
+                    borderRadius: 4,
+                    border: '1px solid #1f2430'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontSize: 10.5, color: '#8b949e', fontWeight: 600 }}>
+                        LOT SIZE:
+                      </span>
+                      <span style={{ fontSize: 10, color: '#eab308' }}>
+                        Max 1.00 Lot (Gold Safety Cap)
+                      </span>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <input
+                        type="number"
+                        min="0.01"
+                        max="1.0"
+                        step="0.01"
+                        value={lotSize}
+                        onChange={(e) => handleLotChange(parseFloat(e.target.value) || 0.01)}
+                        style={{
+                          width: 65,
+                          background: '#0d1117',
+                          border: '1px solid #30363d',
+                          borderRadius: 4,
+                          color: '#fff',
+                          padding: '4px 6px',
+                          fontSize: 12,
+                          fontWeight: 700,
+                          textAlign: 'center'
+                        }}
+                      />
+                      <div style={{ display: 'flex', gap: 4, flex: 1 }}>
+                        {[0.01, 0.05, 0.10, 0.50, 1.00].map((v) => (
+                          <button
+                            key={v}
+                            type="button"
+                            onClick={() => handleLotChange(v)}
+                            style={{
+                              flex: 1,
+                              background: lotSize === v ? '#2962ff' : 'rgba(255, 255, 255, 0.05)',
+                              border: lotSize === v ? '1px solid #2962ff' : '1px solid #21262d',
+                              borderRadius: 3,
+                              color: lotSize === v ? '#fff' : '#8b949e',
+                              fontSize: 10,
+                              fontWeight: 700,
+                              padding: '4px 0',
+                              cursor: 'pointer'
+                            }}
+                          >
+                            {v.toFixed(2)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Feedback Message */}
+                  {tradeFeedback && (
+                    <div style={{
+                      padding: '6px 10px',
+                      borderRadius: 4,
+                      marginBottom: 8,
+                      fontSize: 11,
+                      fontWeight: 600,
+                      background: tradeFeedback.type === 'success' ? 'rgba(8, 153, 129, 0.2)' : 'rgba(242, 54, 69, 0.2)',
+                      border: tradeFeedback.type === 'success' ? '1px solid #089981' : '1px solid #f23645',
+                      color: tradeFeedback.type === 'success' ? '#4ade80' : '#f87171',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6
+                    }}>
+                      {tradeFeedback.type === 'success' ? <CheckCircle2 size={14} /> : <AlertCircle size={14} />}
+                      <span>{tradeFeedback.text}</span>
+                    </div>
+                  )}
+
+                  {/* Trade Action Trigger Button */}
+                  <button
+                    onClick={() => handleExecuteTrade(primarySetup.trade_setup)}
+                    disabled={executingTrade}
+                    style={{
+                      width: '100%',
+                      padding: '9px 12px',
+                      borderRadius: 5,
+                      border: 'none',
+                      background: isTriggerReady
+                        ? (primarySetup.trade_setup.action === 'BUY' ? '#089981' : '#f23645')
+                        : (primarySetup.trade_setup.action === 'BUY' ? 'linear-gradient(135deg, #089981 0%, #056656 100%)' : 'linear-gradient(135deg, #f23645 0%, #9e1b26 100%)'),
+                      color: '#fff',
+                      fontSize: 12,
+                      fontWeight: 800,
+                      letterSpacing: '0.4px',
+                      cursor: executingTrade ? 'wait' : 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 7,
+                      boxShadow: isTriggerReady 
+                        ? (primarySetup.trade_setup.action === 'BUY' ? '0 0 16px rgba(8, 153, 129, 0.6)' : '0 0 16px rgba(242, 54, 69, 0.6)')
+                        : 'none',
+                      opacity: executingTrade ? 0.7 : 1,
+                      transition: 'all 0.2s ease'
+                    }}
+                  >
+                    {executingTrade ? (
+                      <>
+                        <RefreshCw size={14} className="spin" />
+                        <span>Sending to MT5...</span>
+                      </>
+                    ) : isTriggerReady ? (
+                      <>
+                        <Zap size={14} />
+                        <span>OPEN {primarySetup.trade_setup.action} NOW @ ${primarySetup.trade_setup.entry.toFixed(3)}</span>
+                      </>
+                    ) : (
+                      <>
+                        <ArrowUpRight size={14} />
+                        <span>OPEN {primarySetup.trade_setup.action} WITH SL & TP</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+
             {/* Drawer Sub-Header Tabs */}
             <div style={{
               display: 'flex',
@@ -518,12 +907,59 @@ export default function GoldOrderBlocksTab({
                         Confluence Zone: ${c.confluence_range}
                       </div>
 
-                      <div style={{ fontSize: 11, color: '#8b949e', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ fontSize: 11, color: '#8b949e', display: 'flex', flexDirection: 'column', gap: 2, marginBottom: 8 }}>
                         <div>• {c.tf_lower} Order Block: ${c.lower_zone}</div>
                         <div>• {c.tf_higher} Order Block: ${c.higher_zone}</div>
                         <div>• 50% Equilibrium: ${c.midpoint}</div>
                         <div>• State: <strong style={{ color: c.status === 'UNMITIGATED' ? '#089981' : '#f7a600' }}>{c.status}</strong></div>
                       </div>
+
+                      {c.condition && (
+                        <div style={{
+                          fontSize: 10.5,
+                          background: 'rgba(0, 0, 0, 0.3)',
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          marginBottom: 8,
+                          color: c.condition.state === 'TRIGGER_READY' ? '#4ade80' : '#cbd5e1'
+                        }}>
+                          {c.condition.title} ({c.condition.distance_pips} pips away)
+                        </div>
+                      )}
+
+                      {c.trade_setup && (
+                        <div style={{
+                          background: 'rgba(0, 0, 0, 0.4)',
+                          borderRadius: 4,
+                          padding: '6px 8px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: 6
+                        }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10.5, fontFamily: 'monospace' }}>
+                            <span style={{ color: '#38bdf8' }}>Entry: ${c.trade_setup.entry.toFixed(3)}</span>
+                            <span style={{ color: '#f87171' }}>SL: ${c.trade_setup.sl.toFixed(3)}</span>
+                            <span style={{ color: '#4ade80' }}>TP: ${c.trade_setup.tp1.toFixed(3)}</span>
+                          </div>
+                          <button
+                            onClick={() => handleExecuteTrade(c.trade_setup)}
+                            disabled={executingTrade}
+                            style={{
+                              width: '100%',
+                              padding: '5px 8px',
+                              borderRadius: 3,
+                              border: 'none',
+                              background: c.trade_setup.action === 'BUY' ? '#089981' : '#f23645',
+                              color: '#fff',
+                              fontSize: 11,
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            Trade {c.trade_setup.action} {lotSize.toFixed(2)} Lot (SL & TP)
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ))
                 ) : (
