@@ -266,6 +266,7 @@ function App() {
   const [showSnapshotModal, setShowSnapshotModal] = useState(false);
   const [snapshotUrl, setSnapshotUrl] = useState(null);
   const [showScreenerModal, setShowScreenerModal] = useState(false);
+  const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showSignalPerformanceModal, setShowSignalPerformanceModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showIntelligenceModal, setShowIntelligenceModal] = useState(false);
