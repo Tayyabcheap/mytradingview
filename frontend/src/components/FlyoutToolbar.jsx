@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { 
   TrendingUp, Trash2, Lock, Eye, Magnet, Star, 
-  ChevronRight, ArrowRight, Minus, Move 
+  ChevronRight, ArrowRight, Minus, Move, RefreshCw 
 } from 'lucide-react';
 
 const ICONS = {
@@ -191,7 +191,10 @@ export default function FlyoutToolbar({
   onSelectTool, 
   onClearAll,
   favoriteToolIds = ['segment', 'horizontalStraightLine', 'rect', 'longPosition', 'shortPosition', 'simpleAnnotation'],
-  onToggleFavorite
+  onToggleFavorite,
+  onCheckUpdates,
+  appVersion = "v2.5.0",
+  hasUpdate = false
 }) {
   const [activeFlyout, setActiveFlyout] = useState(null);
   const [activeGroup, setActiveGroup] = useState('cursor');
@@ -451,7 +454,35 @@ export default function FlyoutToolbar({
         <Eye size={18} />
       </button>
 
-      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 4 }}>
+      <div style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: 6, paddingBottom: 6, alignItems: 'center' }}>
+        {/* CHECK FOR UPDATES ICON (Directly above trash can) */}
+        <button 
+          className="btn-icon" 
+          onClick={onCheckUpdates} 
+          title={`Check for Updates • ${appVersion}`}
+          style={{
+            position: 'relative',
+            color: hasUpdate ? 'var(--brand, #2962ff)' : '#787b86',
+            transition: 'color 0.15s ease'
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = 'var(--brand, #2962ff)'}
+          onMouseLeave={e => e.currentTarget.style.color = hasUpdate ? 'var(--brand, #2962ff)' : '#787b86'}
+        >
+          <RefreshCw size={17} />
+          {hasUpdate && (
+            <span style={{
+              position: 'absolute',
+              top: 3,
+              right: 3,
+              width: 6,
+              height: 6,
+              borderRadius: '50%',
+              background: '#089981'
+            }} />
+          )}
+        </button>
+
+        {/* REMOVE ALL DRAWINGS */}
         <button 
           className="btn-icon" 
           onClick={onClearAll} 

@@ -3,7 +3,7 @@ import {
   LineChart, Settings, Camera, Search, Maximize, X, 
   Bell, RotateCcw, ChevronDown, Download, Check, Zap, 
   TrendingUp, TrendingDown, Layers, LayoutDashboard, BookOpen, 
-  CandlestickChart, Plus, DollarSign, BarChart2
+  CandlestickChart, Plus, DollarSign, BarChart2, Award
 } from 'lucide-react';
 import TopTabBar from './components/TopTabBar';
 import DashboardTab from './components/DashboardTab';
@@ -15,6 +15,8 @@ import MonteCarloTab from './components/MonteCarloTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
 import SignalPerformanceModal from './components/SignalPerformanceModal';
+import UpdateModal from './components/UpdateModal';
+import QuantIntelligenceModal from './components/QuantIntelligenceModal';
 import { computeSignalSeries, scoreSignalSeries } from './components/signalCore';
 
 import FlyoutToolbar from './components/FlyoutToolbar';
@@ -264,8 +266,28 @@ function App() {
   const [showSnapshotModal, setShowSnapshotModal] = useState(false);
   const [snapshotUrl, setSnapshotUrl] = useState(null);
   const [showScreenerModal, setShowScreenerModal] = useState(false);
-  const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showSignalPerformanceModal, setShowSignalPerformanceModal] = useState(false);
+  const [showUpdateModal, setShowUpdateModal] = useState(false);
+  const [showIntelligenceModal, setShowIntelligenceModal] = useState(false);
+  const [appVersion, setAppVersion] = useState("v2.5.0");
+  const [hasUpdateAvailable, setHasUpdateAvailable] = useState(false);
+
+  // Query application version and background update status on startup
+  useEffect(() => {
+    fetch('/api/system/version')
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.version) setAppVersion(d.version);
+      })
+      .catch(() => {});
+
+    fetch('/api/app/update-status')
+      .then(r => r.json())
+      .then(d => {
+        if (d && d.behind > 0) setHasUpdateAvailable(true);
+      })
+      .catch(() => {});
+  }, []);
 
   // Indicators State
   const [indicators, setIndicators] = useState(() => loadLS('indicators', INITIAL_INDICATORS));
@@ -1681,6 +1703,24 @@ function App() {
             >
               <DollarSign size={15} /> Trade MT5
             </button>
+
+            {/* Champions Council & Quant Intelligence Terminal */}
+            <button
+              className="top-btn"
+              onClick={() => setShowIntelligenceModal(true)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.18), rgba(239, 68, 68, 0.15))',
+                border: '1px solid rgba(245, 158, 11, 0.4)',
+                color: '#f59e0b',
+                fontWeight: 700
+              }}
+              title="Trading Champions Council, Quant Lab & Price Predictor"
+            >
+              <Award size={15} /> Council & Quant
+            </button>
             
             <div style={{ flex: 1 }} />
 
@@ -1702,6 +1742,30 @@ function App() {
                 {symbol}: {currentPrice.toFixed(currentSymbolInfo?.digits || 2)}
               </div>
             )}
+
+            {/* App Version & Check for Updates Badge */}
+            <button 
+              className="top-btn" 
+              onClick={() => setShowUpdateModal(true)}
+              title={`MyTradingView ${appVersion} — Click to check for updates`}
+              style={{
+                fontSize: 11,
+                padding: '4px 8px',
+                borderRadius: 4,
+                background: hasUpdateAvailable ? 'rgba(239, 68, 68, 0.15)' : 'rgba(255, 255, 255, 0.05)',
+                border: hasUpdateAvailable ? '1px solid #ef4444' : '1px solid var(--border)',
+                color: hasUpdateAvailable ? '#f87171' : 'var(--text-muted)',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5
+              }}
+            >
+              {hasUpdateAvailable && (
+                <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#ef4444', display: 'inline-block' }} />
+              )}
+              {appVersion}
+            </button>
 
             {/* Utilities */}
             <button className="btn-icon" onClick={() => chartRef.current?.resetView()} title="Reset chart view (fit & scroll to latest)">
@@ -1726,6 +1790,9 @@ function App() {
               onClearAll={handleClearDrawings} 
               favoriteToolIds={favoriteToolIds}
               onToggleFavorite={handleToggleFavoriteTool}
+              onCheckUpdates={() => setShowUpdateModal(true)}
+              appVersion={appVersion}
+              hasUpdate={hasUpdateAvailable}
             />
 
             {/* CHART VIEWPORT */}
@@ -2230,6 +2297,21 @@ function App() {
         onClose={() => setShowSignalPerformanceModal(false)}
         activeSignalStrategies={activeSignalStrategies}
         onToggleStrategy={handleToggleSignalStrategy}
+      />
+
+      {/* CHECK FOR UPDATES MODAL */}
+      <UpdateModal
+        isOpen={showUpdateModal}
+        onClose={() => setShowUpdateModal(false)}
+        appVersion={appVersion}
+      />
+
+      {/* QUANT & CHAMPIONS COUNCIL INTELLIGENCE TERMINAL */}
+      <QuantIntelligenceModal
+        isOpen={showIntelligenceModal}
+        onClose={() => setShowIntelligenceModal(false)}
+        symbol={symbol}
+        timeframe={timeframe}
       />
     </div>
   );

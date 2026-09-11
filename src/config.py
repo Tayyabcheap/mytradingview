@@ -4,7 +4,13 @@ MyTradingView - System Specification
 Single source of truth for every strategy parameter for authentic Swing Trading.
 """
 
-from typing import List, Tuple
+# ---------------------------------------------------------------------------
+# Application Specification & Versioning
+# ---------------------------------------------------------------------------
+APP_NAME = "MyTradingView"
+APP_VERSION = "v2.5.0"
+APP_BUILD = "2026.09.11"
+GITHUB_REPO = "haider2804/mytradingview"
 
 # ---------------------------------------------------------------------------
 # Unit conversion helpers

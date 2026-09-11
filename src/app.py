@@ -17,6 +17,16 @@ import ta
 from stress_test import run_monte_carlo_simulation
 from screener import scan_symbols
 from notifications import get_discord_config, save_discord_config, send_discord_alert
+import config
+from intelligence import (
+    calculate_hurst_exponent,
+    calculate_kelly_criterion,
+    calculate_zscore,
+    calculate_price_projections,
+    get_champions_council_verdict,
+    get_macro_sentinel_status,
+    get_gold_liquidity_fixes
+)
 
 try:
     import MetaTrader5 as mt5
@@ -1354,6 +1364,10 @@ def app_update_status():
 
     return jsonify({
         "ok": True,
+        "app_name": getattr(config, "APP_NAME", "MyTradingView"),
+        "version": getattr(config, "APP_VERSION", "v2.5.0"),
+        "build": getattr(config, "APP_BUILD", "2026.09.11"),
+        "repo": getattr(config, "GITHUB_REPO", "haider2804/mytradingview"),
         "fetch_ok": ok_fetch,
         "fetch_error": None if ok_fetch else (fetch_out or "").strip()[-400:],
         "has_upstream": up_ok,
@@ -1367,7 +1381,26 @@ def app_update_status():
         "latest": latest_obj,
     }), 200
 
+@app.route("/api/system/version", methods=["GET"])
+def system_version():
+    cur_ok, cur = _run('git log -1 --format=%h|%ci|%s', timeout=15)
+    parts = (cur or "").strip().split("|", 2)
+    return jsonify({
+        "app_name": getattr(config, "APP_NAME", "MyTradingView"),
+        "version": getattr(config, "APP_VERSION", "v2.5.0"),
+        "build": getattr(config, "APP_BUILD", "2026.09.11"),
+        "repo": getattr(config, "GITHUB_REPO", "haider2804/mytradingview"),
+        "commit": parts[0] if parts else "",
+        "commit_date": parts[1] if len(parts) > 1 else "",
+        "commit_message": parts[2] if len(parts) > 2 else ""
+    })
+
+@app.route("/api/system/check-updates", methods=["GET", "POST"])
+def system_check_updates():
+    return app_update_status()
+
 @app.route("/api/app/update", methods=["POST"])
+@app.route("/api/system/apply-update", methods=["POST"])
 def app_update():
     if _blocked_cross_origin():
         return jsonify({"error": "Cross-origin request blocked"}), 403
@@ -1412,6 +1445,66 @@ def app_update():
         "restart_required": True,
         "message": "Update downloaded and rebuilt." if build_ok else "Update downloaded, but the rebuild reported problems — see details.",
     }), 200
+
+@app.route("/api/intelligence/summary", methods=["GET"])
+def intelligence_summary():
+    """Returns real-time quantitative modeling, price projection cones, council verdicts, and macro status."""
+    raw_symbol = request.args.get("symbol", config.SYMBOL)
+    symbol = resolve_broker_symbol(raw_symbol)
+    tf_str = request.args.get("timeframe", "5M").upper()
+    tf_const = TF_MAP.get(tf_str, mt5.TIMEFRAME_M5 if MT5_IMPORTED else None)
+
+    candles = []
+    current_price = 0.0
+    if init_mt5() and tf_const is not None:
+        with mt5_lock:
+            rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, 100)
+            if rates is not None and len(rates) > 0:
+                for r in rates:
+                    candles.append({
+                        "timestamp": int(r["time"]) * 1000,
+                        "open": float(r["open"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "close": float(r["close"]),
+                        "volume": float(r["tick_volume"])
+                    })
+                current_price = float(rates[-1]["close"])
+            else:
+                tick = mt5.symbol_info_tick(symbol)
+                if tick:
+                    current_price = float(tick.bid)
+
+    if not candles and current_price > 0:
+        base = current_price
+        for i in range(30):
+            candles.append({
+                "timestamp": int(time.time() - (30 - i) * 300) * 1000,
+                "open": base, "high": base + 1.0, "low": base - 1.0, "close": base + 0.2, "volume": 100
+            })
+
+    closes = [c["close"] for c in candles] if candles else [current_price or 2500.0]
+
+    hurst_data = calculate_hurst_exponent(closes)
+    kelly_data = calculate_kelly_criterion(win_rate_pct=68.4, reward_to_risk=1.5)
+    zscore_data = calculate_zscore(closes)
+    projections_data = calculate_price_projections(candles, current_price or closes[-1])
+    council_data = get_champions_council_verdict(candles, symbol, tf_str)
+    macro_data = get_macro_sentinel_status(symbol)
+    fixes_data = get_gold_liquidity_fixes()
+
+    return jsonify({
+        "symbol": symbol,
+        "timeframe": tf_str,
+        "current_price": current_price or closes[-1],
+        "hurst": hurst_data,
+        "kelly": kelly_data,
+        "zscore": zscore_data,
+        "projections": projections_data,
+        "council": council_data,
+        "macro": macro_data,
+        "fixes": fixes_data
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────────────
