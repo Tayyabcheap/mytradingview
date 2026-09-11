@@ -42,6 +42,146 @@ export function computeSignalSeries(dataList, strategy = 'ALL', partialUsd = 20)
     else atr[i] = (atr[i - 1] * (atrLen - 1) + tr) / atrLen;
   }
 
+  // --- RSI(14) calculation (Wilder's RMA) ---
+  const rsi = new Array(n).fill(null);
+  {
+    const rsiLen = 14;
+    let avgGain = 0, avgLoss = 0;
+    for (let i = 1; i <= rsiLen && i < n; i++) {
+      const diff = closes[i] - closes[i - 1];
+      if (diff > 0) avgGain += diff;
+      else avgLoss += Math.abs(diff);
+    }
+    avgGain /= rsiLen;
+    avgLoss /= rsiLen;
+    if (n > rsiLen) {
+      rsi[rsiLen] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+      for (let i = rsiLen + 1; i < n; i++) {
+        const diff = closes[i] - closes[i - 1];
+        const gain = diff > 0 ? diff : 0;
+        const loss = diff < 0 ? Math.abs(diff) : 0;
+        avgGain = (avgGain * (rsiLen - 1) + gain) / rsiLen;
+        avgLoss = (avgLoss * (rsiLen - 1) + loss) / rsiLen;
+        rsi[i] = avgLoss === 0 ? 100 : 100 - (100 / (1 + avgGain / avgLoss));
+      }
+    }
+  }
+
+  // --- REAL DIP REVERSAL [SL BUFFER] ENGINE ---
+  if (strategy === 'REAL_DIP') {
+    const impulseMult = 1.0;
+    const rsiBuyLevel = 35.0;
+    const rsiSellLevel = 65.0;
+    const targetLevel = 50.0;
+    const slBuffer = 1.0;
+
+    let setupState = 0;
+    let setupBarIndex = -1;
+    let setupHigh = 0, setupLow = 0, setupRange = 0;
+    let tpLevel = 0, slLevel = 0;
+
+    const out = new Array(n).fill(null).map(() => ({}));
+
+    for (let i = 14; i < n; i++) {
+      const kLine = dataList[i];
+      const curAtr = atr[i] || (kLine.high - kLine.low);
+      const curRsi = rsi[i];
+
+      // Invalidate pending setup if SL touched
+      if (setupState === 1 && kLine.high > slLevel) setupState = 0;
+      if (setupState === -1 && kLine.low < slLevel) setupState = 0;
+
+      // Fire signal on next candle open
+      if (setupState === 1 && i > setupBarIndex) {
+        const entry = kLine.open;
+        const slDist = Math.max(Math.abs(slLevel - entry), 0.01);
+        const tpDist = Math.max(Math.abs(entry - tpLevel), 0.01);
+        out[i] = {
+          signalType: 'SELL',
+          strategy: 'REAL_DIP',
+          entryPrice: entry,
+          slPrice: slLevel,
+          tp1Price: tpLevel,
+          tp2Price: Math.max(0, entry - tpDist * 2),
+          tp1_rr: +(tpDist / slDist).toFixed(2),
+          tp2_rr: +(tpDist * 2 / slDist).toFixed(2),
+          barHigh: kLine.high,
+          barLow: kLine.low,
+          riskUSD: slDist
+        };
+        setupState = 0;
+      } else if (setupState === -1 && i > setupBarIndex) {
+        const entry = kLine.open;
+        const slDist = Math.max(Math.abs(entry - slLevel), 0.01);
+        const tpDist = Math.max(Math.abs(tpLevel - entry), 0.01);
+        out[i] = {
+          signalType: 'BUY',
+          strategy: 'REAL_DIP',
+          entryPrice: entry,
+          slPrice: slLevel,
+          tp1Price: tpLevel,
+          tp2Price: entry + tpDist * 2,
+          tp1_rr: +(tpDist / slDist).toFixed(2),
+          tp2_rr: +(tpDist * 2 / slDist).toFixed(2),
+          barHigh: kLine.high,
+          barLow: kLine.low,
+          riskUSD: slDist
+        };
+        setupState = 0;
+      }
+
+      // Check candle i for setup formation on its close
+      const candleBody = Math.abs(kLine.close - kLine.open);
+      const candleRange = kLine.high - kLine.low;
+      const isRealBuySetup = kLine.close < kLine.open && candleBody > (curAtr * impulseMult) && curRsi != null && curRsi < rsiBuyLevel;
+      const isRealSellSetup = kLine.close > kLine.open && candleBody > (curAtr * impulseMult) && curRsi != null && curRsi > rsiSellLevel;
+
+      if (isRealSellSetup && setupState === 0) {
+        setupState = 1;
+        setupBarIndex = i;
+        setupHigh = kLine.high;
+        setupLow = kLine.low;
+        setupRange = candleRange;
+        tpLevel = setupHigh - (setupRange * (targetLevel / 100));
+        slLevel = setupHigh + (curAtr * slBuffer);
+      } else if (isRealBuySetup && setupState === 0) {
+        setupState = -1;
+        setupBarIndex = i;
+        setupHigh = kLine.high;
+        setupLow = kLine.low;
+        setupRange = candleRange;
+        tpLevel = setupLow + (setupRange * (targetLevel / 100));
+        slLevel = setupLow - (curAtr * slBuffer);
+      }
+    }
+
+    // Resolve outcomes (walking forward)
+    for (let i = 0; i < n; i++) {
+      const d = out[i];
+      if (!d || !d.signalType) continue;
+      const isBuy = d.signalType === 'BUY';
+      let tp1Hit = false, outcome = 'OPEN', ri = n - 1;
+      for (let j = i + 1; j < n; j++) {
+        const hi = dataList[j].high, lo = dataList[j].low;
+        if (isBuy) {
+          if (lo <= d.slPrice && !tp1Hit) { outcome = 'SL'; ri = j; break; }
+          if (hi >= d.tp2Price) { outcome = 'TP2'; ri = j; break; }
+          if (hi >= d.tp1Price && !tp1Hit) { tp1Hit = true; ri = j; }
+          if (lo <= d.slPrice && tp1Hit) { outcome = 'TP1'; ri = j; break; }
+        } else {
+          if (hi >= d.slPrice && !tp1Hit) { outcome = 'SL'; ri = j; break; }
+          if (lo <= d.tp2Price) { outcome = 'TP2'; ri = j; break; }
+          if (lo <= d.tp1Price && !tp1Hit) { tp1Hit = true; ri = j; }
+          if (hi >= d.slPrice && tp1Hit) { outcome = 'TP1'; ri = j; break; }
+        }
+      }
+      if (outcome === 'OPEN' && tp1Hit) outcome = 'TP1';
+      d.outcome = outcome;
+      d.drawEndIdx = ri;
+    }
+    return out;
+  }
+
   // --- ADX(14): trend-strength regime filter (Wilder) ---
   // These engines are trend strategies; they lose in directionless chop.
   // ADX below MIN_ADX == no trend, so we skip signals there. This is an
@@ -204,7 +344,9 @@ export function scoreSignalSeries(series) {
   sigs.forEach(d => {
     if (d.outcome === 'OPEN' || d.outcome == null) { unresolved++; return; }
     resolved++;
-    const r = rMap[d.outcome] ?? 0;
+    const r = d.outcome === 'SL' ? -1
+            : d.outcome === 'TP2' ? (d.tp2_rr ?? 3)
+            : (d.tp1_rr ?? (rMap[d.outcome] ?? 0));
     totalR += r;
     if (r > 0) { wins++; winR += r; } else losses++;
   });

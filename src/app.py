@@ -821,6 +821,58 @@ def backtest_gold_scalper():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/backtest/real_dip", methods=["GET"])
+def backtest_real_dip():
+    """Run the Real Dip Reversal [SL Buffer] strategy against real MT5 history and return stats."""
+    if not init_mt5():
+        return jsonify({"error": "MT5 not connected"}), 500
+
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
+    tf_str = request.args.get("timeframe", "1H")
+    bars_n = int(request.args.get("bars", 3000))
+
+    tf_const = TF_MAP.get(tf_str)
+    if tf_const is None:
+        alt = {"H1": "1H", "H4": "4H", "D1": "1D", "M1": "1M", "M5": "5M",
+               "M15": "15M", "M30": "30M", "W1": "1W"}.get(tf_str)
+        tf_const = TF_MAP.get(alt) if alt else None
+    if tf_const is None:
+        return jsonify({"error": f"Invalid timeframe: {tf_str}"}), 400
+
+    with mt5_lock:
+        if not mt5.symbol_select(symbol, True):
+            return jsonify({"error": f"Symbol not found: {symbol}"}), 404
+        info = mt5.symbol_info(symbol)
+        mintick = float(info.point) if (info and info.point) else float(request.args.get("mintick", 0.01))
+        rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, bars_n)
+
+    if rates is None or len(rates) == 0:
+        return jsonify({"error": "No history returned from MT5"}), 404
+
+    bars = [(int(r["time"]), float(r["open"]), float(r["high"]),
+             float(r["low"]), float(r["close"])) for r in rates]
+
+    try:
+        from real_dip_bt import backtest as _bt
+        res = _bt(
+            bars,
+            atr_len=int(request.args.get("atr_len", 14)),
+            impulse_mult=float(request.args.get("impulse_mult", 1.0)),
+            rsi_len=int(request.args.get("rsi_len", 14)),
+            rsi_buy=float(request.args.get("rsi_buy", 35.0)),
+            rsi_sell=float(request.args.get("rsi_sell", 65.0)),
+            target_level=float(request.args.get("target_level", 50.0)),
+            sl_buffer=float(request.args.get("sl_buffer", 1.0)),
+            lot_size=float(request.args.get("lot_size", 0.10)),
+            mintick=mintick,
+        )
+        res["symbol"] = symbol
+        res["timeframe"] = tf_str
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/signals/accuracy", methods=["GET"])
 def signals_accuracy():
     """Backtest the SWING_CORE / SWING_PRO signals on real history: for each signal,

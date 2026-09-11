@@ -62,6 +62,100 @@ sell = ta.crossunder(fast, slow)
 plotshape(buy, style=shape.triangleup, location=location.belowbar, color=color.green, text="BUY")
 plotshape(sell, style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")`;
 
+const REAL_DIP_PINE = `//@version=6
+indicator("Real Dip Reversal [SL Buffer]", overlay=true, max_labels_count=500)
+
+// ==========================================
+// 1. INPUTS
+// ==========================================
+grp_settings = "Strategy Settings"
+atrLen = input.int(14, "ATR Length", group=grp_settings)
+impulseMult = input.float(1.0, "Big Candle Size (x ATR)", step=0.1, group=grp_settings)
+
+grp_rsi = "RSI Filter (Finding Real Dips)"
+rsiLen = input.int(14, "RSI Length", group=grp_rsi)
+rsiBuyLevel = input.float(35.0, "RSI Oversold (Buy Zone)", group=grp_rsi)
+rsiSellLevel = input.float(65.0, "RSI Overbought (Sell Zone)", group=grp_rsi)
+
+grp_levels = "Risk Management"
+targetLevel = input.float(50.0, "Target Level % (TP)", step=1.0, group=grp_levels)
+slBuffer = input.float(1.0, "SL Buffer (x ATR)", step=0.1, group=grp_levels)
+
+// ==========================================
+// 2. DETECT THE "BIG CANDLE" + EXHAUSTION
+// ==========================================
+float currentAtr = ta.atr(atrLen)
+float candleBody = math.abs(close - open)
+float candleRange = high - low
+
+float rsi = ta.rsi(close, rsiLen)
+
+bool isRealBuySetup = close < open and candleBody > (currentAtr * impulseMult) and rsi < rsiBuyLevel
+bool isRealSellSetup = close > open and candleBody > (currentAtr * impulseMult) and rsi > rsiSellLevel
+
+var int setupState = 0 
+var int setupBarIndex = na
+var float setupHigh = na
+var float setupLow = na
+var float setupRange = na
+var float tpLevel = na      
+var float slLevel = na      
+
+// ==========================================
+// 3. STATE MACHINE LOGIC (CONFIRMED CLOSE ONLY)
+// ==========================================
+if setupState == 1 and high > slLevel
+    setupState := 0
+if setupState == -1 and low < slLevel
+    setupState := 0
+
+if barstate.isconfirmed
+    if isRealSellSetup and setupState == 0
+        setupState := 1
+        setupBarIndex := bar_index
+        setupHigh := high
+        setupLow := low
+        setupRange := candleRange
+        tpLevel := setupHigh - (setupRange * (targetLevel / 100))
+        slLevel := setupHigh + (currentAtr * slBuffer) 
+
+    else if isRealBuySetup and setupState == 0
+        setupState := -1
+        setupBarIndex := bar_index
+        setupHigh := high
+        setupLow := low
+        setupRange := candleRange
+        tpLevel := setupLow + (setupRange * (targetLevel / 100))
+        slLevel := setupLow - (currentAtr * slBuffer) 
+
+// ==========================================
+// 4. SIGNAL GENERATION (NEXT CANDLE AFTER CLOSE)
+// ==========================================
+bool buySignal = false
+bool sellSignal = false
+float entry = na
+
+if setupState == 1 and bar_index > setupBarIndex
+    sellSignal := true
+    entry := open
+    setupState := 0 
+
+if setupState == -1 and bar_index > setupBarIndex
+    buySignal := true
+    entry := open
+    setupState := 0 
+
+// ==========================================
+// 5. VISUALS (SHAPES + LEVEL LINES)
+// ==========================================
+plot(setupState != 0 ? tpLevel : na, color=color.blue, linewidth=2, title="TP", style=plot.style_linebr)
+plot(setupState != 0 ? slLevel : na, color=color.red, linewidth=1, title="SL (Buffered)", style=plot.style_linebr)
+
+bgcolor(isRealBuySetup ? color.new(color.green, 90) : isRealSellSetup ? color.new(color.red, 90) : na)
+
+plotshape(buySignal, title="Buy Signal", text="BUY", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.large)
+plotshape(sellSignal, title="Sell Signal", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.large)`;
+
 // Initial default active indicators
 const INITIAL_INDICATORS = [
   {
@@ -137,11 +231,12 @@ function App() {
   
   // Backtest state
   const [showBacktest, setShowBacktest] = useState(false);
+  const [btStrategy, setBtStrategy] = useState(() => loadLS('btStrategy', 'real_dip'));
   const [btData, setBtData] = useState(null);
   const [btLoading, setBtLoading] = useState(false);
   const [btError, setBtError] = useState(null);
   const [btOffset, setBtOffset] = useState(() => loadLS('btOffset', 0));
-  const [btBars, setBtBars] = useState(() => loadLS('btBars', 8000));
+  const [btBars, setBtBars] = useState(() => loadLS('btBars', 3000));
   const [showSigAccuracy, setShowSigAccuracy] = useState(false);
   const [sigAcc, setSigAcc] = useState(null);
   const [sigAccLoading, setSigAccLoading] = useState(false);
@@ -851,15 +946,19 @@ function App() {
     setShowPineEditor(false);
   };
 
-  const runBacktest = () => {
+  const runBacktest = (targetStrat) => {
+    const strat = targetStrat || btStrategy;
     setBtLoading(true);
     setBtError(null);
-    fetch(`/api/backtest/gold_scalper?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}&utc_offset=${btOffset}`)
+    const url = strat === 'real_dip'
+      ? `/api/backtest/real_dip?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}`
+      : `/api/backtest/gold_scalper?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}&utc_offset=${btOffset}`;
+    fetch(url)
       .then(r => r.json())
       .then(d => {
         setBtLoading(false);
         if (d.error) setBtError(d.error);
-        else setBtData(d);
+        else setBtData({ ...d, _strat: strat });
       })
       .catch(err => {
         setBtLoading(false);
@@ -1165,6 +1264,7 @@ function App() {
                 }}>
                   {[
                     { id: 'ALL', label: 'Dual Engine (All Signals)', desc: 'Swing Core + Swing Pro' },
+                    { id: 'REAL_DIP', label: 'Real Dip Reversal', desc: 'ATR Impulse + RSI Exhaustion' },
                     { id: 'SWING_CORE', label: 'Swing Core (Pullback)', desc: 'Trend Pullback' },
                     { id: 'SWING_PRO', label: 'Swing Pro (Breakout)', desc: 'EMA 50 Breakout' }
                   ].map(strat => (
@@ -1577,10 +1677,14 @@ function App() {
                   borderRadius: 6, padding: 12, outline: 'none', whiteSpace: 'pre', overflow: 'auto'
                 }}
               />
-              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 12 }}>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 12, flexWrap: 'wrap' }}>
                 <button className="top-btn" onClick={handleAddPineScript}
                   style={{ background: 'var(--brand)', color: '#fff', fontWeight: 700, padding: '8px 18px' }}>
                   Add to Chart
+                </button>
+                <button className="top-btn" onClick={() => { setPineSource(REAL_DIP_PINE); setPineResult(null); }}
+                  style={{ background: 'rgba(8,153,129,0.18)', color: '#089981', border: '1px solid #089981', fontWeight: 600, padding: '8px 14px' }}>
+                  Load Real Dip Reversal
                 </button>
                 <button className="top-btn" onClick={() => { setPineSource(DEFAULT_PINE); setPineResult(null); }}
                   style={{ color: 'var(--text-muted)' }}>
@@ -1650,43 +1754,97 @@ function App() {
       {/* BACKTEST MODAL */}
       {showBacktest && (
         <div className="modal-overlay" onClick={() => setShowBacktest(false)}>
-          <div className="modal-content" style={{ width: 460, maxWidth: '92vw' }} onClick={e => e.stopPropagation()}>
+          <div className="modal-content" style={{ width: 480, maxWidth: '94vw' }} onClick={e => e.stopPropagation()}>
             <div className="modal-header">
-              Gold Scalper Pro — Backtest
+              Strategy Backtest — MT5 Data
               <button className="btn-icon" onClick={() => setShowBacktest(false)}><X size={18} /></button>
             </div>
             <div className="modal-body">
-              <div style={{ display: 'flex', gap: 8, alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 14 }}>
+              {/* Strategy Selector */}
+              <div style={{ display: 'flex', gap: 6, marginBottom: 12, background: '#131722', padding: 4, borderRadius: 6, border: '1px solid var(--border)' }}>
+                {[
+                  { id: 'real_dip', label: 'Real Dip Reversal' },
+                  { id: 'gold_scalper', label: 'Gold Scalper Pro' }
+                ].map(s => (
+                  <button
+                    key={s.id}
+                    onClick={() => { setBtStrategy(s.id); saveLS('btStrategy', s.id); setBtData(null); }}
+                    style={{
+                      flex: 1, padding: '6px 10px', fontSize: 12, fontWeight: 600, borderRadius: 4, border: 'none', cursor: 'pointer',
+                      background: btStrategy === s.id ? 'var(--brand)' : 'transparent',
+                      color: btStrategy === s.id ? '#fff' : 'var(--text-muted)'
+                    }}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 14 }}>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  {symbol} · {timeframe}
+                  {symbol} · {timeframe} · {btBars} bars
                 </div>
                 <div style={{ flex: 1 }} />
-                <button className="top-btn" onClick={runBacktest} disabled={btLoading}
+                <button className="top-btn" onClick={() => runBacktest()} disabled={btLoading}
                   style={{ background: 'var(--brand)', color: '#fff', fontWeight: 700, padding: '6px 14px', opacity: btLoading ? 0.6 : 1 }}>
-                  {btLoading ? 'Running…' : 'Run'}
+                  {btLoading ? 'Running…' : 'Run Backtest'}
                 </button>
               </div>
+
+              {btError && (
+                <div style={{ color: '#f23645', fontSize: 13, padding: 8, background: 'rgba(242,54,69,0.1)', borderRadius: 4, marginBottom: 10 }}>
+                  {btError}
+                </div>
+              )}
 
               {btData && !btError && (
                 <div>
                   <div style={{
                     textAlign: 'center', padding: '10px', borderRadius: 6, marginBottom: 12, fontWeight: 800, fontSize: 15,
-                    background: btData.verdict && btData.verdict.startsWith('MAKES') ? 'rgba(8,153,129,0.15)' : 'rgba(242,54,69,0.15)',
-                    color: btData.verdict && btData.verdict.startsWith('MAKES') ? '#089981' : '#f23645'
+                    background: (btData.verdict && (btData.verdict.startsWith('MAKES') || btData.win_rate >= 50)) ? 'rgba(8,153,129,0.15)' : 'rgba(242,54,69,0.15)',
+                    color: (btData.verdict && (btData.verdict.startsWith('MAKES') || btData.win_rate >= 50)) ? '#089981' : '#f23645'
                   }}>
-                    {btData.verdict}
+                    {btData.verdict || (btData.win_rate >= 50 ? 'POSITIVE EDGE' : 'CAUTION')}
                   </div>
-                  {[
-                    ['Net return', `${btData.net_return_pct > 0 ? '+' : ''}${btData.net_return_pct}%`],
-                    ['Trades', btData.trades],
-                    ['Win rate', `${btData.win_rate}%`],
-                    ['Profit factor', btData.profit_factor ?? 'n/a']
-                  ].map(([k, v], i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 4px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                      <span style={{ color: 'var(--text-muted)' }}>{k}</span>
-                      <strong style={{ color: '#fff' }}>{v}</strong>
+
+                  {btData.total_signals !== undefined ? (
+                    <div>
+                      {[
+                        ['Total Signals', btData.total_signals],
+                        ['Wins (Hit TP)', btData.win_count],
+                        ['Losses (Hit SL)', btData.loss_count],
+                        ['Win Rate', `${btData.win_rate}%`],
+                        ['Profit Factor', btData.profit_factor ?? 'n/a'],
+                        ['Net PnL (0.10 lot)', `${btData.net_pnl >= 0 ? '+' : ''}$${btData.net_pnl?.toFixed(2)}`],
+                        ['Max Drawdown', `${btData.max_drawdown}%`],
+                        ['Partial Moves (10-30%)', btData.partial_moves],
+                        ['Overshot TP (50-100%+)', btData.overshot_tp],
+                        ['Min Win Pts', `${btData.min_win_pts?.toFixed(0)} pts`],
+                        ['Max Win Pts', `${btData.max_win_pts?.toFixed(0)} pts`],
+                        ['Avg Win Pts', `${btData.avg_win_pts?.toFixed(1)} pts`],
+                        ['Median Win Pts', `${btData.median_win_pts?.toFixed(1)} pts`]
+                      ].map(([k, v], i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '5px 4px', borderBottom: '1px solid var(--border)', fontSize: 12.5 }}>
+                          <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+                          <strong style={{ color: typeof v === 'string' && v.startsWith('+') ? '#089981' : '#fff' }}>{v}</strong>
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  ) : (
+                    <div>
+                      {[
+                        ['Net return', `${btData.net_return_pct > 0 ? '+' : ''}${btData.net_return_pct}%`],
+                        ['Trades', btData.trades],
+                        ['Win rate', `${btData.win_rate}%`],
+                        ['Profit factor', btData.profit_factor ?? 'n/a']
+                      ].map(([k, v], i) => (
+                        <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 4px', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                          <span style={{ color: 'var(--text-muted)' }}>{k}</span>
+                          <strong style={{ color: '#fff' }}>{v}</strong>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
             </div>

@@ -212,6 +212,7 @@ function makeEval(ctx) {
       case 'bin': return binop(node.op, ev(node.a), ev(node.b));
       case 'tern': { const c = S(ev(node.c)), a = S(ev(node.a)), b = S(ev(node.b)); const out = fill(N, NA); for (let i = 0; i < N; i++) out[i] = c[i] ? a[i] : b[i]; return out; }
       case 'call': return callFn(node.name, node.args.map(ev), node.kw, node.args);
+      case 'kw': return ev(node.val);
     }
     throw new Error('bad node ' + node.k);
   }
@@ -238,7 +239,8 @@ function makeEval(ctx) {
     const f = ctx.fns[name];
     if (!f) { ctx.warn(`unsupported function '${name}()' — skipped`); return fill(N, NA); }
     const ekw = {}; for (const k in kw) ekw[k] = ev(kw[k]);
-    return f(args, ekw);
+    const posArgs = (rawArgs && args) ? args.filter((_, i) => rawArgs[i]?.k !== 'kw') : args;
+    return f(posArgs, ekw);
   }
   return { ev, scalar };
 }
@@ -284,6 +286,18 @@ function runPine(src, bars) {
     ohlc4: close.map((c, i) => (open[i] + high[i] + low[i] + close[i]) / 4),
     bar_index: close.map((_, i) => i),
     na: NaN, true: 1, false: 0,
+    'barstate.isconfirmed': fill(N, 1),
+    'barstate.islast': close.map((_, i) => (i === N - 1 ? 1 : 0)),
+    'syminfo.mintick': 0.01,
+    'syminfo.pointvalue': 1,
+    'plot.style_linebr': { __style: 'linebr' },
+    'line.style_dashed': { __style: 'dashed' },
+    'line.style_solid': { __style: 'solid' },
+    'size.large': { __size: 'large' },
+    'size.normal': { __size: 'normal' },
+    'size.small': { __size: 'small' },
+    'size.tiny': { __size: 'tiny' },
+    'position.top_right': { __pos: 'top_right' },
   };
   // color.* constants
   for (const k in COLORS) builtins['color.' + k] = { __color: COLORS[k] };
@@ -334,7 +348,17 @@ function runPine(src, bars) {
   const header = (a, kw) => { if (a[0] && a[0].__str) title = a[0].__str; else if (kw.title && kw.title.__str) title = kw.title.__str; if (kw.overlay !== undefined) overlay = !!sc(kw.overlay); return NA; };
   fns['indicator'] = header; fns['strategy'] = header; fns['study'] = header;
   // no-op statement fns (ignore gracefully)
-  for (const k of ['alertcondition', 'bgcolor', 'fill', 'barcolor', 'plotcandle', 'label.new', 'line.new', 'box.new', 'table.new', 'table.cell', 'alert', 'strategy.risk.allow_entry_in', 'strategy.exit']) fns[k] = () => NA;
+  for (const k of [
+    'alertcondition', 'bgcolor', 'fill', 'barcolor', 'plotcandle',
+    'label.new', 'line.new', 'box.new', 'box.set_text', 'box.set_bgcolor',
+    'table.new', 'table.cell', 'alert', 'strategy.risk.allow_entry_in', 'strategy.exit',
+    'array.sort'
+  ]) fns[k] = () => NA;
+  fns['str.tostring'] = a => ({ __str: String(a[0] !== undefined ? (isArr(a[0]) ? a[0][a[0].length - 1] : a[0]) : '') });
+  fns['array.new_float'] = () => [];
+  fns['array.push'] = a => { if (Array.isArray(a[0])) a[0].push(a[1]); return NA; };
+  fns['array.size'] = a => (Array.isArray(a[0]) ? a[0].length : 0);
+  fns['array.get'] = a => (Array.isArray(a[0]) ? a[0][Math.round(sc(a[1]))] ?? 0 : 0);
 
   // plot / shape statement handlers (return via side effects)
   fns['plot'] = (a, kw) => {
@@ -401,9 +425,12 @@ function runPine(src, bars) {
     E.ev(node);
   }
 
+  function stripTypeKeywords(text) {
+    return text.replace(/^(var\s+|varip\s+)?(simple\s+|series\s+|const\s+)?(float|int|bool|string|color|array<[^>]+>)\s+/, '');
+  }
+
   function processAssignment(text, mask) {
-    // strip type keywords
-    let t = text.replace(/^(var\s+|varip\s+)?(simple\s+|series\s+|const\s+)?(float|int|bool|string|color)\s+/, '');
+    let t = stripTypeKeywords(text);
     const m = t.match(/^([A-Za-z_]\w*)\s*(:=|=)\s*(.+)$/);
     if (!m) return false;
     const name = m[1], op = m[2], rhs = m[3];
@@ -415,7 +442,7 @@ function runPine(src, bars) {
   }
 
   function isAssignment(text) {
-    let t = text.replace(/^(var\s+|varip\s+)?(simple\s+|series\s+|const\s+)?(float|int|bool|string|color)\s+/, '');
+    let t = stripTypeKeywords(text);
     return /^[A-Za-z_]\w*\s*(:=|=)[^=]/.test(t);
   }
 
