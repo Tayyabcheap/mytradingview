@@ -233,7 +233,7 @@ const KLineChartArea = forwardRef(({
             ind.params?.sessStart ?? 8, ind.params?.sessEnd ?? 12
           ];
         } else if (ind.id === 'SIGNALS') {
-          calcParams = [ind.params?.strategy || 'ALL'];
+          calcParams = [ind.params?.strategy || 'ALL', ind.params?.timeframe || timeframe || '5M'];
         } else if (ind.id === 'SR_ZONES' || ind.id === 'ORDER_BLOCKS') {
           extendData = ind.params || {};
           calcParams = [];

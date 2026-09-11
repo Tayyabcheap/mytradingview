@@ -187,7 +187,12 @@ function toolPreview(id) {
   }
 }
 
-export default function FlyoutToolbar({ onSelectTool, onClearAll }) {
+export default function FlyoutToolbar({ 
+  onSelectTool, 
+  onClearAll,
+  favoriteToolIds = ['segment', 'horizontalStraightLine', 'rect', 'longPosition', 'shortPosition', 'simpleAnnotation'],
+  onToggleFavorite
+}) {
   const [activeFlyout, setActiveFlyout] = useState(null);
   const [activeGroup, setActiveGroup] = useState('cursor');
   const [selectedTools, setSelectedTools] = useState({
@@ -346,6 +351,7 @@ export default function FlyoutToolbar({ onSelectTool, onClearAll }) {
 
                     {sec.tools.map((t, tIdx) => {
                       const isSelected = selectedTools[group.id] === t.id;
+                      const isFav = favoriteToolIds.includes(t.id);
                       return (
                         <div
                           key={tIdx}
@@ -378,9 +384,27 @@ export default function FlyoutToolbar({ onSelectTool, onClearAll }) {
                                 {t.shortcut}
                               </span>
                             )}
-                            {t.favorite && (
-                              <Star size={14} fill="#f7a600" color="#f7a600" />
-                            )}
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onToggleFavorite) onToggleFavorite(t.id);
+                              }}
+                              style={{
+                                background: 'none',
+                                border: 'none',
+                                padding: 2,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                color: isFav ? '#f7a600' : '#555d6e',
+                                transition: 'color 0.15s ease, transform 0.15s ease'
+                              }}
+                              onMouseEnter={e => { if (!isFav) e.currentTarget.style.color = '#f7a600'; }}
+                              onMouseLeave={e => { if (!isFav) e.currentTarget.style.color = '#555d6e'; }}
+                              title={isFav ? "Remove from floating Favorites bar" : "Add to floating Favorites bar"}
+                            >
+                              <Star size={14} fill={isFav ? '#f7a600' : 'none'} color={isFav ? '#f7a600' : 'currentColor'} />
+                            </button>
                           </div>
                         </div>
                       );

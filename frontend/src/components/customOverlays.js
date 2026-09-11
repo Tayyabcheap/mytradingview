@@ -758,7 +758,12 @@ const signalsIndicator = {
   calcParams: ['ALL'],
   figures: [ { key: 'entryPrice', title: 'Signals: ', type: 'line' } ],
   styles: { lines: [ { color: 'transparent', size: 0 } ] },
-  calc: (dataList, { calcParams }) => computeSignalSeries(dataList, (calcParams && calcParams[0]) || 'ALL'),
+  calc: (dataList, { calcParams }) => computeSignalSeries(
+    dataList, 
+    (calcParams && calcParams[0]) || 'ALL', 
+    20, 
+    (calcParams && calcParams[1]) || '5M'
+  ),
   draw: ({ ctx, indicator, xAxis, yAxis }) => {
     const result = indicator.result || [];
     if (!result.length) return true;

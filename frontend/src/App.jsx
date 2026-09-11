@@ -3,7 +3,7 @@ import {
   LineChart, Settings, Camera, Search, Maximize, X, 
   Bell, RotateCcw, ChevronDown, Download, Check, Zap, 
   TrendingUp, TrendingDown, Layers, LayoutDashboard, BookOpen, 
-  CandlestickChart, Plus, DollarSign
+  CandlestickChart, Plus, DollarSign, BarChart2
 } from 'lucide-react';
 import TopTabBar from './components/TopTabBar';
 import DashboardTab from './components/DashboardTab';
@@ -14,6 +14,7 @@ import KLineChartArea from './components/KLineChartArea';
 import MonteCarloTab from './components/MonteCarloTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
+import SignalPerformanceModal from './components/SignalPerformanceModal';
 import { computeSignalSeries, scoreSignalSeries } from './components/signalCore';
 
 import FlyoutToolbar from './components/FlyoutToolbar';
@@ -264,16 +265,42 @@ function App() {
   const [snapshotUrl, setSnapshotUrl] = useState(null);
   const [showScreenerModal, setShowScreenerModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
+  const [showSignalPerformanceModal, setShowSignalPerformanceModal] = useState(false);
 
   // Indicators State
   const [indicators, setIndicators] = useState(() => loadLS('indicators', INITIAL_INDICATORS));
   const [editingIndicator, setEditingIndicator] = useState(null);
 
-  // Signals State
-  const [signalsEnabled, setSignalsEnabled] = useState(true);
-  const [signalStrategy, setSignalStrategy] = useState('ALL'); // ALL | SWING_CORE | SWING_PRO
+  // Signals State (Multi-Strategy Support & Timeframe Gating)
+  const DEFAULT_SIGNAL_STRATEGIES = {
+    REAL_DIP: true,
+    SWING_CORE: true,
+    SWING_PRO: true
+  };
+  const [signalsEnabled, setSignalsEnabled] = useState(() => loadLS('signalsEnabled', true));
+  const [activeSignalStrategies, setActiveSignalStrategies] = useState(() => {
+    const saved = loadLS('activeSignalStrategies', null);
+    if (saved && typeof saved === 'object') return saved;
+    const oldStrat = loadLS('signalStrategy', 'ALL');
+    if (oldStrat === 'REAL_DIP') return { REAL_DIP: true, SWING_CORE: false, SWING_PRO: false };
+    if (oldStrat === 'SWING_CORE') return { REAL_DIP: false, SWING_CORE: true, SWING_PRO: false };
+    if (oldStrat === 'SWING_PRO') return { REAL_DIP: false, SWING_CORE: false, SWING_PRO: true };
+    return DEFAULT_SIGNAL_STRATEGIES;
+  });
   const [showSignalsMenu, setShowSignalsMenu] = useState(false);
   const [signalsList, setSignalsList] = useState([]);
+
+  // Dynamic Favorites Bar State (Tools favorited in menu appear in draggable bar)
+  const DEFAULT_FAVORITE_TOOLS = ['segment', 'horizontalStraightLine', 'rect', 'longPosition', 'shortPosition', 'simpleAnnotation'];
+  const [favoriteToolIds, setFavoriteToolIds] = useState(() => loadLS('favoriteToolIds', DEFAULT_FAVORITE_TOOLS));
+
+  const handleToggleFavoriteTool = (toolId) => {
+    setFavoriteToolIds(prev => {
+      const next = prev.includes(toolId) ? prev.filter(id => id !== toolId) : [...prev, toolId];
+      saveLS('favoriteToolIds', next);
+      return next;
+    });
+  };
 
   // MT5 Data State
   const [symbols, setSymbols] = useState([]);
@@ -383,7 +410,8 @@ function App() {
   // Fetch Signals from backend
   useEffect(() => {
     if (!signalsEnabled) return;
-    fetch(`/api/signals?symbol=${symbol}&timeframe=${timeframe}&strategy=${signalStrategy}`)
+    const activeKeys = Object.entries(activeSignalStrategies).filter(([_, on]) => on).map(([k]) => k).join(',');
+    fetch(`/api/signals?symbol=${symbol}&timeframe=${timeframe}&strategy=${activeKeys || 'ALL'}`)
       .then(res => res.json())
       .then(data => {
         if (Array.isArray(data)) {
@@ -391,7 +419,7 @@ function App() {
         }
       })
       .catch(err => console.error("Error fetching signals:", err));
-  }, [symbol, timeframe, signalStrategy, signalsEnabled]);
+  }, [symbol, timeframe, activeSignalStrategies, signalsEnabled]);
 
   // Persist state to localStorage
   useEffect(() => { saveLS('workspaceTabs', workspaceTabs); }, [workspaceTabs]);
@@ -409,13 +437,14 @@ function App() {
   const signalLogKeyRef = useRef('');
   useEffect(() => {
     if (!signalsEnabled) return;
-    const key = `${symbol}|${timeframe}|${signalStrategy}|${new Date().toISOString().slice(0, 10)}`;
+    const activeKeys = Object.entries(activeSignalStrategies).filter(([_, on]) => on).map(([k]) => k).join(',');
+    const key = `${symbol}|${timeframe}|${activeKeys}|${new Date().toISOString().slice(0, 10)}`;
     if (signalLogKeyRef.current === key) return;
     const t = setTimeout(() => {
       try {
         const data = (chartRef.current && chartRef.current.getFullData) ? chartRef.current.getFullData() : [];
         if (!data || data.length < 60) return;
-        const series = computeSignalSeries(data, signalStrategy);
+        const series = computeSignalSeries(data, activeSignalStrategies, 20, timeframe);
         const summary = scoreSignalSeries(series);
         const sigs = [];
         series.forEach((d, i) => {
@@ -428,12 +457,12 @@ function App() {
         signalLogKeyRef.current = key;
         fetch('/api/signals/log', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ symbol, timeframe, strategy: signalStrategy, signals: sigs, summary })
+          body: JSON.stringify({ symbol, timeframe, strategy: activeKeys, signals: sigs, summary })
         }).catch(() => {});
       } catch (e) { /* offline */ }
     }, 4000);
     return () => clearTimeout(t);
-  }, [symbol, timeframe, signalStrategy, signalsEnabled]);
+  }, [symbol, timeframe, activeSignalStrategies, signalsEnabled]);
   useEffect(() => { saveLS('activeTabId', activeTabId); }, [activeTabId]);
   useEffect(() => { saveLS('symbol', symbol); }, [symbol]);
   useEffect(() => { saveLS('timeframe', timeframe); }, [timeframe]);
@@ -442,6 +471,17 @@ function App() {
   useEffect(() => { saveLS('chartSettings', chartSettings); }, [chartSettings]);
   useEffect(() => { saveLS('alerts', alerts); }, [alerts]);
   useEffect(() => { saveLS('signalNotifications', signalNotifications); }, [signalNotifications]);
+  useEffect(() => { saveLS('signalsEnabled', signalsEnabled); }, [signalsEnabled]);
+  useEffect(() => { saveLS('activeSignalStrategies', activeSignalStrategies); }, [activeSignalStrategies]);
+  useEffect(() => { saveLS('favoriteToolIds', favoriteToolIds); }, [favoriteToolIds]);
+
+  // Keep SIGNALS indicator updated with current timeframe and active strategies
+  useEffect(() => {
+    setIndicators(prev => prev.map(ind => ind.id === 'SIGNALS' ? {
+      ...ind,
+      params: { ...ind.params, strategy: activeSignalStrategies, timeframe }
+    } : ind));
+  }, [timeframe, activeSignalStrategies]);
 
   // Evaluate price alerts on each tick: crossing / crossing up / crossing down / >= / <=,
   // 'once' vs 'repeat' trigger, and optional expiry.
@@ -745,8 +785,11 @@ function App() {
     setSignalsEnabled(nextState);
     const signalsInd = indicators.find(i => i.id === 'SIGNALS');
     if (nextState) {
+      const hasAny = Object.values(activeSignalStrategies).some(Boolean);
+      const strats = hasAny ? activeSignalStrategies : { REAL_DIP: true, SWING_CORE: true, SWING_PRO: true };
+      if (!hasAny) setActiveSignalStrategies(strats);
       if (signalsInd) {
-        setIndicators(prev => prev.map(i => i.id === 'SIGNALS' ? { ...i, visible: true } : i));
+        setIndicators(prev => prev.map(i => i.id === 'SIGNALS' ? { ...i, visible: true, params: { ...i.params, strategy: strats, timeframe } } : i));
       } else {
         handleToggleIndicator({
           id: 'SIGNALS',
@@ -776,7 +819,7 @@ function App() {
         setSigAccLoading(false);
         return;
       }
-      const series = computeSignalSeries(data, signalStrategy);
+      const series = computeSignalSeries(data, activeSignalStrategies, 20, timeframe);
       const combined = scoreSignalSeries(series);
       const longs = scoreSignalSeries(series.filter(d => !d || d.signalType !== 'SELL'));
       const shorts = scoreSignalSeries(series.filter(d => !d || d.signalType !== 'BUY'));
@@ -794,11 +837,31 @@ function App() {
     setSigAccLoading(false);
   };
 
-  const handleSelectSignalStrategy = (strategyKey) => {
-    setSignalStrategy(strategyKey);
-    setShowSignalsMenu(false);
-    setSignalsEnabled(true);
-    setIndicators(prev => prev.map(ind => ind.id === 'SIGNALS' ? { ...ind, visible: true, params: { ...ind.params, strategy: strategyKey } } : ind));
+  const handleToggleSignalStrategy = (strategyKey) => {
+    setActiveSignalStrategies(prev => {
+      const next = { ...prev, [strategyKey]: !prev[strategyKey] };
+      saveLS('activeSignalStrategies', next);
+      const hasAny = Object.values(next).some(Boolean);
+      setSignalsEnabled(hasAny);
+      setIndicators(indList => indList.map(ind => ind.id === 'SIGNALS' ? {
+        ...ind,
+        visible: hasAny,
+        params: { ...ind.params, strategy: next, timeframe }
+      } : ind));
+      return next;
+    });
+  };
+
+  const handleSelectAllSignalStrategies = (enableAll = true) => {
+    const next = { REAL_DIP: enableAll, SWING_CORE: enableAll, SWING_PRO: enableAll };
+    setActiveSignalStrategies(next);
+    saveLS('activeSignalStrategies', next);
+    setSignalsEnabled(enableAll);
+    setIndicators(indList => indList.map(ind => ind.id === 'SIGNALS' ? {
+      ...ind,
+      visible: enableAll,
+      params: { ...ind.params, strategy: next, timeframe }
+    } : ind));
   };
 
   const handleTakeSnapshot = () => {
@@ -926,13 +989,20 @@ function App() {
       try {
         const data = (chartRef.current && chartRef.current.getFullData) ? chartRef.current.getFullData() : [];
         if (!data || data.length < 60) return;
-        const series = computeSignalSeries(data, signalStrategy);
+        const series = computeSignalSeries(data, activeSignalStrategies, 20, timeframe);
         let li = -1;
         for (let i = series.length - 1; i >= 0; i--) { if (series[i] && series[i].signalType) { li = i; break; } }
         if (li < 0 || li < series.length - 3) return;   // only the most recent (right-edge) signal
         const ts = data[li] ? data[li].timestamp : li;
-        const key = `${symbol}|${timeframe}`;
         const sig = series[li];
+
+        // STRICT USER DIRECTIVE: Haider-Gold-Scalper ONLY works on 5M and ONLY executes on 5M chart
+        const isHaiderSig = sig.strategyId === 'REAL_DIP' || sig.strategy === 'Haider-Gold-Scalper';
+        if (isHaiderSig && timeframe.toUpperCase() !== '5M') {
+          return; // Strictly abort: Haider-Gold-Scalper only executes on 5-minute chart
+        }
+
+        const key = `${symbol}|${timeframe}`;
 
         // 1. Toast and notification history (once per signal candle)
         if (notifiedSigRef.current[key] !== ts) {
@@ -947,12 +1017,13 @@ function App() {
             sl: sig.slPrice,
             tp1: sig.tp1Price,
             tp2: sig.tp2Price,
+            strategy: sig.strategy || 'Signal',
             ts,
             read: false,
             at: Date.now()
           };
           setSignalNotifications(prev => (prev[0] && prev[0].id === notif.id) ? prev : [notif, ...prev].slice(0, 50));
-          setSignalToast({ symbol, timeframe, type: sig.signalType, entry: sig.entryPrice, sl: sig.slPrice, tp1: sig.tp1Price, tp2: sig.tp2Price, ts });
+          setSignalToast({ symbol, timeframe, type: sig.signalType, entry: sig.entryPrice, sl: sig.slPrice, tp1: sig.tp1Price, tp2: sig.tp2Price, ts, strategy: notif.strategy });
           playBeep(760, 0.16); setTimeout(() => playBeep(1010, 0.16), 130);
           if (sigToastTimerRef.current) clearTimeout(sigToastTimerRef.current);
           sigToastTimerRef.current = setTimeout(() => setSignalToast(null), 10000);
@@ -967,13 +1038,15 @@ function App() {
           // Enforce Gold safety constraint: strictly <= 1.0 lot
           const safeLot = isGoldSym ? Math.min(1.0, activeLotSize) : activeLotSize;
 
+          const tradeComment = isHaiderSig ? 'Haider-Gold-Scalper' : (sig.strategy || 'MT5-Auto-Trade');
+
           const tradePayload = {
             symbol: symbol,
             type: sig.signalType,
             volume: safeLot,
             sl: parseFloat(sig.slPrice.toFixed(3)),
             tp: parseFloat(sig.tp1Price.toFixed(3)),
-            comment: 'Haider-Gold-Scalper'
+            comment: tradeComment
           };
 
           try {
@@ -984,7 +1057,7 @@ function App() {
             });
             const d = await res.json();
             if (res.ok && !d.error) {
-              const successMsg = `⚡ Haider-Gold-Scalper: Auto-Opened ${tradePayload.type} ${tradePayload.volume} Lots on ${symbol} @ ${(d.price || sig.entryPrice).toFixed(3)} (SL: ${tradePayload.sl.toFixed(3)}, TP: ${tradePayload.tp.toFixed(3)})`;
+              const successMsg = `⚡ ${tradeComment}: Auto-Opened ${tradePayload.type} ${tradePayload.volume} Lots on ${symbol} @ ${(d.price || sig.entryPrice).toFixed(3)} (SL: ${tradePayload.sl.toFixed(3)}, TP: ${tradePayload.tp.toFixed(3)})`;
               setAlertToast(successMsg);
               playBeep(1050, 0.22);
               fetchAccountAndSymbols();
@@ -1001,7 +1074,7 @@ function App() {
     const t0 = setTimeout(check, 3500);
     const iv = setInterval(check, 5000);
     return () => { clearTimeout(t0); clearInterval(iv); };
-  }, [signalsEnabled, symbol, timeframe, signalStrategy, autoTradeSignals, activeLotSize]);
+  }, [signalsEnabled, symbol, timeframe, activeSignalStrategies, autoTradeSignals, activeLotSize]);
 
   const handleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -1345,36 +1418,139 @@ function App() {
                   background: '#1e222d',
                   border: '1px solid #2a2e39',
                   borderRadius: 6,
-                  boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
-                  width: 250,
+                  boxShadow: '0 8px 28px rgba(0,0,0,0.75)',
+                  width: 270,
                   zIndex: 9999,
-                  padding: '6px 0'
+                  padding: '6px 0',
+                  userSelect: 'none'
                 }}>
-                  {[
-                    { id: 'ALL', label: 'Dual Engine (All Signals)', desc: 'Swing Core + Swing Pro' },
-                    { id: 'REAL_DIP', label: 'Haider-Gold-Scalper', desc: 'ATR Impulse + RSI Exhaustion' },
-                    { id: 'SWING_CORE', label: 'Swing Core (Pullback)', desc: 'Trend Pullback' },
-                    { id: 'SWING_PRO', label: 'Swing Pro (Breakout)', desc: 'EMA 50 Breakout' }
-                  ].map(strat => (
-                    <div
-                      key={strat.id}
-                      onClick={() => handleSelectSignalStrategy(strat.id)}
-                      style={{
-                        padding: '8px 12px',
-                        fontSize: 13,
-                        cursor: 'pointer',
-                        color: signalStrategy === strat.id ? 'var(--brand)' : 'var(--text)',
-                        background: signalStrategy === strat.id ? 'rgba(41, 98, 255, 0.15)' : 'transparent'
+                  <div style={{
+                    padding: '4px 12px 6px 12px',
+                    fontSize: 10.5,
+                    fontWeight: 800,
+                    color: '#787b86',
+                    textTransform: 'uppercase',
+                    letterSpacing: 0.8,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between'
+                  }}>
+                    <span>Active Indicators</span>
+                    <span 
+                      onClick={() => {
+                        const allOn = Object.values(activeSignalStrategies).every(Boolean);
+                        handleSelectAllSignalStrategies(!allOn);
                       }}
+                      style={{ color: 'var(--brand)', cursor: 'pointer', fontSize: 11, fontWeight: 600, textTransform: 'none' }}
                     >
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                        <span style={{ fontWeight: 600 }}>{strat.label}</span>
-                        {signalStrategy === strat.id && <Check size={14} />}
+                      {Object.values(activeSignalStrategies).every(Boolean) ? 'Deselect All' : 'Select All'}
+                    </span>
+                  </div>
+
+                  {/* 1. Haider-Gold-Scalper (5M ONLY) */}
+                  <div
+                    onClick={() => handleToggleSignalStrategy('REAL_DIP')}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      color: activeSignalStrategies.REAL_DIP ? '#089981' : 'var(--text)',
+                      background: activeSignalStrategies.REAL_DIP ? 'rgba(8, 153, 129, 0.12)' : 'transparent',
+                      borderLeft: activeSignalStrategies.REAL_DIP ? '3px solid #089981' : '3px solid transparent',
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={e => { if (!activeSignalStrategies.REAL_DIP) e.currentTarget.style.background = '#2a2e39'; }}
+                    onMouseLeave={e => { if (!activeSignalStrategies.REAL_DIP) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 700 }}>Haider-Gold-Scalper</span>
+                        <span style={{
+                          fontSize: 9,
+                          fontWeight: 800,
+                          padding: '1px 5px',
+                          borderRadius: 3,
+                          background: timeframe.toUpperCase() === '5M' ? 'rgba(8,153,129,0.25)' : 'rgba(247,166,0,0.2)',
+                          color: timeframe.toUpperCase() === '5M' ? '#089981' : '#f7a600',
+                          border: `1px solid ${timeframe.toUpperCase() === '5M' ? 'rgba(8,153,129,0.5)' : 'rgba(247,166,0,0.5)'}`
+                        }}>
+                          5M ONLY
+                        </span>
                       </div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{strat.desc}</div>
+                      <div style={{
+                        width: 16, height: 16, borderRadius: 3,
+                        border: activeSignalStrategies.REAL_DIP ? '1px solid #089981' : '1px solid #555d6e',
+                        background: activeSignalStrategies.REAL_DIP ? '#089981' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {activeSignalStrategies.REAL_DIP && <Check size={12} color="#fff" strokeWidth={3} />}
+                      </div>
                     </div>
-                  ))}
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      ATR Impulse + RSI Exhaustion {timeframe.toUpperCase() !== '5M' && activeSignalStrategies.REAL_DIP && '• Chart not 5M'}
+                    </div>
+                  </div>
+
+                  {/* 2. Swing Core */}
+                  <div
+                    onClick={() => handleToggleSignalStrategy('SWING_CORE')}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      color: activeSignalStrategies.SWING_CORE ? 'var(--brand)' : 'var(--text)',
+                      background: activeSignalStrategies.SWING_CORE ? 'rgba(41, 98, 255, 0.12)' : 'transparent',
+                      borderLeft: activeSignalStrategies.SWING_CORE ? '3px solid var(--brand)' : '3px solid transparent',
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={e => { if (!activeSignalStrategies.SWING_CORE) e.currentTarget.style.background = '#2a2e39'; }}
+                    onMouseLeave={e => { if (!activeSignalStrategies.SWING_CORE) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: 600 }}>Swing Core (Pullback)</span>
+                      <div style={{
+                        width: 16, height: 16, borderRadius: 3,
+                        border: activeSignalStrategies.SWING_CORE ? '1px solid var(--brand)' : '1px solid #555d6e',
+                        background: activeSignalStrategies.SWING_CORE ? 'var(--brand)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {activeSignalStrategies.SWING_CORE && <Check size={12} color="#fff" strokeWidth={3} />}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Trend Pullback (SMA 20 + EMA 200)</div>
+                  </div>
+
+                  {/* 3. Swing Pro */}
+                  <div
+                    onClick={() => handleToggleSignalStrategy('SWING_PRO')}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      color: activeSignalStrategies.SWING_PRO ? '#a855f7' : 'var(--text)',
+                      background: activeSignalStrategies.SWING_PRO ? 'rgba(168, 85, 247, 0.12)' : 'transparent',
+                      borderLeft: activeSignalStrategies.SWING_PRO ? '3px solid #a855f7' : '3px solid transparent',
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={e => { if (!activeSignalStrategies.SWING_PRO) e.currentTarget.style.background = '#2a2e39'; }}
+                    onMouseLeave={e => { if (!activeSignalStrategies.SWING_PRO) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontWeight: 600 }}>Swing Pro (Breakout)</span>
+                      <div style={{
+                        width: 16, height: 16, borderRadius: 3,
+                        border: activeSignalStrategies.SWING_PRO ? '1px solid #a855f7' : '1px solid #555d6e',
+                        background: activeSignalStrategies.SWING_PRO ? '#a855f7' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {activeSignalStrategies.SWING_PRO && <Check size={12} color="#fff" strokeWidth={3} />}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>EMA 50 Breakout + Donchian Range</div>
+                  </div>
+
                   <div style={{ height: 1, background: '#2a2e39', margin: '6px 0' }} />
+
                   {/* AUTO-TRADE TOGGLE */}
                   <div
                     onClick={() => {
@@ -1395,8 +1571,11 @@ function App() {
                       alignItems: 'center',
                       justifyContent: 'space-between',
                       background: autoTradeSignals ? 'rgba(8,153,129,0.12)' : 'transparent',
-                      color: autoTradeSignals ? '#089981' : 'var(--text-muted)'
+                      color: autoTradeSignals ? '#089981' : 'var(--text-muted)',
+                      transition: 'background 0.15s ease'
                     }}
+                    onMouseEnter={e => e.currentTarget.style.background = autoTradeSignals ? 'rgba(8,153,129,0.18)' : '#2a2e39'}
+                    onMouseLeave={e => e.currentTarget.style.background = autoTradeSignals ? 'rgba(8,153,129,0.12)' : 'transparent'}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       <Zap size={14} color={autoTradeSignals ? '#089981' : 'var(--text-muted)'} />
@@ -1413,14 +1592,50 @@ function App() {
                       {autoTradeSignals ? 'ON' : 'OFF'}
                     </span>
                   </div>
+
                   <div style={{ height: 1, background: '#2a2e39', margin: '6px 0' }} />
+
+                  {/* SIGNAL PERFORMANCE TABLES */}
                   <div
-                    onClick={runSignalAccuracy}
-                    style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}
+                    onClick={() => {
+                      setShowSignalPerformanceModal(true);
+                      setShowSignalsMenu(false);
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      color: 'var(--text)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      transition: 'background 0.15s ease'
+                    }}
                     onMouseEnter={e => e.currentTarget.style.background = '#2a2e39'}
                     onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                   >
-                    <LineChart size={14} /> <span style={{ fontWeight: 600 }}>Check signal accuracy…</span>
+                    <BarChart2 size={14} color="#089981" />
+                    <span style={{ fontWeight: 600 }}>Signal Performance Tables…</span>
+                  </div>
+
+                  {/* CHECK SIGNAL ACCURACY */}
+                  <div
+                    onClick={runSignalAccuracy}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      color: 'var(--text)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#2a2e39'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <LineChart size={14} />
+                    <span style={{ fontWeight: 600 }}>Check signal accuracy…</span>
                   </div>
                 </div>
               )}
@@ -1509,6 +1724,8 @@ function App() {
             <FlyoutToolbar 
               onSelectTool={handleSelectTool} 
               onClearAll={handleClearDrawings} 
+              favoriteToolIds={favoriteToolIds}
+              onToggleFavorite={handleToggleFavoriteTool}
             />
 
             {/* CHART VIEWPORT */}
@@ -1533,6 +1750,7 @@ function App() {
               )}
 
               <FavoritesBar 
+                favoriteToolIds={favoriteToolIds}
                 onSelectTool={handleSelectTool} 
                 onClearAll={handleClearDrawings} 
               />
@@ -2005,6 +2223,14 @@ function App() {
           </div>
         </div>
       )}
+
+      {/* SIGNAL PERFORMANCE MODAL */}
+      <SignalPerformanceModal
+        isOpen={showSignalPerformanceModal}
+        onClose={() => setShowSignalPerformanceModal(false)}
+        activeSignalStrategies={activeSignalStrategies}
+        onToggleStrategy={handleToggleSignalStrategy}
+      />
     </div>
   );
 }
