@@ -25,7 +25,9 @@ from intelligence import (
     calculate_price_projections,
     get_champions_council_verdict,
     get_macro_sentinel_status,
-    get_gold_liquidity_fixes
+    get_gold_liquidity_fixes,
+    calculate_order_blocks,
+    find_order_block_confluences
 )
 
 try:
@@ -1518,6 +1520,79 @@ def intelligence_summary():
         "macro": macro_data,
         "fixes": fixes_data
     })
+
+
+@app.route("/api/order_blocks", methods=["GET"])
+def api_order_blocks():
+    """
+    Returns detected Order Blocks for Gold across two selected timeframes,
+    plus dual-timeframe confluence zones.
+    """
+    raw_symbol = request.args.get("symbol", config.SYMBOL)
+    symbol = resolve_broker_symbol(raw_symbol)
+    tf1_str = request.args.get("tf1", "5M").upper()
+    tf2_str = request.args.get("tf2", "15M").upper()
+
+    tf1_const = TF_MAP.get(tf1_str, mt5.TIMEFRAME_M5 if MT5_IMPORTED else None)
+    tf2_const = TF_MAP.get(tf2_str, mt5.TIMEFRAME_M15 if MT5_IMPORTED else None)
+
+    current_price = 0.0
+    c1, c2 = [], []
+
+    if init_mt5():
+        with mt5_lock:
+            tick = mt5.symbol_info_tick(symbol)
+            if tick:
+                current_price = float(tick.bid)
+
+            if tf1_const is not None:
+                r1 = mt5.copy_rates_from_pos(symbol, tf1_const, 0, 150)
+                if r1 is not None and len(r1) > 0:
+                    c1 = [{
+                        "timestamp": int(r["time"]) * 1000,
+                        "open": float(r["open"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "close": float(r["close"]),
+                        "volume": float(r["tick_volume"])
+                    } for r in r1]
+
+            if tf2_const is not None:
+                r2 = mt5.copy_rates_from_pos(symbol, tf2_const, 0, 150)
+                if r2 is not None and len(r2) > 0:
+                    c2 = [{
+                        "timestamp": int(r["time"]) * 1000,
+                        "open": float(r["open"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "close": float(r["close"]),
+                        "volume": float(r["tick_volume"])
+                    } for r in r2]
+
+    # Fallback synthetic generation if MT5 historical rates unavailable
+    if not c1:
+        base = current_price or 2650.0
+        for i in range(40):
+            c1.append({"timestamp": int(time.time() - (40 - i) * 300) * 1000, "open": base, "high": base + 1.2, "low": base - 1.2, "close": base + 0.3, "volume": 120})
+            base += 0.2
+    if not c2:
+        base = current_price or 2650.0
+        for i in range(40):
+            c2.append({"timestamp": int(time.time() - (40 - i) * 900) * 1000, "open": base, "high": base + 2.5, "low": base - 2.5, "close": base + 0.6, "volume": 350})
+            base += 0.5
+
+    ob_tf1 = calculate_order_blocks(c1, timeframe=tf1_str, current_price=current_price or c1[-1]["close"])
+    ob_tf2 = calculate_order_blocks(c2, timeframe=tf2_str, current_price=current_price or c2[-1]["close"])
+    confluences = find_order_block_confluences(ob_tf1, ob_tf2)
+
+    return jsonify({
+        "symbol": symbol,
+        "current_price": current_price or (c1[-1]["close"] if c1 else 2650.0),
+        "tf1": ob_tf1,
+        "tf2": ob_tf2,
+        "confluences": confluences
+    })
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────

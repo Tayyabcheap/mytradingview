@@ -12,6 +12,7 @@ import TradeExecutionPanel from './components/TradeExecutionPanel';
 import SymbolSearchModal from './components/SymbolSearchModal';
 import KLineChartArea from './components/KLineChartArea';
 import MonteCarloTab from './components/MonteCarloTab';
+import GoldOrderBlocksTab from './components/GoldOrderBlocksTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
 import SignalPerformanceModal from './components/SignalPerformanceModal';
@@ -220,6 +221,7 @@ const INITIAL_INDICATORS = [
 const INITIAL_WORKSPACE_TABS = [
   { id: 'dashboard', title: 'Dashboard', type: 'dashboard', closable: false },
   { id: 'chart-main', title: 'Chart: XAUUSDc', type: 'chart', symbol: 'XAUUSDc', timeframe: '1H', closable: false },
+  { id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false },
   { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false },
   { id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false }
 ];
@@ -230,6 +232,9 @@ function App() {
     const loaded = loadLS('workspaceTabs', INITIAL_WORKSPACE_TABS);
     if (!loaded.some(t => t.id === 'monte_carlo')) {
       loaded.push({ id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false });
+    }
+    if (!loaded.some(t => t.id === 'gold_order_blocks')) {
+      loaded.push({ id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false });
     }
     return loaded;
   });
@@ -2002,6 +2007,17 @@ function App() {
           <MonteCarloTab
             accountInfo={accountInfo}
             onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
+          />
+        </div>
+      )}
+
+      {/* 5. TAB 5: GOLD DUAL-TIMEFRAME ORDER BLOCKS (SMC) VIEW */}
+      {activeTab.type === 'order_blocks' && (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <GoldOrderBlocksTab
+            accountInfo={accountInfo}
+            onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
+            defaultSymbol={symbol}
           />
         </div>
       )}

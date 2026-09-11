@@ -478,3 +478,209 @@ def get_gold_liquidity_fixes() -> Dict[str, Any]:
         "current_utc_time": utc_now.strftime("%H:%M UTC"),
         "fixes": results
     }
+
+
+# ---------------------------------------------------------------------------
+# 6. Smart Money Concepts: Dual-Timeframe Order Block Engine (Gold Specialist)
+# ---------------------------------------------------------------------------
+
+def calculate_order_blocks(
+    candles: List[Dict[str, Any]], 
+    timeframe: str = "5M", 
+    atr_len: int = 14, 
+    max_blocks: int = 6,
+    current_price: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Computes institutional Smart Money Concepts (SMC) Order Blocks:
+    - Bullish OB (Demand): Last bearish candle before aggressive bullish displacement breaking structure.
+    - Bearish OB (Supply): Last bullish candle before aggressive bearish displacement breaking structure.
+    - Tracks virgin (unmitigated) vs tested zones, 50% equilibrium, and distance from Gold price.
+    """
+    n = len(candles)
+    if n < 20:
+        return {"timeframe": timeframe, "bullish": [], "bearish": [], "all_zones": []}
+
+    if current_price is None or current_price <= 0:
+        current_price = candles[-1]["close"]
+
+    # Calculate True Range and ATR
+    trs = []
+    for i in range(n):
+        if i == 0:
+            trs.append(candles[i]["high"] - candles[i]["low"])
+        else:
+            tr = max(
+                candles[i]["high"] - candles[i]["low"],
+                abs(candles[i]["high"] - candles[i - 1]["close"]),
+                abs(candles[i]["low"] - candles[i - 1]["close"])
+            )
+            trs.append(tr)
+
+    atrs = []
+    atr = sum(trs[:atr_len]) / atr_len if n >= atr_len else (candles[0]["high"] - candles[0]["low"])
+    for i in range(n):
+        if i < atr_len:
+            atrs.append(atr)
+        else:
+            atr = (atr * (atr_len - 1) + trs[i]) / atr_len
+            atrs.append(atr)
+
+    raw_blocks = []
+
+    for i in range(1, n - 2):
+        c_curr = candles[i]
+        c_next = candles[i + 1]
+        c_after = candles[i + 2]
+        curr_atr = atrs[i]
+
+        # 1. Bullish Order Block (Demand):
+        # Bearish candle (close < open) followed by a strong bullish breakout candle or 2-candle surge
+        is_down = c_curr["close"] < c_curr["open"]
+        impulse_up = (c_next["close"] - c_next["open"]) > (1.1 * curr_atr) and (c_next["close"] > c_curr["high"])
+        surge_up = (c_after["close"] - c_curr["open"]) > (1.6 * curr_atr) and (c_after["close"] > c_curr["high"])
+
+        if is_down and (impulse_up or surge_up):
+            impulse_val = max(c_next["close"] - c_next["open"], c_after["close"] - c_curr["open"])
+            raw_blocks.append({
+                "type": "BULL",
+                "kind": "Demand",
+                "top": round(float(c_curr["high"]), 3),
+                "bottom": round(float(c_curr["low"]), 3),
+                "mid": round(float((c_curr["high"] + c_curr["low"]) / 2.0), 3),
+                "idx": i,
+                "timestamp": c_curr.get("timestamp", 0),
+                "timeframe": timeframe,
+                "impulse_ratio": round(float(impulse_val / max(curr_atr, 0.01)), 2),
+                "volume": c_curr.get("volume", 0)
+            })
+
+        # 2. Bearish Order Block (Supply):
+        # Bullish candle (close > open) followed by a strong bearish breakout candle or 2-candle plunge
+        is_up = c_curr["close"] > c_curr["open"]
+        impulse_down = (c_next["open"] - c_next["close"]) > (1.1 * curr_atr) and (c_next["close"] < c_curr["low"])
+        surge_down = (c_curr["open"] - c_after["close"]) > (1.6 * curr_atr) and (c_after["close"] < c_curr["low"])
+
+        if is_up and (impulse_down or surge_down):
+            impulse_val = max(c_next["open"] - c_next["close"], c_curr["open"] - c_after["close"])
+            raw_blocks.append({
+                "type": "BEAR",
+                "kind": "Supply",
+                "top": round(float(c_curr["high"]), 3),
+                "bottom": round(float(c_curr["low"]), 3),
+                "mid": round(float((c_curr["high"] + c_curr["low"]) / 2.0), 3),
+                "idx": i,
+                "timestamp": c_curr.get("timestamp", 0),
+                "timeframe": timeframe,
+                "impulse_ratio": round(float(impulse_val / max(curr_atr, 0.01)), 2),
+                "volume": c_curr.get("volume", 0)
+            })
+
+    # Mitigation and Survival Analysis:
+    active_blocks = []
+    for b in raw_blocks:
+        b_idx = b["idx"]
+        mitigated = False
+        tested = False
+        invalidated = False
+
+        for j in range(b_idx + 2, n):
+            c_test = candles[j]
+            if b["type"] == "BULL":
+                # If subsequent candle closes below bottom, order block is blown/invalidated
+                if c_test["close"] < b["bottom"]:
+                    invalidated = True
+                    break
+                # If wick penetrated into the zone without closing below, it is tested
+                elif c_test["low"] <= b["top"]:
+                    tested = True
+            elif b["type"] == "BEAR":
+                # If subsequent candle closes above top, order block is blown/invalidated
+                if c_test["close"] > b["top"]:
+                    invalidated = True
+                    break
+                # If wick penetrated into the zone without closing above, it is tested
+                elif c_test["high"] >= b["bottom"]:
+                    tested = True
+
+        if not invalidated:
+            status = "TESTED" if tested else "UNMITIGATED"
+            dist_pts = round(abs(current_price - b["mid"]), 2)
+            # Gold: 1 USD move = 10 pips / 100 points
+            dist_pips = round(dist_pts * 10.0, 1)
+            age_bars = n - 1 - b_idx
+
+            active_blocks.append({
+                **b,
+                "status": status,
+                "age_bars": age_bars,
+                "distance_usd": dist_pts,
+                "distance_pips": dist_pips,
+                "color": "#089981" if b["type"] == "BULL" else "#f23645",
+                "fill_color": "rgba(8, 153, 129, 0.18)" if b["type"] == "BULL" else "rgba(242, 54, 69, 0.18)"
+            })
+
+    # Sort: Prioritize unmitigated zones closest to current price, then freshest
+    bullish = [b for b in active_blocks if b["type"] == "BULL"]
+    bearish = [b for b in active_blocks if b["type"] == "BEAR"]
+
+    bullish.sort(key=lambda x: (0 if x["status"] == "UNMITIGATED" else 1, x["distance_usd"]))
+    bearish.sort(key=lambda x: (0 if x["status"] == "UNMITIGATED" else 1, x["distance_usd"]))
+
+    selected_bull = bullish[:max_blocks]
+    selected_bear = bearish[:max_blocks]
+
+    all_zones = selected_bull + selected_bear
+    all_zones.sort(key=lambda x: x["distance_usd"])
+
+    return {
+        "timeframe": timeframe,
+        "current_price": current_price,
+        "bullish": selected_bull,
+        "bearish": selected_bear,
+        "all_zones": all_zones,
+        "total_active": len(all_zones),
+        "unmitigated_count": sum(1 for z in all_zones if z["status"] == "UNMITIGATED")
+    }
+
+
+def find_order_block_confluences(
+    ob_tf1: Dict[str, Any], 
+    ob_tf2: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """
+    Finds high-probability confluences where a lower timeframe (e.g. 5M) Order Block
+    overlaps with or nests inside a higher timeframe (e.g. 15M) Order Block.
+    """
+    confluences = []
+    zones1 = ob_tf1.get("all_zones", [])
+    zones2 = ob_tf2.get("all_zones", [])
+    tf1 = ob_tf1.get("timeframe", "5M")
+    tf2 = ob_tf2.get("timeframe", "15M")
+
+    for z1 in zones1:
+        for z2 in zones2:
+            # Same directional bias (both Demand or both Supply)
+            if z1["type"] == z2["type"]:
+                # Check for price band overlap: max(bottom1, bottom2) <= min(top1, top2)
+                overlap_bot = max(z1["bottom"], z2["bottom"])
+                overlap_top = min(z1["top"], z2["top"])
+
+                if overlap_bot <= overlap_top:
+                    overlap_range = round(overlap_top - overlap_bot, 2)
+                    midpoint = round((overlap_top + overlap_bot) / 2.0, 3)
+                    confluences.append({
+                        "type": z1["type"],
+                        "kind": z1["kind"],
+                        "tf_lower": tf1,
+                        "tf_higher": tf2,
+                        "lower_zone": f"{z1['bottom']} - {z1['top']}",
+                        "higher_zone": f"{z2['bottom']} - {z2['top']}",
+                        "confluence_range": f"{overlap_bot} - {overlap_top}",
+                        "overlap_span": overlap_range,
+                        "midpoint": midpoint,
+                        "status": "UNMITIGATED" if (z1["status"] == "UNMITIGATED" and z2["status"] == "UNMITIGATED") else "TESTED",
+                        "quality": "A+ Institutional Confluence" if (z1["status"] == "UNMITIGATED" and z2["status"] == "UNMITIGATED") else "Moderate Confluence"
+                    })
+
+    return confluences
