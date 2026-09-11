@@ -791,12 +791,12 @@ const signalsIndicator = {
       ctx.closePath(); ctx.fill();
       ctx.restore();
 
-      // Compact card, anchored OUTSIDE the candle (below the low for BUY, above the high for SELL)
+      // Format card rows to 3 decimal places
       const rows = [
-        { t: `${isBuy ? '\u25B2 BUY' : '\u25BC SELL'}  ${d.entryPrice.toFixed(1)}`, c: accent, bold: true },
-        { t: `TP1  ${d.tp1Price.toFixed(1)}`, c: '#2ea88f' },
-        { t: `TP2  ${d.tp2Price.toFixed(1)}`, c: '#089981' },
-        { t: `SL   ${d.slPrice.toFixed(1)}`, c: '#f23645' },
+        { t: `${isBuy ? '\u25B2 BUY' : '\u25BC SELL'}  ${d.entryPrice.toFixed(3)}`, c: accent, bold: true },
+        { t: `TP1  ${d.tp1Price.toFixed(3)}`, c: '#2ea88f' },
+        ...(d.tp2Price && Math.abs(d.tp2Price - d.tp1Price) > 0.001 ? [{ t: `TP2  ${d.tp2Price.toFixed(3)}`, c: '#089981' }] : []),
+        { t: `SL   ${d.slPrice.toFixed(3)}`, c: '#f23645' },
         { t: st.t, badge: true, bg: st.bg }
       ];
       ctx.font = 'bold 10px Inter, sans-serif';
@@ -843,6 +843,98 @@ const signalsIndicator = {
         }
       });
       ctx.restore();
+
+      // --- ON-CHART HORIZONTAL TP / SL / ENTRY LINES & PRICE PILL BADGES ---
+      const endIdx = d.drawEndIdx != null && d.drawEndIdx > idx ? d.drawEndIdx : Math.min(idx + 24, result.length - 1);
+      let xEnd = xAxis.convertToPixel(endIdx);
+      if (xEnd <= x + 20) xEnd = x + 70;
+      xEnd = Math.min(xEnd, W - 8);
+
+      const yEntry = yAxis.convertToPixel(d.entryPrice);
+      const yTp1 = yAxis.convertToPixel(d.tp1Price);
+      const ySl = yAxis.convertToPixel(d.slPrice);
+
+      // 1. Shaded Risk / Reward zones (subtle fill)
+      ctx.save();
+      ctx.fillStyle = 'rgba(8, 153, 129, 0.07)';
+      ctx.fillRect(x, Math.min(yEntry, yTp1), xEnd - x, Math.abs(yEntry - yTp1));
+      ctx.fillStyle = 'rgba(242, 54, 69, 0.07)';
+      ctx.fillRect(x, Math.min(yEntry, ySl), xEnd - x, Math.abs(yEntry - ySl));
+      ctx.restore();
+
+      // 2. Entry Line
+      ctx.save();
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, yEntry);
+      ctx.lineTo(xEnd, yEntry);
+      ctx.stroke();
+      ctx.restore();
+
+      // Helper function to draw pill badge on line
+      const drawLevelBadge = (label, text, px, py, bgColor) => {
+        ctx.save();
+        ctx.font = 'bold 9.5px Inter, sans-serif';
+        const str = `${label} ${text}`;
+        const tw = ctx.measureText(str).width;
+        const bw = tw + 10;
+        const bh = 16;
+        const bx = Math.min(px + 4, W - bw - 4);
+        const by = py - bh / 2;
+
+        ctx.fillStyle = bgColor;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(bx, by, bw, bh, 3);
+        else ctx.rect(bx, by, bw, bh);
+        ctx.fill();
+
+        ctx.fillStyle = '#ffffff';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(str, bx + bw / 2, py + 0.5);
+        ctx.restore();
+      };
+
+      // 3. Take Profit 1 Line & Badge
+      ctx.save();
+      ctx.strokeStyle = '#089981';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, yTp1);
+      ctx.lineTo(xEnd, yTp1);
+      ctx.stroke();
+      ctx.restore();
+      drawLevelBadge('TP1', d.tp1Price.toFixed(3), xEnd, yTp1, '#089981');
+
+      // 4. Take Profit 2 Line & Badge (if defined and distinct)
+      if (d.tp2Price && Math.abs(d.tp2Price - d.tp1Price) > 0.001) {
+        const yTp2 = yAxis.convertToPixel(d.tp2Price);
+        ctx.save();
+        ctx.strokeStyle = '#26a69a';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([3, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x, yTp2);
+        ctx.lineTo(xEnd, yTp2);
+        ctx.stroke();
+        ctx.restore();
+        drawLevelBadge('TP2', d.tp2Price.toFixed(3), xEnd, yTp2, '#26a69a');
+      }
+
+      // 5. Stop Loss Line & Badge
+      ctx.save();
+      ctx.strokeStyle = '#f23645';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(x, ySl);
+      ctx.lineTo(xEnd, ySl);
+      ctx.stroke();
+      ctx.restore();
+      drawLevelBadge('SL', d.slPrice.toFixed(3), xEnd, ySl, '#f23645');
     });
     return true;
   }
@@ -1033,7 +1125,7 @@ const goldScalperIndicator = {
       ctx.closePath(); ctx.fill();
 
       // Badge
-      const text = `${isBuy ? '▲ BUY' : '▼ SELL'} ${d.entryPrice ? d.entryPrice.toFixed(1) : ''}`;
+      const text = `${isBuy ? '▲ BUY' : '▼ SELL'} ${d.entryPrice ? d.entryPrice.toFixed(3) : ''}`;
       ctx.font = 'bold 10px Inter, sans-serif';
       const bw = ctx.measureText(text).width + 10;
       const bh = 18;

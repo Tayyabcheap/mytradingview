@@ -301,10 +301,30 @@ function App() {
   const beepCtxRef = useRef(null);
   const sigToastTimerRef = useRef(null);
   const notifiedSigRef = useRef(loadLS('notifiedSig', {}));
+  const autoTradedSigRef = useRef(loadLS('autoTradedSig', {}));
   const [signalToast, setSignalToast] = useState(null);
   const [signalToastLot, setSignalToastLot] = useState('0.01');
   const [signalNotifications, setSignalNotifications] = useState(() => loadLS('signalNotifications', []));
   const [showNotifications, setShowNotifications] = useState(false);
+
+  // Active lot size synchronized across trade panel, signals, and database settings
+  const [activeLotSize, setActiveLotSize] = useState(() => {
+    const saved = localStorage.getItem('twr_trade_lotSize');
+    return saved ? Math.max(0.01, parseFloat(saved) || 0.01) : 0.01;
+  });
+  const [autoTradeSignals, setAutoTradeSignals] = useState(() => loadLS('autoTradeSignals', true));
+
+  // Sync lot size from database settings on mount
+  useEffect(() => {
+    fetch('/api/settings?key=lot_size')
+      .then(r => r.json())
+      .then(d => {
+        if (d && typeof d.lot_size === 'number' && d.lot_size > 0) {
+          setActiveLotSize(d.lot_size);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   const chartRef = useRef();
   const replayTimerRef = useRef(null);
@@ -887,10 +907,10 @@ function App() {
   const toggleNotifRead = (id) => setSignalNotifications(prev => prev.map(x => x.id === id ? { ...x, read: !x.read } : x));
   const markAllNotifsRead = () => setSignalNotifications(prev => prev.map(x => ({ ...x, read: true })));
 
-  // Request #3: watch for a freshly-released signal at the right edge and toast it.
+  // Watch for freshly-released signal at right edge: toast notification and auto-execute on MT5
   useEffect(() => {
     if (!signalsEnabled) return;
-    const check = () => {
+    const check = async () => {
       try {
         const data = (chartRef.current && chartRef.current.getFullData) ? chartRef.current.getFullData() : [];
         if (!data || data.length < 60) return;
@@ -900,22 +920,76 @@ function App() {
         if (li < 0 || li < series.length - 3) return;   // only the most recent (right-edge) signal
         const ts = data[li] ? data[li].timestamp : li;
         const key = `${symbol}|${timeframe}`;
-        if (notifiedSigRef.current[key] === ts) return;
-        notifiedSigRef.current[key] = ts;
-        saveLS('notifiedSig', notifiedSigRef.current);
         const sig = series[li];
-        const notif = { id: `${symbol}|${timeframe}|${ts}`, symbol, timeframe, type: sig.signalType, entry: sig.entryPrice, sl: sig.slPrice, tp1: sig.tp1Price, tp2: sig.tp2Price, ts, read: false, at: Date.now() };
-        setSignalNotifications(prev => (prev[0] && prev[0].id === notif.id) ? prev : [notif, ...prev].slice(0, 50));
-        setSignalToast({ symbol, timeframe, type: sig.signalType, entry: sig.entryPrice, sl: sig.slPrice, tp1: sig.tp1Price, tp2: sig.tp2Price, ts });
-        playBeep(760, 0.16); setTimeout(() => playBeep(1010, 0.16), 130);
-        if (sigToastTimerRef.current) clearTimeout(sigToastTimerRef.current);
-        sigToastTimerRef.current = setTimeout(() => setSignalToast(null), 10000);
+
+        // 1. Toast and notification history (once per signal candle)
+        if (notifiedSigRef.current[key] !== ts) {
+          notifiedSigRef.current[key] = ts;
+          saveLS('notifiedSig', notifiedSigRef.current);
+          const notif = {
+            id: `${symbol}|${timeframe}|${ts}`,
+            symbol,
+            timeframe,
+            type: sig.signalType,
+            entry: sig.entryPrice,
+            sl: sig.slPrice,
+            tp1: sig.tp1Price,
+            tp2: sig.tp2Price,
+            ts,
+            read: false,
+            at: Date.now()
+          };
+          setSignalNotifications(prev => (prev[0] && prev[0].id === notif.id) ? prev : [notif, ...prev].slice(0, 50));
+          setSignalToast({ symbol, timeframe, type: sig.signalType, entry: sig.entryPrice, sl: sig.slPrice, tp1: sig.tp1Price, tp2: sig.tp2Price, ts });
+          playBeep(760, 0.16); setTimeout(() => playBeep(1010, 0.16), 130);
+          if (sigToastTimerRef.current) clearTimeout(sigToastTimerRef.current);
+          sigToastTimerRef.current = setTimeout(() => setSignalToast(null), 10000);
+        }
+
+        // 2. Automatic MT5 Trade Execution when enabled
+        if (autoTradeSignals && autoTradedSigRef.current[key] !== ts) {
+          autoTradedSigRef.current[key] = ts;
+          saveLS('autoTradedSig', autoTradedSigRef.current);
+
+          const isGoldSym = symbol.toUpperCase().includes('XAU') || symbol.toUpperCase().includes('GOLD');
+          // Enforce Gold safety constraint: strictly <= 1.0 lot
+          const safeLot = isGoldSym ? Math.min(1.0, activeLotSize) : activeLotSize;
+
+          const tradePayload = {
+            symbol: symbol,
+            type: sig.signalType,
+            volume: safeLot,
+            sl: parseFloat(sig.slPrice.toFixed(3)),
+            tp: parseFloat(sig.tp1Price.toFixed(3)),
+            comment: 'Haider-Gold-Scalper'
+          };
+
+          try {
+            const res = await fetch('/api/order/send', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(tradePayload)
+            });
+            const d = await res.json();
+            if (res.ok && !d.error) {
+              const successMsg = `⚡ Haider-Gold-Scalper: Auto-Opened ${tradePayload.type} ${tradePayload.volume} Lots on ${symbol} @ ${(d.price || sig.entryPrice).toFixed(3)} (SL: ${tradePayload.sl.toFixed(3)}, TP: ${tradePayload.tp.toFixed(3)})`;
+              setAlertToast(successMsg);
+              playBeep(1050, 0.22);
+              fetchAccountAndSymbols();
+            } else {
+              setAlertToast(`⚠️ Auto-Trade Rejected: ${d.error || 'Check MT5 AlgoTrading status'}`);
+            }
+          } catch (err) {
+            setAlertToast(`⚠️ Auto-Trade Network Error: ${err.message}`);
+          }
+          setTimeout(() => setAlertToast(null), 9000);
+        }
       } catch (e) { /* ignore */ }
     };
     const t0 = setTimeout(check, 3500);
-    const iv = setInterval(check, 6000);
+    const iv = setInterval(check, 5000);
     return () => { clearTimeout(t0); clearInterval(iv); };
-  }, [signalsEnabled, symbol, timeframe, signalStrategy]);
+  }, [signalsEnabled, symbol, timeframe, signalStrategy, autoTradeSignals, activeLotSize]);
 
   const handleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -1287,6 +1361,45 @@ function App() {
                     </div>
                   ))}
                   <div style={{ height: 1, background: '#2a2e39', margin: '6px 0' }} />
+                  {/* AUTO-TRADE TOGGLE */}
+                  <div
+                    onClick={() => {
+                      const next = !autoTradeSignals;
+                      setAutoTradeSignals(next);
+                      saveLS('autoTradeSignals', next);
+                      fetch('/api/settings', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ auto_trade: next })
+                      }).catch(() => {});
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      background: autoTradeSignals ? 'rgba(8,153,129,0.12)' : 'transparent',
+                      color: autoTradeSignals ? '#089981' : 'var(--text-muted)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <Zap size={14} color={autoTradeSignals ? '#089981' : 'var(--text-muted)'} />
+                      <span style={{ fontWeight: 600 }}>Auto-Trade on MT5</span>
+                    </div>
+                    <span style={{
+                      fontSize: 10,
+                      fontWeight: 800,
+                      padding: '2px 6px',
+                      borderRadius: 3,
+                      background: autoTradeSignals ? '#089981' : '#2a2e39',
+                      color: '#fff'
+                    }}>
+                      {autoTradeSignals ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+                  <div style={{ height: 1, background: '#2a2e39', margin: '6px 0' }} />
                   <div
                     onClick={runSignalAccuracy}
                     style={{ padding: '8px 12px', fontSize: 13, cursor: 'pointer', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 8 }}
@@ -1464,6 +1577,10 @@ function App() {
                     symbol={symbol}
                     currentPrice={currentPrice}
                     symbolInfo={currentSymbolInfo}
+                    activeLotSize={activeLotSize}
+                    onLotSizeChange={(newLot) => {
+                      setActiveLotSize(newLot);
+                    }}
                     onOrderExecuted={() => {
                       fetchAccountAndSymbols();
                     }}

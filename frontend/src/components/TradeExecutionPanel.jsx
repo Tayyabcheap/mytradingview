@@ -9,10 +9,21 @@ export default function TradeExecutionPanel({
   currentPrice,
   symbolInfo,
   onOrderExecuted,
-  onOpenPositionsChange
+  onOpenPositionsChange,
+  activeLotSize,
+  onLotSizeChange
 }) {
   const [orderType, setOrderType] = useState('BUY'); // 'BUY' | 'SELL'
-  const [lotSize, setLotSize] = useState(0.01);
+  const [lotSize, setLotSize] = useState(() => {
+    if (activeLotSize != null) return activeLotSize;
+    const saved = localStorage.getItem('twr_trade_lotSize');
+    return saved ? Math.max(0.01, parseFloat(saved) || 0.01) : 0.01;
+  });
+  const [lotInput, setLotInput] = useState(() => {
+    if (activeLotSize != null) return String(activeLotSize);
+    const saved = localStorage.getItem('twr_trade_lotSize');
+    return saved || '0.01';
+  });
   const [enableSL, setEnableSL] = useState(true);
   const [enableTP, setEnableTP] = useState(true);
   const [slPrice, setSlPrice] = useState('');
@@ -95,15 +106,83 @@ export default function TradeExecutionPanel({
     }
   }, [currentPrice, orderType, slPips, tpPips, symbol, symbolInfo]);
 
-  // Adjust lot size safely
-  const handleLotChange = (val) => {
-    const num = Math.max(minLotAllowed, parseFloat(val) || minLotAllowed);
-    setLotSize(Math.round(num * 100) / 100);
+  // Sync when external activeLotSize changes
+  useEffect(() => {
+    if (activeLotSize != null && activeLotSize !== lotSize) {
+      setLotSize(activeLotSize);
+      setLotInput(String(activeLotSize));
+    }
+  }, [activeLotSize]);
+
+  // Load saved lot size from database settings on mount
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/settings?key=lot_size')
+      .then(r => r.json())
+      .then(d => {
+        if (!alive) return;
+        const val = d && d.lot_size;
+        if (typeof val === 'number' && val > 0) {
+          const clamped = isGold ? Math.min(1.0, val) : val;
+          setLotSize(clamped);
+          setLotInput(clamped.toFixed(2));
+          if (onLotSizeChange) onLotSizeChange(clamped);
+        }
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [isGold]);
+
+  // Persist lot size safely to state, localStorage, and server database
+  const persistLotSize = (val) => {
+    let num = parseFloat(val);
+    if (isNaN(num) || num < minLotAllowed) num = minLotAllowed;
+    if (isGold && num > 1.0) num = 1.0;
+    num = Math.round(num * 100) / 100;
+
+    setLotSize(num);
+    setLotInput(num.toFixed(2));
+    localStorage.setItem('twr_trade_lotSize', String(num));
+
+    // Save to SQLite/JSON database settings
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ lot_size: num })
+    }).catch(() => {});
+
+    if (onLotSizeChange) onLotSizeChange(num);
+  };
+
+  // Modern input typing handler: does not jump or reject decimal points while typing
+  const handleInputChange = (raw) => {
+    const sanitized = raw.replace(/[^0-9.]/g, '');
+    const parts = sanitized.split('.');
+    const clean = parts[0] + (parts.length > 1 ? '.' + parts.slice(1).join('') : '');
+    setLotInput(clean);
+
+    const num = parseFloat(clean);
+    if (!isNaN(num) && num > 0) {
+      const clamped = isGold ? Math.min(1.0, num) : num;
+      setLotSize(clamped);
+      if (onLotSizeChange) onLotSizeChange(clamped);
+    }
+  };
+
+  const handleInputBlur = () => {
+    persistLotSize(lotInput);
+  };
+
+  const handleInputKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      persistLotSize(lotInput);
+      e.currentTarget.blur();
+    }
   };
 
   const handleStepLot = (delta) => {
-    const next = Math.max(minLotAllowed, lotSize + delta);
-    setLotSize(Math.round(next * 100) / 100);
+    const next = Math.max(minLotAllowed, Math.round((lotSize + delta) * 100) / 100);
+    persistLotSize(next);
   };
 
   // Set R:R preset
@@ -361,31 +440,35 @@ export default function TradeExecutionPanel({
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <button
+              type="button"
               onClick={() => handleStepLot(-0.01)}
               style={{
-                width: 32,
-                height: 32,
+                width: 34,
+                height: 34,
                 background: '#1e222d',
                 border: '1px solid #2a2e39',
                 borderRadius: 4,
                 color: '#fff',
                 cursor: 'pointer',
-                fontWeight: 700
+                fontWeight: 700,
+                fontSize: 16
               }}
             >
               -
             </button>
 
             <input
-              type="number"
-              step={stepLot}
-              min={minLotAllowed}
-              max={maxLotAllowed}
-              value={lotSize}
-              onChange={e => handleLotChange(e.target.value)}
+              type="text"
+              inputMode="decimal"
+              pattern="[0-9]*\.?[0-9]*"
+              value={lotInput}
+              onChange={e => handleInputChange(e.target.value)}
+              onBlur={handleInputBlur}
+              onKeyDown={handleInputKeyDown}
+              placeholder="0.01"
               style={{
                 flex: 1,
-                height: 32,
+                height: 34,
                 background: isLotOverLimit ? 'rgba(242,54,69,0.15)' : '#0e1116',
                 border: isLotOverLimit ? '1px solid #f23645' : '1px solid #2a2e39',
                 borderRadius: 4,
@@ -393,43 +476,47 @@ export default function TradeExecutionPanel({
                 textAlign: 'center',
                 fontWeight: 700,
                 fontSize: 14,
-                outline: 'none'
+                outline: 'none',
+                letterSpacing: '0.3px'
               }}
             />
 
             <button
+              type="button"
               onClick={() => handleStepLot(0.01)}
               style={{
-                width: 32,
-                height: 32,
+                width: 34,
+                height: 34,
                 background: '#1e222d',
                 border: '1px solid #2a2e39',
                 borderRadius: 4,
                 color: '#fff',
                 cursor: 'pointer',
-                fontWeight: 700
+                fontWeight: 700,
+                fontSize: 16
               }}
             >
               +
             </button>
           </div>
 
-          {/* Preset Buttons */}
-          <div style={{ display: 'flex', gap: 4, marginTop: 6 }}>
-            {[0.01, 0.05, 0.10, 0.50, 1.00].map(v => (
+          {/* Quick Preset Buttons */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6, 1fr)', gap: 4, marginTop: 6 }}>
+            {(isGold ? [0.01, 0.05, 0.10, 0.25, 0.50, 1.00] : [0.01, 0.05, 0.10, 0.50, 1.00, 2.00]).map(v => (
               <button
                 key={v}
-                onClick={() => setLotSize(v)}
+                type="button"
+                onClick={() => persistLotSize(v)}
                 style={{
-                  flex: 1,
-                  padding: '3px 0',
-                  background: lotSize === v ? '#2962ff' : '#1e222d',
-                  border: '1px solid #2a2e39',
-                  borderRadius: 3,
-                  color: lotSize === v ? '#fff' : '#8b949e',
-                  fontSize: 10.5,
+                  padding: '5px 0',
+                  background: Math.abs(lotSize - v) < 0.001 ? 'var(--brand, #2962ff)' : '#1e222d',
+                  border: Math.abs(lotSize - v) < 0.001 ? '1px solid #2962ff' : '1px solid #2a2e39',
+                  borderRadius: 4,
+                  color: Math.abs(lotSize - v) < 0.001 ? '#fff' : '#8b949e',
+                  fontSize: 11,
                   cursor: 'pointer',
-                  fontWeight: 600
+                  fontWeight: Math.abs(lotSize - v) < 0.001 ? 700 : 500,
+                  transition: 'all 0.15s ease'
                 }}
               >
                 {v.toFixed(2)}

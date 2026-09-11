@@ -285,7 +285,7 @@ def send_order():
     
     sl = float(data.get("sl") or 0.0)
     tp = float(data.get("tp") or 0.0)
-    comment = data.get("comment", "Trade-with-Rakhi")
+    comment = data.get("comment", "Haider-Gold-Scalper")
 
     if not symbol:
         return jsonify({"error": "Symbol is required"}), 400
@@ -979,6 +979,46 @@ def watchlist():
         return jsonify({"error": "symbols must be a list"}), 400
     store.put("watchlist", "default", symbols)
     return jsonify({"success": True, "symbols": symbols})
+
+
+@app.route("/api/settings", methods=["GET", "POST"])
+def app_settings():
+    """Persist user settings (lot size, auto-trade, preferences) in database."""
+    default_settings = {
+        "lot_size": 0.01,
+        "auto_trade": False
+    }
+    if request.method == "GET":
+        key = request.args.get("key")
+        if key:
+            val = store.get("settings", key, default_settings.get(key))
+            return jsonify({key: val})
+        saved = store.get("settings", "user_prefs", default_settings)
+        if not isinstance(saved, dict):
+            saved = default_settings
+        return jsonify(saved)
+
+    # POST
+    data = request.get_json(force=True) or {}
+    saved = store.get("settings", "user_prefs", default_settings)
+    if not isinstance(saved, dict):
+        saved = dict(default_settings)
+
+    for k, v in data.items():
+        if k == "lot_size":
+            try:
+                val = round(float(v), 2)
+                val = max(0.01, min(100.0, val))
+                saved["lot_size"] = val
+                store.put("settings", "lot_size", val)
+            except (ValueError, TypeError):
+                pass
+        else:
+            saved[k] = v
+            store.put("settings", k, v)
+
+    store.put("settings", "user_prefs", saved)
+    return jsonify({"success": True, "settings": saved})
 
 
 # ─────────────────────────────────────────────────────────────────────────────
