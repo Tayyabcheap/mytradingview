@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Sliders, Zap, Settings, Layers } from 'lucide-react';
+import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Sliders, Zap, Settings, Layers, Target } from 'lucide-react';
 
 export default function TopTabBar({
   tabs = [],
@@ -20,8 +20,8 @@ export default function TopTabBar({
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
-      background: '#0d1117',
-      borderBottom: '1px solid #1f2430',
+      background: '#131722',
+      borderBottom: '1px solid #2a2e39',
       padding: '0 8px',
       height: 38,
       userSelect: 'none',
@@ -37,6 +37,7 @@ export default function TopTabBar({
           else if (tab.type === 'journal') Icon = BookOpen;
           else if (tab.type === 'monte_carlo') Icon = Sliders;
           else if (tab.type === 'order_blocks') Icon = Layers;
+          else if (tab.type === 'support_resistance') Icon = Target;
 
           return (
             <div

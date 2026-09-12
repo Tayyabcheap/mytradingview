@@ -235,8 +235,23 @@ const KLineChartArea = forwardRef(({
         } else if (ind.id === 'SIGNALS') {
           calcParams = [ind.params?.strategy || 'ALL', ind.params?.timeframe || timeframe || '5M'];
         } else if (ind.id === 'SR_ZONES' || ind.id === 'ORDER_BLOCKS') {
-          extendData = ind.params || {};
-          calcParams = [];
+          extendData = {
+            ...(ind.params || {}),
+            chartTimeframe: timeframe || '15M'
+          };
+          // Pass dynamic params key to calcParams so klinecharts dirty-checking re-runs calc() on change!
+          const actIds = (ind.params?.activeZoneIds || []).slice().sort().join(',');
+          const tfsStr = (ind.params?.tfs || []).join(',');
+          const zCount = (ind.params?.zones || []).length;
+          const chartTf = timeframe || ind.params?.tf || (ind.params?.tfs && ind.params?.tfs[0]) || '15M';
+          calcParams = [
+            ind.params?.filterMode || 'nearest',
+            actIds,
+            tfsStr,
+            ind.params?.maxZones ?? 1,
+            zCount,
+            chartTf
+          ];
         }
       }
 

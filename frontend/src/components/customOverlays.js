@@ -1365,8 +1365,8 @@ const ichimokuIndicator = {
 
 // ─── Multi-timeframe ZONE indicators: Support/Resistance & Order Blocks ───────
 const TF_MS = { '1M': 60000, '5M': 300000, '15M': 900000, '30M': 1800000, '1H': 3600000, '4H': 14400000, '1D': 86400000 };
-const SR_DEFAULT = { tfs: ['1H', '4H', '1D'], colors: { '5M': '#26a69a', '15M': '#42a5f5', '1H': '#f7a600', '4H': '#ab47bc', '1D': '#ef5350' }, maxZones: 3, pivot: 3 };
-const OB_DEFAULT = { tfs: ['15M', '1H', '4H'], colors: { '5M': '#26a69a', '15M': '#42a5f5', '1H': '#f7a600', '4H': '#ab47bc', '1D': '#ef5350' }, maxZones: 4, atrLen: 14 };
+const SR_DEFAULT = { tfs: ['15M'], colors: { '5M': '#26a69a', '15M': '#38bdf8', '1H': '#f59e0b', '4H': '#a855f7', '1D': '#ef5350' }, maxZones: 1, filterMode: 'nearest', pivot: 3 };
+const OB_DEFAULT = { tfs: ['15M'], colors: { '5M': '#26a69a', '15M': '#38bdf8', '1H': '#f59e0b', '4H': '#a855f7', '1D': '#ef5350' }, maxZones: 1, filterMode: 'nearest', atrLen: 14 };
 
 function _median(a) { const b = [...a].sort((x, y) => x - y); return b.length ? b[Math.floor(b.length / 2)] : 0; }
 function _barSpacing(d) { const n = d.length, dt = []; for (let i = Math.max(1, n - 60); i < n; i++) dt.push((d[i].timestamp || 0) - (d[i - 1].timestamp || 0)); return _median(dt) || 60000; }
@@ -1399,8 +1399,19 @@ function _srZones(c, pivot, maxPerSide, lastClose) {
   const range = Math.max(1e-9, hi - lo), tol = range * 0.004;
   const cluster = (vals) => { const srt = [...vals].sort((a, b) => a - b), g = []; for (const v of srt) { const t = g[g.length - 1]; if (t && v - t.max <= tol * 2) { t.max = Math.max(t.max, v); t.min = Math.min(t.min, v); t.n++; t.sum += v; } else g.push({ min: v, max: v, n: 1, sum: v }); } return g; };
   const mk = (groups) => groups.map(g => ({ top: g.max + tol, bottom: g.min - tol, mid: g.sum / g.n, n: g.n }));
-  const pick = (g) => g.sort((a, b) => b.n - a.n || Math.abs(a.mid - lastClose) - Math.abs(b.mid - lastClose)).slice(0, maxPerSide);
-  return [...pick(mk(cluster(hs))).map(z => ({ ...z, kind: 'R' })), ...pick(mk(cluster(ls))).map(z => ({ ...z, kind: 'S' }))];
+  
+  const allGroups = [...mk(cluster(hs)), ...mk(cluster(ls))];
+  allGroups.sort((a, b) => b.n - a.n || Math.abs(a.mid - lastClose) - Math.abs(b.mid - lastClose));
+  
+  const res = [], sup = [];
+  for (const g of allGroups) {
+    if (g.mid >= lastClose) {
+      if (res.length < maxPerSide) res.push({ ...g, kind: 'R', side: 'RESISTANCE' });
+    } else {
+      if (sup.length < maxPerSide) sup.push({ ...g, kind: 'S', side: 'SUPPORT' });
+    }
+  }
+  return [...res, ...sup];
 }
 function _obZones(c, atrLen, maxZones) {
   const atr = _rma(_tr(c), atrLen), n = c.length;
@@ -1437,24 +1448,107 @@ const _zoneCache = new Map();   // mode -> { key, zones }  (avoids recomputing o
 function _computeZones(dataList, cfg, mode) {
   const spacing = _barSpacing(dataList);
   const lastClose = dataList[dataList.length - 1].close;
-  const zones = [];
-  (cfg.tfs || []).forEach(tf => {
-    const ms = TF_MS[tf]; if (!ms || ms < spacing * 0.9) return;   // can't synthesize a finer TF than the chart
-    const cands = ms <= spacing * 1.5 ? dataList : _aggregate(dataList, ms);
-    if (cands.length < 10) return;
-    const color = (cfg.colors && cfg.colors[tf]) || '#f7a600';
-    const zs = mode === 'SR' ? _srZones(cands, cfg.pivot || 3, cfg.maxZones || 3, lastClose) : _obZones(cands, cfg.atrLen || 14, cfg.maxZones || 4);
-    zs.forEach(z => zones.push({ ...z, tf, color }));
-  });
-  return zones;
+
+  // Resolve the chart's chosen timeframe
+  const derivedTf = spacing >= 70000000 ? '1D' : spacing >= 10000000 ? '4H' : spacing >= 3000000 ? '1H' : spacing >= 1500000 ? '30M' : spacing >= 800000 ? '15M' : spacing >= 240000 ? '5M' : '1M';
+  const targetTf = (cfg.chartTimeframe || cfg.tf || (cfg.tfs && cfg.tfs.length === 1 ? cfg.tfs[0] : null) || derivedTf).toUpperCase();
+
+  let allDetected = [];
+
+  // A. If authoritative backend zones are provided, strictly filter to match targetTf!
+  if (Array.isArray(cfg.zones) && cfg.zones.length > 0) {
+    allDetected = cfg.zones
+      .filter(z => !z.timeframe || z.timeframe.toUpperCase() === targetTf)
+      .map(z => {
+        const top = Number(z.top ?? (z.level ? z.level + 1.0 : 0));
+        const bottom = Number(z.bottom ?? (z.level ? z.level - 1.0 : 0));
+        const mid = Number(z.mid ?? (z.level || (top + bottom) / 2));
+        const isBear = (z.side === 'RESISTANCE' || z.type === 'BEAR' || z.type === 'RES' || mid >= lastClose);
+        const kind = isBear ? (mode === 'SR' ? 'R' : 'BEAR') : (mode === 'SR' ? 'S' : 'BULL');
+        const side = isBear ? (mode === 'SR' ? 'RESISTANCE' : 'SUPPLY') : (mode === 'SR' ? 'SUPPORT' : 'DEMAND');
+        const color = isBear ? '#f43f5e' : '#10b981';
+        const tf = (z.timeframe || targetTf).toUpperCase();
+        const zId = z.id || `${tf}_${kind}_${Math.round(top)}_${Math.round(bottom)}`;
+        return {
+          ...z,
+          id: zId,
+          top,
+          bottom,
+          mid,
+          tf,
+          kind,
+          side,
+          color,
+          dist: Math.abs(mid - lastClose)
+        };
+      });
+  } else {
+    // B. Calculate from local chart data ONLY for targetTf:
+    const tfsToRun = [targetTf];
+    tfsToRun.forEach(tf => {
+      const ms = TF_MS[tf]; if (!ms || ms < spacing * 0.9) return;
+      const cands = ms <= spacing * 1.5 ? dataList : _aggregate(dataList, ms);
+      if (cands.length < 10) return;
+      const zs = mode === 'SR' ? _srZones(cands, cfg.pivot || 3, cfg.maxZones || 4, lastClose) : _obZones(cands, cfg.atrLen || 14, cfg.maxZones || 4);
+      zs.forEach(z => {
+        const isBear = (z.kind === 'R' || z.kind === 'BEAR' || z.mid >= lastClose);
+        const color = isBear ? '#f43f5e' : '#10b981';
+        const zId = `${tf}_${z.kind}_${Math.round(z.top)}_${Math.round(z.bottom)}`;
+        allDetected.push({ ...z, tf, color, id: zId, dist: Math.abs(z.mid - lastClose) });
+      });
+    });
+  }
+
+  // 1. If user passed a specific list of activeZoneIds, show ONLY those zones!
+  if (Array.isArray(cfg.activeZoneIds) && cfg.activeZoneIds.length > 0) {
+    const idSet = new Set(cfg.activeZoneIds);
+    return allDetected.filter(z => idSet.has(z.id));
+  }
+
+  // 2. Filter mode: 'nearest' (Default!) shows strictly 1 nearest above and 1 nearest below!
+  const filterMode = cfg.filterMode || 'nearest';
+
+  if (filterMode === 'nearest' || filterMode === 'nearest2') {
+    const maxPerSide = filterMode === 'nearest' ? 1 : 2;
+    // Above price (Resistance / Bearish Supply)
+    const above = allDetected.filter(z => (z.mid >= lastClose || z.bottom >= lastClose));
+    above.sort((a, b) => a.dist - b.dist);
+
+    // Below price (Support / Bullish Demand)
+    const below = allDetected.filter(z => (z.mid < lastClose || z.top <= lastClose));
+    below.sort((a, b) => a.dist - b.dist);
+
+    const pickedAbove = above.slice(0, maxPerSide).map(z => ({ ...z, isNearest: true }));
+    const pickedBelow = below.slice(0, maxPerSide).map(z => ({ ...z, isNearest: true }));
+    return [...pickedAbove, ...pickedBelow];
+  }
+
+  return allDetected;
 }
+
 function _buildZones(dataList, cfg, mode) {
   const out = dataList.map(() => ({}));
   try {
     if (dataList.length < 20) return out;
     const lastTs = dataList[dataList.length - 1].timestamp || 0;
-    const key = [mode, dataList.length, lastTs, (cfg.tfs || []).join(','), cfg.maxZones || 0, cfg.pivot || 0, cfg.atrLen || 0, JSON.stringify(cfg.colors || {})].join('|');
-    const cacheId = mode + '|' + ((cfg.tfs || []).join(','));
+    const zonesLen = (cfg.zones || []).length;
+    const spacing = _barSpacing(dataList);
+    const derivedTf = spacing >= 70000000 ? '1D' : spacing >= 10000000 ? '4H' : spacing >= 3000000 ? '1H' : spacing >= 1500000 ? '30M' : spacing >= 800000 ? '15M' : spacing >= 240000 ? '5M' : '1M';
+    const targetTf = (cfg.chartTimeframe || cfg.tf || (cfg.tfs && cfg.tfs.length === 1 ? cfg.tfs[0] : null) || derivedTf).toUpperCase();
+
+    const key = [
+      mode,
+      targetTf,
+      dataList.length,
+      lastTs,
+      cfg.filterMode || 'nearest',
+      (cfg.activeZoneIds || []).join(','),
+      cfg.maxZones || 0,
+      zonesLen,
+      cfg.pivot || 0,
+      cfg.atrLen || 0
+    ].join('|');
+    const cacheId = mode + '|' + targetTf + '|' + (cfg.filterMode || 'nearest') + '|' + ((cfg.activeZoneIds || []).join(',')) + '|' + zonesLen;
     const cached = _zoneCache.get(cacheId);
     let zones;
     if (cached && cached.key === key) zones = cached.zones;
@@ -1463,33 +1557,56 @@ function _buildZones(dataList, cfg, mode) {
   } catch (e) { /* never break the chart */ }
   return out;
 }
+
 function _drawZones(ctx, indicator, yAxis) {
   try {
-  const result = indicator.result || [];
-  const last = result[result.length - 1];
-  const zones = last && last.__zones;
-  if (!zones || !zones.length) return true;
-  const W = (ctx.canvas && ctx.canvas.width) || 4000;
-  ctx.save();
-  ctx.font = 'bold 10px Inter, sans-serif';
-  zones.forEach(z => {
-    const yTop = yAxis.convertToPixel(z.top), yBot = yAxis.convertToPixel(z.bottom);
-    const y = Math.min(yTop, yBot), h = Math.max(2, Math.abs(yBot - yTop));
-    ctx.fillStyle = _hexA(z.color, 0.13);
-    ctx.fillRect(0, y, W, h);
-    ctx.strokeStyle = _hexA(z.color, 0.75); ctx.lineWidth = 1; ctx.setLineDash([5, 3]);
-    ctx.strokeRect(0.5, y + 0.5, W - 1, Math.max(1, h - 1)); ctx.setLineDash([]);
-    const tag = z.kind === 'R' ? 'Res' : z.kind === 'S' ? 'Sup' : z.kind === 'BULL' ? 'Bull OB' : z.kind === 'BEAR' ? 'Bear OB' : z.kind;
-    const label = `${z.tf} ${tag}`;
-    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
-    const tw = ctx.measureText(label).width + 8;
-    ctx.fillStyle = _hexA(z.color, 0.9);
-    ctx.fillRect(W - tw - 4, y + h / 2 - 8, tw, 16);
-    ctx.fillStyle = '#ffffff';
-    ctx.fillText(label, W - 8, y + h / 2 + 1);
-  });
-  ctx.restore();
-  } catch (e) { try { ctx.restore(); } catch (_) {} }
+    const result = indicator.result || [];
+    const last = result[result.length - 1];
+    const zones = last && last.__zones;
+    if (!zones || !zones.length) return true;
+    const W = (ctx.canvas && ctx.canvas.width) || 4000;
+    ctx.save();
+    ctx.font = 'bold 10px Inter, system-ui, sans-serif';
+    
+    zones.forEach(z => {
+      const yTop = yAxis.convertToPixel(z.top), yBot = yAxis.convertToPixel(z.bottom);
+      const y = Math.min(yTop, yBot), h = Math.max(3, Math.abs(yBot - yTop));
+      const isBear = (z.kind === 'R' || z.kind === 'BEAR' || z.side === 'RESISTANCE' || z.side === 'SUPPLY');
+      const color = isBear ? '#f43f5e' : '#10b981';
+      
+      // Semi-transparent clean fill (subtle so candles remain 100% visible)
+      ctx.fillStyle = _hexA(color, 0.08);
+      ctx.fillRect(0, y, W, h);
+      
+      // Subtle dashed border
+      ctx.strokeStyle = _hexA(color, 0.65);
+      ctx.lineWidth = 1;
+      ctx.setLineDash([5, 3]);
+      ctx.strokeRect(0.5, y + 0.5, W - 1, Math.max(1, h - 1));
+      ctx.setLineDash([]);
+      
+      // Right-aligned pill tag (positioned before right price scale)
+      const tag = z.kind === 'R' ? 'Res' : (z.kind === 'S' ? 'Sup' : (z.kind === 'BULL' ? 'Demand' : (z.kind === 'BEAR' ? 'Supply' : z.kind)));
+      const nearestBadge = z.isNearest ? ' ★ NEAREST' : '';
+      const midVal = z.mid || (z.top + z.bottom) / 2;
+      const label = `${z.tf || ''} ${tag} $${midVal.toFixed(2)}${nearestBadge}`.trim();
+      
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'middle';
+      const tw = ctx.measureText(label).width + 12;
+      const tagH = 17;
+      const tagY = y + h / 2 - tagH / 2;
+      const rightX = Math.max(120, W - 70);
+      
+      ctx.fillStyle = _hexA(color, 0.90);
+      ctx.fillRect(rightX - tw, tagY, tw, tagH);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(label, rightX - 6, y + h / 2 + 0.5);
+    });
+    ctx.restore();
+  } catch (e) {
+    try { ctx.restore(); } catch (_) {}
+  }
   return true;
 }
 

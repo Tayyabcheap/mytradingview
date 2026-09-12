@@ -13,6 +13,7 @@ import SymbolSearchModal from './components/SymbolSearchModal';
 import KLineChartArea from './components/KLineChartArea';
 import MonteCarloTab from './components/MonteCarloTab';
 import GoldOrderBlocksTab from './components/GoldOrderBlocksTab';
+import SupportResistanceTab from './components/SupportResistanceTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
 import SignalPerformanceModal from './components/SignalPerformanceModal';
@@ -222,6 +223,7 @@ const INITIAL_WORKSPACE_TABS = [
   { id: 'dashboard', title: 'Dashboard', type: 'dashboard', closable: false },
   { id: 'chart-main', title: 'Chart: XAUUSDc', type: 'chart', symbol: 'XAUUSDc', timeframe: '1H', closable: false },
   { id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false },
+  { id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: false },
   { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false },
   { id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false }
 ];
@@ -235,6 +237,9 @@ function App() {
     }
     if (!loaded.some(t => t.id === 'gold_order_blocks')) {
       loaded.push({ id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false });
+    }
+    if (!loaded.some(t => t.id === 'support_resistance')) {
+      loaded.push({ id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: false });
     }
     return loaded;
   });
@@ -764,9 +769,9 @@ function App() {
         defaultParams = { strategy: 'ALL', minRR: 1.5, slLookback: 20, showTPLines: true, showBadges: true };
         setSignalsEnabled(true);
       } else if (indicatorMeta.id === 'SR_ZONES') {
-        defaultParams = { tfs: ['1H', '4H', '1D'], colors: { '5M': '#26a69a', '15M': '#42a5f5', '1H': '#f7a600', '4H': '#ab47bc', '1D': '#ef5350' }, maxZones: 3, pivot: 3 };
+        defaultParams = { tf: timeframe || '15M', tfs: [timeframe || '15M'], filterMode: 'nearest', maxZones: 1, pivot: 3 };
       } else if (indicatorMeta.id === 'ORDER_BLOCKS') {
-        defaultParams = { tfs: ['15M', '1H', '4H'], colors: { '5M': '#26a69a', '15M': '#42a5f5', '1H': '#f7a600', '4H': '#ab47bc', '1D': '#ef5350' }, maxZones: 4, atrLen: 14 };
+        defaultParams = { tf: timeframe || '15M', tfs: [timeframe || '15M'], filterMode: 'nearest', maxZones: 1, atrLen: 14 };
       }
 
       const newIndicator = {
@@ -2015,6 +2020,17 @@ function App() {
       {activeTab.type === 'order_blocks' && (
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <GoldOrderBlocksTab
+            accountInfo={accountInfo}
+            onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
+            defaultSymbol={symbol}
+          />
+        </div>
+      )}
+
+      {/* 6. TAB 6: SUPPORT AND RESISTANCE (MULTI-TF) VIEW */}
+      {activeTab.type === 'support_resistance' && (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <SupportResistanceTab
             accountInfo={accountInfo}
             onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
             defaultSymbol={symbol}

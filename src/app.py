@@ -28,7 +28,10 @@ from intelligence import (
     get_gold_liquidity_fixes,
     calculate_order_blocks,
     find_order_block_confluences,
-    get_primary_order_block_setup
+    get_primary_order_block_setup,
+    calculate_sr_zones,
+    find_sr_confluences,
+    get_primary_sr_setup
 )
 
 try:
@@ -1594,6 +1597,91 @@ def api_order_blocks():
         "tf2": ob_tf2,
         "confluences": confluences,
         "primary_setup": primary_setup
+    })
+
+
+@app.route("/api/support_resistance", methods=["GET"])
+def api_support_resistance():
+    """
+    Returns detected Classical Support and Resistance levels for the selected symbol
+    across two selected timeframes, plus multi-timeframe confluence zones and primary setup.
+    """
+    raw_symbol = request.args.get("symbol", config.SYMBOL)
+    symbol = resolve_broker_symbol(raw_symbol)
+    tf1_str = request.args.get("tf1", "15M").upper()
+    tf2_str = request.args.get("tf2", "1H").upper()
+
+    tf1_const = TF_MAP.get(tf1_str, mt5.TIMEFRAME_M15 if MT5_IMPORTED else None)
+    tf2_const = TF_MAP.get(tf2_str, mt5.TIMEFRAME_H1 if MT5_IMPORTED else None)
+
+    current_price = 0.0
+    c1, c2 = [], []
+
+    if init_mt5():
+        with mt5_lock:
+            tick = mt5.symbol_info_tick(symbol)
+            if tick:
+                current_price = float(tick.bid)
+
+            if tf1_const is not None:
+                r1 = mt5.copy_rates_from_pos(symbol, tf1_const, 0, 180)
+                if r1 is not None and len(r1) > 0:
+                    c1 = [{
+                        "timestamp": int(r["time"]) * 1000,
+                        "open": float(r["open"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "close": float(r["close"]),
+                        "volume": float(r["tick_volume"])
+                    } for r in r1]
+
+            if tf2_const is not None:
+                r2 = mt5.copy_rates_from_pos(symbol, tf2_const, 0, 180)
+                if r2 is not None and len(r2) > 0:
+                    c2 = [{
+                        "timestamp": int(r["time"]) * 1000,
+                        "open": float(r["open"]),
+                        "high": float(r["high"]),
+                        "low": float(r["low"]),
+                        "close": float(r["close"]),
+                        "volume": float(r["tick_volume"])
+                    } for r in r2]
+
+    # Fallback synthetic generation if MT5 historical rates unavailable
+    if not c1:
+        base = current_price or 2650.0
+        for i in range(50):
+            c1.append({"timestamp": int(time.time() - (50 - i) * 900) * 1000, "open": base, "high": base + 1.8, "low": base - 1.8, "close": base + 0.4, "volume": 160})
+            base += 0.2
+    if not c2:
+        base = current_price or 2650.0
+        for i in range(50):
+            c2.append({"timestamp": int(time.time() - (50 - i) * 3600) * 1000, "open": base, "high": base + 3.5, "low": base - 3.5, "close": base + 0.8, "volume": 450})
+            base += 0.5
+
+    sr_tf1 = calculate_sr_zones(c1, timeframe=tf1_str, current_price=current_price or c1[-1]["close"])
+    sr_tf2 = calculate_sr_zones(c2, timeframe=tf2_str, current_price=current_price or c2[-1]["close"])
+    confluences = find_sr_confluences(sr_tf1, sr_tf2)
+    curr_px = current_price or (c1[-1]["close"] if c1 else 2650.0)
+
+    # Aggregate candlestick confirmations across timeframes
+    confirmations = sr_tf1.get("confirmations", []) + sr_tf2.get("confirmations", [])
+    confirmations.sort(key=lambda c: (0 if c.get("status") == "CONFIRMED" else 1, c.get("bars_ago", 999)))
+    primary_confirmation = confirmations[0] if confirmations else None
+
+    primary_setup = get_primary_sr_setup(confluences, sr_tf1, sr_tf2, curr_px, confirmations=confirmations)
+
+    return jsonify({
+        "symbol": symbol,
+        "current_price": curr_px,
+        "tf1": sr_tf1,
+        "tf2": sr_tf2,
+        "confluences": confluences,
+        "primary_setup": primary_setup,
+        "confirmations": confirmations,
+        "primary_confirmation": primary_confirmation,
+        "nearest_support": sr_tf1.get("nearest_support") or sr_tf2.get("nearest_support"),
+        "nearest_resistance": sr_tf1.get("nearest_resistance") or sr_tf2.get("nearest_resistance")
     })
 
 

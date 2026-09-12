@@ -612,6 +612,7 @@ def calculate_order_blocks(
 
             active_blocks.append({
                 **b,
+                "id": f"OB_{timeframe}_{b['type']}_{int(b['mid'])}",
                 "status": status,
                 "age_bars": age_bars,
                 "distance_usd": dist_pts,
@@ -833,4 +834,909 @@ def get_primary_order_block_setup(
             "rr_ratio": "1:2.0"
         }
     }
+
+
+# ---------------------------------------------------------------------------
+# 7. Classical Support & Resistance Engine (Multi-Timeframe Clustered Pivots)
+# ---------------------------------------------------------------------------
+
+def calculate_sr_zones(
+    candles: List[Dict[str, Any]],
+    timeframe: str = "15M",
+    left: int = 3,
+    right: int = 3,
+    max_zones: int = 6,
+    current_price: Optional[float] = None
+) -> Dict[str, Any]:
+    """
+    Computes institutional Support and Resistance zones using fractal swing pivots,
+    ATR-adaptive clustering, touch count persistence, and polarity flip detection.
+    """
+    n = len(candles)
+    if n < (left + right + 10):
+        return {
+            "timeframe": timeframe,
+            "current_price": current_price or (candles[-1]["close"] if candles else 2650.0),
+            "support": [],
+            "resistance": [],
+            "all_zones": [],
+            "nearest_support": None,
+            "nearest_resistance": None,
+            "total_active": 0,
+            "major_count": 0
+        }
+
+    if current_price is None or current_price <= 0:
+        current_price = float(candles[-1]["close"])
+
+    # 1. True Range and ATR (14-period)
+    trs = []
+    for i in range(n):
+        if i == 0:
+            trs.append(candles[i]["high"] - candles[i]["low"])
+        else:
+            tr = max(
+                candles[i]["high"] - candles[i]["low"],
+                abs(candles[i]["high"] - candles[i - 1]["close"]),
+                abs(candles[i]["low"] - candles[i - 1]["close"])
+            )
+            trs.append(tr)
+
+    atr_len = min(14, n)
+    atr = sum(trs[:atr_len]) / max(atr_len, 1)
+    for i in range(atr_len, n):
+        atr = (atr * 13 + trs[i]) / 14.0
+    ref_atr = max(atr, 0.5)
+
+    # 2. Find Fractal Swing Highs and Swing Lows
+    pivots = []
+    for i in range(left, n - right):
+        c_hi = candles[i]["high"]
+        c_lo = candles[i]["low"]
+        
+        # Check pivot high (strict on left, non-strict on right to accommodate peak plateaus)
+        is_high = True
+        for j in range(i - left, i):
+            if candles[j]["high"] > c_hi:
+                is_high = False
+                break
+        if is_high:
+            for j in range(i + 1, i + 1 + right):
+                if candles[j]["high"] >= c_hi:
+                    is_high = False
+                    break
+        if is_high:
+            pivots.append({
+                "kind": "high",
+                "price": float(c_hi),
+                "idx": i,
+                "timestamp": candles[i].get("timestamp", 0)
+            })
+
+        # Check pivot low (strict on left, non-strict on right to accommodate trough plateaus)
+        is_low = True
+        for j in range(i - left, i):
+            if candles[j]["low"] < c_lo:
+                is_low = False
+                break
+        if is_low:
+            for j in range(i + 1, i + 1 + right):
+                if candles[j]["low"] <= c_lo:
+                    is_low = False
+                    break
+        if is_low:
+            pivots.append({
+                "kind": "low",
+                "price": float(c_lo),
+                "idx": i,
+                "timestamp": candles[i].get("timestamp", 0)
+            })
+
+    if not pivots:
+        return {
+            "timeframe": timeframe,
+            "current_price": current_price,
+            "support": [],
+            "resistance": [],
+            "all_zones": [],
+            "nearest_support": None,
+            "nearest_resistance": None,
+            "total_active": 0,
+            "major_count": 0
+        }
+
+    # 3. Cluster adjacent pivots using ATR-adaptive tolerance
+    # Clusters pivots within ~0.75 * ATR
+    tol = max(ref_atr * 0.75, 0.5)
+    pivots.sort(key=lambda p: p["price"])
+
+    clusters: List[List[Dict[str, Any]]] = []
+    for p in pivots:
+        if clusters and (p["price"] - clusters[-1][-1]["price"]) <= tol:
+            clusters[-1].append(p)
+        else:
+            clusters.append([p])
+
+    # 4. Score and build S/R Zones
+    zones = []
+    for c in clusters:
+        touches = len(c)
+        if touches < 2:
+            continue
+
+        prices = [p["price"] for p in c]
+        lo_p, hi_p = min(prices), max(prices)
+        pad = max(tol * 0.20, ref_atr * 0.12)
+        bottom = round(lo_p - pad, 3)
+        top = round(hi_p + pad, 3)
+        level = round(float(sum(prices) / len(prices)), 3)
+
+        highs = sum(1 for p in c if p["kind"] == "high")
+        lows = sum(1 for p in c if p["kind"] == "low")
+        flipped = highs > 0 and lows > 0
+
+        latest_pivot_idx = max(p["idx"] for p in c)
+        bars_ago = n - 1 - latest_pivot_idx
+
+        # Institutional strength scoring (0 - 100)
+        base_strength = min(touches, 8) * 11.0 + (16.0 if flipped else 0.0)
+        recency_bonus = max(0.0, 1.0 - (bars_ago / max(n, 1))) * 20.0
+        strength = min(100.0, round(base_strength + recency_bonus, 1))
+
+        if strength >= 65:
+            grade = "MAJOR"
+        elif strength >= 45:
+            grade = "SOLID"
+        else:
+            grade = "MINOR"
+
+        # Determine Support vs Resistance vs Active Pivot relative to current price
+        if bottom <= current_price <= top:
+            side = "PIVOT"
+            kind = "Active Pivot"
+            z_type = "PIVOT"
+            color = "#f59e0b"
+            fill_color = "rgba(245, 158, 11, 0.18)"
+        elif level < current_price:
+            side = "SUPPORT"
+            kind = "Support"
+            z_type = "SUP"
+            color = "#089981"
+            fill_color = "rgba(8, 153, 129, 0.18)"
+        else:
+            side = "RESISTANCE"
+            kind = "Resistance"
+            z_type = "RES"
+            color = "#f23645"
+            fill_color = "rgba(242, 54, 69, 0.18)"
+
+        dist_usd = round(abs(current_price - level), 2)
+        dist_pips = round(dist_usd * 10.0, 1)
+
+        zones.append({
+            "id": f"SR_{timeframe}_{z_type}_{int(level)}",
+            "type": z_type,
+            "side": side,
+            "kind": kind,
+            "timeframe": timeframe,
+            "level": level,
+            "top": top,
+            "bottom": bottom,
+            "mid": round((top + bottom) / 2.0, 3),
+            "touches": touches,
+            "highs": highs,
+            "lows": lows,
+            "flipped": flipped,
+            "strength": strength,
+            "grade": grade,
+            "age_bars": bars_ago,
+            "distance_usd": dist_usd,
+            "distance_pips": dist_pips,
+            "color": color,
+            "fill_color": fill_color,
+            "timestamp": max(p["timestamp"] for p in c)
+        })
+
+    # Sort Support (closest to price downwards) and Resistance (closest to price upwards)
+    supports = [z for z in zones if z["side"] in ("SUPPORT", "PIVOT")]
+    resistances = [z for z in zones if z["side"] in ("RESISTANCE", "PIVOT")]
+
+    supports.sort(key=lambda z: z["distance_usd"])
+    resistances.sort(key=lambda z: z["distance_usd"])
+
+    selected_supp = supports[:max_zones]
+    selected_res = resistances[:max_zones]
+
+    all_active = sorted(list({z["id"]: z for z in (selected_supp + selected_res)}.values()), key=lambda z: z["distance_usd"])
+
+    nearest_support = selected_supp[0] if selected_supp else None
+    nearest_resistance = selected_res[0] if selected_res else None
+
+    # Detect candlestick confirmations at S/R levels (Doji breakouts, wick rejections)
+    confirmations = detect_sr_confirmations(candles, selected_supp, selected_res, timeframe, current_price)
+
+    return {
+        "timeframe": timeframe,
+        "current_price": current_price,
+        "support": selected_supp,
+        "resistance": selected_res,
+        "all_zones": all_active,
+        "nearest_support": nearest_support,
+        "nearest_resistance": nearest_resistance,
+        "confirmations": confirmations,
+        "total_active": len(all_active),
+        "major_count": sum(1 for z in all_active if z["grade"] == "MAJOR")
+    }
+
+
+def check_candle_dominance(
+    candle: Dict[str, Any], 
+    direction: str = "BUY", 
+    min_body_ratio: float = 0.55,
+    min_dominance: float = 0.78, 
+    max_wick: float = 0.22
+) -> Tuple[bool, float, float, float]:
+    """
+    Evaluates whether a trigger candle has 'less wick and more body' (~80-90%+ dominance,
+    body > wicks, small rejection wick):
+    - When we say a candle closes, it means the BODY closes beyond the level (wick spikes do not count).
+    - For BUY: close > open, close near high, body >= total wicks (body_ratio >= 0.55),
+      upper wick <= max_wick (<= 22%), buyer progress >= min_dominance (>= 78%).
+    - For SELL: close < open, close near low, body >= total wicks (body_ratio >= 0.55),
+      lower wick <= max_wick (<= 22%), seller progress >= min_dominance (>= 78%).
+    Returns: (is_dominant, body_pct, dominance_pct, wick_pct)
+    """
+    op = float(candle["open"])
+    cl = float(candle["close"])
+    hi = float(candle["high"])
+    lo = float(candle["low"])
+    rng = hi - lo
+    if rng <= 0:
+        return False, 0.0, 0.0, 0.0
+
+    body = abs(cl - op)
+    body_ratio = body / rng
+    total_wicks = rng - body
+
+    if direction == "BUY":
+        if cl <= op:
+            return False, 0.0, 0.0, 0.0
+        buyer_dominance = (cl - lo) / rng
+        upper_wick = (hi - cl) / rng
+        # More body than wicks (body >= min_body_ratio or body >= total_wicks) AND small upper wick AND strong buyers
+        is_dominant = (body_ratio >= min_body_ratio or body >= total_wicks) and \
+                      (buyer_dominance >= min_dominance or body_ratio >= 0.65) and \
+                      (upper_wick <= max_wick)
+        return is_dominant, round(body_ratio * 100.0, 1), round(buyer_dominance * 100.0, 1), round(upper_wick * 100.0, 1)
+    else:
+        if cl >= op:
+            return False, 0.0, 0.0, 0.0
+        seller_dominance = (hi - cl) / rng
+        lower_wick = (cl - lo) / rng
+        # More body than wicks (body >= min_body_ratio or body >= total_wicks) AND small lower wick AND strong sellers
+        is_dominant = (body_ratio >= min_body_ratio or body >= total_wicks) and \
+                      (seller_dominance >= min_dominance or body_ratio >= 0.65) and \
+                      (lower_wick <= max_wick)
+        return is_dominant, round(body_ratio * 100.0, 1), round(seller_dominance * 100.0, 1), round(lower_wick * 100.0, 1)
+
+
+def detect_sr_confirmations(
+    candles: List[Dict[str, Any]],
+    support_zones: List[Dict[str, Any]],
+    resistance_zones: List[Dict[str, Any]],
+    timeframe: str = "15M",
+    current_price: Optional[float] = None
+) -> List[Dict[str, Any]]:
+    """
+    Detects candlestick confirmations at key Support & Resistance zones:
+    1. Support Indecision -> Bullish Breakout (BUY):
+       - Indecision candle forms on Support, and subsequent candle(s) close above
+         the highest point of wick of this indecision candle with more body and less wick.
+       - A wick spike does not count as closing; the full candle body must close above.
+       - Confirmed BUY signal; Stop Loss set strictly to indecision lowest wick (doji_lo).
+    2. Support Indecision -> Bearish Breakdown (SELL):
+       - Indecision candle forms on Support, and subsequent candle(s) close below
+         the lowest wick of this indecision candle with more body and less wick.
+       - Confirmed SELL signal; Stop Loss set strictly to indecision highest wick (doji_hi).
+    3. Resistance Indecision -> Bearish Reversal (SELL):
+       - Indecision candle forms on Resistance, and subsequent candle(s) close below
+         the lowest wick of this indecision candle with more body and less wick.
+       - Confirmed SELL signal; Stop Loss set strictly to indecision highest wick (doji_hi).
+    4. Resistance Indecision -> Bullish Breakout (BUY):
+       - Indecision candle forms on Resistance, and subsequent candle(s) close above
+         the highest point of wick of this indecision candle with more body and less wick.
+       - Confirmed BUY signal; Stop Loss set strictly to indecision lowest wick (doji_lo).
+    """
+    n = len(candles)
+    if n < 4:
+        return []
+
+    if current_price is None or current_price <= 0:
+        current_price = float(candles[-1]["close"])
+
+    confirmations = []
+
+    # Calculate average candle range
+    recent_span = min(20, n)
+    avg_range = sum(candles[i]["high"] - candles[i]["low"] for i in range(n - recent_span, n)) / max(recent_span, 1)
+    avg_range = max(avg_range, 0.5)
+
+    # Look back over recent bars
+    lookback = min(20, n - 1)
+    start_idx = max(0, n - lookback)
+
+    for i in range(start_idx, n):
+        c = candles[i]
+        rng = float(c["high"] - c["low"])
+        body = abs(float(c["close"] - c["open"]))
+
+        if rng <= 0:
+            continue
+
+        # Indecision candle: small body (<= 28% of candle range or <= 20% of ATR) where buyers and sellers are balanced
+        is_indecision = (body / rng) <= 0.28 or (body <= 0.20 * avg_range)
+
+        # -------------------------------------------------------------
+        # 1. Indecision at Support Zones
+        # -------------------------------------------------------------
+        if is_indecision and support_zones:
+            for sz in support_zones:
+                zone_pad = max(1.2, (sz["top"] - sz["bottom"]) * 0.4)
+                # Candle low or body is near/in support zone
+                in_support = (c["low"] <= sz["top"] + zone_pad) and (c["high"] >= sz["bottom"] - zone_pad)
+
+                if in_support:
+                    doji_hi = float(c["high"])
+                    doji_lo = float(c["low"])
+                    bars_ago_doji = n - 1 - i
+
+                    # Wait for subsequent candle(s) to close (i + 1, i + 2, i + 3)
+                    buy_breakout = False
+                    sell_breakdown = False
+                    trigger_candle = None
+                    trigger_body_pct = 0.0
+                    trigger_dom_pct = 0.0
+                    trigger_wick_pct = 0.0
+                    bars_to_trigger = 0
+
+                    for k in [i + 1, i + 2, i + 3]:
+                        if k < n:
+                            # Must close strictly above highest point of wick (body close, wick spikes ignored)
+                            if candles[k]["close"] > doji_hi:
+                                is_dom, b_pct, dom_pct, w_pct = check_candle_dominance(candles[k], direction="BUY")
+                                if is_dom:
+                                    buy_breakout = True
+                                    trigger_candle = candles[k]
+                                    trigger_body_pct = b_pct
+                                    trigger_dom_pct = dom_pct
+                                    trigger_wick_pct = w_pct
+                                    bars_to_trigger = k - i
+                                    break
+                            # Must close strictly below lowest wick (body close, wick spikes ignored)
+                            elif candles[k]["close"] < doji_lo:
+                                is_dom, b_pct, dom_pct, w_pct = check_candle_dominance(candles[k], direction="SELL")
+                                if is_dom:
+                                    sell_breakdown = True
+                                    trigger_candle = candles[k]
+                                    trigger_body_pct = b_pct
+                                    trigger_dom_pct = dom_pct
+                                    trigger_wick_pct = w_pct
+                                    bars_to_trigger = k - i
+                                    break
+
+                    if buy_breakout:
+                        entry = float(current_price or trigger_candle["close"])
+                        sl = round(doji_lo, 3)  # Stop Loss to indecision candle's lowest wick!
+                        risk_pts = round(max(0.5, entry - sl), 3)
+                        tp1 = round(entry + risk_pts * 2.0, 3)
+                        tp2 = round(entry + risk_pts * 3.5, 3)
+
+                        confirmations.append({
+                            "id": f"CONF_IND_SUP_BUY_{timeframe}_{i}",
+                            "type": "DOJI_SUPPORT_BUY",
+                            "action": "BUY",
+                            "status": "CONFIRMED",
+                            "title": f"⚡ CONFIRMED: {timeframe} Indecision Support Breakout ({trigger_body_pct}% Body Close)",
+                            "timeframe": timeframe,
+                            "level_tested": sz["level"],
+                            "zone_range": f"${sz['bottom']} - ${sz['top']}",
+                            "doji_index": i,
+                            "doji_high": doji_hi,
+                            "doji_low": doji_lo,
+                            "trigger_close": round(float(trigger_candle["close"]), 3),
+                            "body_closed": True,
+                            "body_pct": trigger_body_pct,
+                            "dominance_pct": trigger_dom_pct,
+                            "wick_pct": trigger_wick_pct,
+                            "candle_quality": f"{trigger_body_pct}% Body / {trigger_wick_pct}% Wick ({trigger_dom_pct}% Buyers)",
+                            "bars_ago": n - 1 - (i + bars_to_trigger),
+                            "sl": sl,
+                            "entry": entry,
+                            "tp1": tp1,
+                            "tp2": tp2,
+                            "risk_pts": risk_pts,
+                            "risk_pips": round(risk_pts * 10.0, 1),
+                            "reward_pts": round(risk_pts * 2.0, 3),
+                            "reward_pips": round(risk_pts * 20.0, 1),
+                            "rr_ratio": "1:2.0",
+                            "badge": f"BUY CONFIRMED ({trigger_body_pct}% BODY)",
+                            "badge_color": "#089981",
+                            "description": f"Indecision candle formed on {timeframe} Support (${sz['bottom']} - ${sz['top']}). Candle +{bars_to_trigger} achieved a decisive Full Body Close at ${trigger_candle['close']:.3f} above highest wick (${doji_hi:.3f}) with {trigger_body_pct}% body and small wick ({trigger_wick_pct}%). Confirmed BUY signal. Stop Loss anchored to indecision lowest wick (${sl:.3f})."
+                        })
+                        break
+                    elif sell_breakdown:
+                        entry = float(current_price or trigger_candle["close"])
+                        sl = round(doji_hi, 3)  # Stop Loss to indecision candle's highest wick!
+                        risk_pts = round(max(0.5, sl - entry), 3)
+                        tp1 = round(entry - risk_pts * 2.0, 3)
+                        tp2 = round(entry - risk_pts * 3.5, 3)
+
+                        confirmations.append({
+                            "id": f"CONF_IND_SUP_SELL_{timeframe}_{i}",
+                            "type": "DOJI_SUPPORT_BREAKDOWN_SELL",
+                            "action": "SELL",
+                            "status": "CONFIRMED",
+                            "title": f"⚡ CONFIRMED: {timeframe} Indecision Support Breakdown ({trigger_body_pct}% Body Close)",
+                            "timeframe": timeframe,
+                            "level_tested": sz["level"],
+                            "zone_range": f"${sz['bottom']} - ${sz['top']}",
+                            "doji_index": i,
+                            "doji_high": doji_hi,
+                            "doji_low": doji_lo,
+                            "trigger_close": round(float(trigger_candle["close"]), 3),
+                            "body_closed": True,
+                            "body_pct": trigger_body_pct,
+                            "dominance_pct": trigger_dom_pct,
+                            "wick_pct": trigger_wick_pct,
+                            "candle_quality": f"{trigger_body_pct}% Body / {trigger_wick_pct}% Wick ({trigger_dom_pct}% Sellers)",
+                            "bars_ago": n - 1 - (i + bars_to_trigger),
+                            "sl": sl,
+                            "entry": entry,
+                            "tp1": tp1,
+                            "tp2": tp2,
+                            "risk_pts": risk_pts,
+                            "risk_pips": round(risk_pts * 10.0, 1),
+                            "reward_pts": round(risk_pts * 2.0, 3),
+                            "reward_pips": round(risk_pts * 20.0, 1),
+                            "rr_ratio": "1:2.0",
+                            "badge": f"SELL CONFIRMED ({trigger_body_pct}% BODY)",
+                            "badge_color": "#f23645",
+                            "description": f"Indecision candle formed on {timeframe} Support (${sz['bottom']} - ${sz['top']}), but candle +{bars_to_trigger} achieved a decisive Full Body Close at ${trigger_candle['close']:.3f} below lowest wick (${doji_lo:.3f}) with {trigger_body_pct}% body and small wick ({trigger_wick_pct}%). Support failed: Confirmed SELL signal. Stop Loss anchored to indecision highest wick (${sl:.3f})."
+                        })
+                        break
+                    elif i >= n - 2:
+                        confirmations.append({
+                            "id": f"CONF_IND_SUP_PENDING_{timeframe}_{i}",
+                            "type": "DOJI_SUPPORT_PENDING",
+                            "action": "WATCH",
+                            "status": "PENDING",
+                            "title": f"⏳ PENDING: {timeframe} Indecision on Support",
+                            "timeframe": timeframe,
+                            "level_tested": sz["level"],
+                            "zone_range": f"${sz['bottom']} - ${sz['top']}",
+                            "doji_index": i,
+                            "doji_high": doji_hi,
+                            "doji_low": doji_lo,
+                            "bars_ago": bars_ago_doji,
+                            "sl": round(doji_lo, 3),
+                            "badge": "AWAITING FULL BODY CLOSE",
+                            "badge_color": "#eab308",
+                            "description": f"Indecision candle formed at {timeframe} Support (${sz['bottom']} - ${sz['top']}). Watching next candle(s) for a decisive Full Body Close with more body and less wick (wick spikes ignored). BUY triggers on body close above highest wick (${doji_hi:.3f}, SL: ${doji_lo:.3f}); SELL triggers on body close below lowest wick (${doji_lo:.3f}, SL: ${doji_hi:.3f})."
+                        })
+                        break
+
+        # -------------------------------------------------------------
+        # 2. Indecision at Resistance Zones
+        # -------------------------------------------------------------
+        if is_indecision and resistance_zones:
+            for rz in resistance_zones:
+                zone_pad = max(1.2, (rz["top"] - rz["bottom"]) * 0.4)
+                in_resistance = (c["high"] >= rz["bottom"] - zone_pad) and (c["low"] <= rz["top"] + zone_pad)
+
+                if in_resistance:
+                    doji_hi = float(c["high"])
+                    doji_lo = float(c["low"])
+                    bars_ago_doji = n - 1 - i
+
+                    sell_rejection = False
+                    buy_breakout = False
+                    trigger_candle = None
+                    trigger_body_pct = 0.0
+                    trigger_dom_pct = 0.0
+                    trigger_wick_pct = 0.0
+                    bars_to_trigger = 0
+
+                    for k in [i + 1, i + 2, i + 3]:
+                        if k < n:
+                            # Must close strictly below lowest wick (body close, wick spikes ignored)
+                            if candles[k]["close"] < doji_lo:
+                                is_dom, b_pct, dom_pct, w_pct = check_candle_dominance(candles[k], direction="SELL")
+                                if is_dom:
+                                    sell_rejection = True
+                                    trigger_candle = candles[k]
+                                    trigger_body_pct = b_pct
+                                    trigger_dom_pct = dom_pct
+                                    trigger_wick_pct = w_pct
+                                    bars_to_trigger = k - i
+                                    break
+                            # Must close strictly above highest point of wick (body close, wick spikes ignored)
+                            elif candles[k]["close"] > doji_hi:
+                                is_dom, b_pct, dom_pct, w_pct = check_candle_dominance(candles[k], direction="BUY")
+                                if is_dom:
+                                    buy_breakout = True
+                                    trigger_candle = candles[k]
+                                    trigger_body_pct = b_pct
+                                    trigger_dom_pct = dom_pct
+                                    trigger_wick_pct = w_pct
+                                    bars_to_trigger = k - i
+                                    break
+
+                    if sell_rejection:
+                        entry = float(current_price or trigger_candle["close"])
+                        sl = round(doji_hi, 3)  # Stop Loss to indecision candle's highest wick!
+                        risk_pts = round(max(0.5, sl - entry), 3)
+                        tp1 = round(entry - risk_pts * 2.0, 3)
+                        tp2 = round(entry - risk_pts * 3.5, 3)
+
+                        confirmations.append({
+                            "id": f"CONF_IND_RES_SELL_{timeframe}_{i}",
+                            "type": "DOJI_RESISTANCE_SELL",
+                            "action": "SELL",
+                            "status": "CONFIRMED",
+                            "title": f"⚡ CONFIRMED: {timeframe} Indecision Resistance Rejection ({trigger_body_pct}% Body Close)",
+                            "timeframe": timeframe,
+                            "level_tested": rz["level"],
+                            "zone_range": f"${rz['bottom']} - ${rz['top']}",
+                            "doji_index": i,
+                            "doji_high": doji_hi,
+                            "doji_low": doji_lo,
+                            "trigger_close": round(float(trigger_candle["close"]), 3),
+                            "body_closed": True,
+                            "body_pct": trigger_body_pct,
+                            "dominance_pct": trigger_dom_pct,
+                            "wick_pct": trigger_wick_pct,
+                            "candle_quality": f"{trigger_body_pct}% Body / {trigger_wick_pct}% Wick ({trigger_dom_pct}% Sellers)",
+                            "bars_ago": n - 1 - (i + bars_to_trigger),
+                            "sl": sl,
+                            "entry": entry,
+                            "tp1": tp1,
+                            "tp2": tp2,
+                            "risk_pts": risk_pts,
+                            "risk_pips": round(risk_pts * 10.0, 1),
+                            "reward_pts": round(risk_pts * 2.0, 3),
+                            "reward_pips": round(risk_pts * 20.0, 1),
+                            "rr_ratio": "1:2.0",
+                            "badge": f"SELL CONFIRMED ({trigger_body_pct}% BODY)",
+                            "badge_color": "#f23645",
+                            "description": f"Indecision candle formed on {timeframe} Resistance (${rz['bottom']} - ${rz['top']}). Candle +{bars_to_trigger} achieved a decisive Full Body Close at ${trigger_candle['close']:.3f} below lowest wick (${doji_lo:.3f}) with {trigger_body_pct}% body and small wick ({trigger_wick_pct}%). Confirmed SELL signal. Stop Loss anchored to indecision highest wick (${sl:.3f})."
+                        })
+                        break
+                    elif buy_breakout:
+                        entry = float(current_price or trigger_candle["close"])
+                        sl = round(doji_lo, 3)  # Stop Loss to indecision candle's lowest wick!
+                        risk_pts = round(max(0.5, entry - sl), 3)
+                        tp1 = round(entry + risk_pts * 2.0, 3)
+                        tp2 = round(entry + risk_pts * 3.5, 3)
+
+                        confirmations.append({
+                            "id": f"CONF_IND_RES_BUY_{timeframe}_{i}",
+                            "type": "DOJI_RESISTANCE_BREAKOUT_BUY",
+                            "action": "BUY",
+                            "status": "CONFIRMED",
+                            "title": f"⚡ CONFIRMED: {timeframe} Indecision Resistance Breakout ({trigger_body_pct}% Body Close)",
+                            "timeframe": timeframe,
+                            "level_tested": rz["level"],
+                            "zone_range": f"${rz['bottom']} - ${rz['top']}",
+                            "doji_index": i,
+                            "doji_high": doji_hi,
+                            "doji_low": doji_lo,
+                            "trigger_close": round(float(trigger_candle["close"]), 3),
+                            "body_closed": True,
+                            "body_pct": trigger_body_pct,
+                            "dominance_pct": trigger_dom_pct,
+                            "wick_pct": trigger_wick_pct,
+                            "candle_quality": f"{trigger_body_pct}% Body / {trigger_wick_pct}% Wick ({trigger_dom_pct}% Buyers)",
+                            "bars_ago": n - 1 - (i + bars_to_trigger),
+                            "sl": sl,
+                            "entry": entry,
+                            "tp1": tp1,
+                            "tp2": tp2,
+                            "risk_pts": risk_pts,
+                            "risk_pips": round(risk_pts * 10.0, 1),
+                            "reward_pts": round(risk_pts * 2.0, 3),
+                            "reward_pips": round(risk_pts * 20.0, 1),
+                            "rr_ratio": "1:2.0",
+                            "badge": f"BUY CONFIRMED ({trigger_body_pct}% BODY)",
+                            "badge_color": "#089981",
+                            "description": f"Indecision candle formed on {timeframe} Resistance (${rz['bottom']} - ${rz['top']}), but candle +{bars_to_trigger} achieved a decisive Full Body Close at ${trigger_candle['close']:.3f} above highest wick (${doji_hi:.3f}) with {trigger_body_pct}% body and small wick ({trigger_wick_pct}%). Resistance broken: Confirmed BUY signal. Stop Loss anchored to indecision lowest wick (${sl:.3f})."
+                        })
+                        break
+                    elif i >= n - 2:
+                        confirmations.append({
+                            "id": f"CONF_IND_RES_PENDING_{timeframe}_{i}",
+                            "type": "DOJI_RESISTANCE_PENDING",
+                            "action": "WATCH",
+                            "status": "PENDING",
+                            "title": f"⏳ PENDING: {timeframe} Indecision on Resistance",
+                            "timeframe": timeframe,
+                            "level_tested": rz["level"],
+                            "zone_range": f"${rz['bottom']} - ${rz['top']}",
+                            "doji_index": i,
+                            "doji_high": doji_hi,
+                            "doji_low": doji_lo,
+                            "bars_ago": bars_ago_doji,
+                            "sl": round(doji_hi, 3),
+                            "badge": "AWAITING FULL BODY CLOSE",
+                            "badge_color": "#eab308",
+                            "description": f"Indecision candle formed at {timeframe} Resistance (${rz['bottom']} - ${rz['top']}). Watching next candle(s) for a decisive Full Body Close with more body and less wick (wick spikes ignored). SELL triggers on body close below lowest wick (${doji_lo:.3f}, SL: ${doji_hi:.3f}); BUY triggers on body close above highest wick (${doji_hi:.3f}, SL: ${doji_lo:.3f})."
+                        })
+                        break
+
+    confirmations.sort(key=lambda c: (0 if c["status"] == "CONFIRMED" else 1, c.get("bars_ago", 999)))
+    return confirmations
+
+
+def find_sr_confluences(
+    sr_tf1: Dict[str, Any],
+    sr_tf2: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """
+    Finds institutional confluences where Lower Timeframe (e.g. 15M) Support/Resistance
+    overlaps or nests within Higher Timeframe (e.g. 1H/4H) Support/Resistance.
+    """
+    confluences = []
+    zones1 = sr_tf1.get("all_zones", [])
+    zones2 = sr_tf2.get("all_zones", [])
+    tf1 = sr_tf1.get("timeframe", "15M")
+    tf2 = sr_tf2.get("timeframe", "1H")
+
+    current_p = sr_tf1.get("current_price") or sr_tf2.get("current_price") or 2650.0
+
+    for z1 in zones1:
+        for z2 in zones2:
+            # Overlap condition: max(bottom1, bottom2) <= min(top1, top2)
+            overlap_bot = max(z1["bottom"], z2["bottom"])
+            overlap_top = min(z1["top"], z2["top"])
+
+            if overlap_bot <= overlap_top:
+                overlap_range = round(overlap_top - overlap_bot, 2)
+                midpoint = round((overlap_top + overlap_bot) / 2.0, 3)
+
+                # Determine direction:
+                # If both are support -> Strong BUY bounce zone
+                # If both are resistance -> Strong SELL rejection zone
+                # If one is support and other is resistance/pivot -> Polarity Flip zone!
+                if z1["side"] == "SUPPORT" and z2["side"] == "SUPPORT":
+                    action = "BUY"
+                    role_desc = "Dual-Support Floor (Demand Confluence)"
+                    quality = "A+ Institutional Support" if (z1["grade"] == "MAJOR" or z2["grade"] == "MAJOR") else "Strong Support Confluence"
+                elif z1["side"] == "RESISTANCE" and z2["side"] == "RESISTANCE":
+                    action = "SELL"
+                    role_desc = "Dual-Resistance Ceiling (Supply Confluence)"
+                    quality = "A+ Institutional Resistance" if (z1["grade"] == "MAJOR" or z2["grade"] == "MAJOR") else "Strong Resistance Confluence"
+                else:
+                    # Polarity Flip or Pivot zone
+                    action = "BUY" if current_p <= midpoint else "SELL"
+                    role_desc = "Polarity Flip Zone (S/R Pivot)"
+                    quality = "High Polarity Confluence"
+
+                # Buffer and SL/TP configuration
+                buffer = max(1.5, overlap_range * 0.45)
+                if action == "BUY":
+                    sl_price = round(overlap_bot - buffer, 3)
+                    risk_pts = round(max(1.0, midpoint - sl_price), 3)
+                    tp1_price = round(midpoint + risk_pts * 2.0, 3)
+                    tp2_price = round(midpoint + risk_pts * 3.5, 3)
+                else:
+                    sl_price = round(overlap_top + buffer, 3)
+                    risk_pts = round(max(1.0, sl_price - midpoint), 3)
+                    tp1_price = round(midpoint - risk_pts * 2.0, 3)
+                    tp2_price = round(midpoint - risk_pts * 3.5, 3)
+
+                # Dynamic Condition Tracking
+                if overlap_bot <= current_p <= overlap_top:
+                    cond_state = "TRIGGER_READY"
+                    cond_title = f"⚡ CONDITION MET: TESTING {role_desc.upper()}"
+                    cond_desc = f"Gold is inside the {tf1}/{tf2} Confluence Zone (${overlap_bot} - ${overlap_top}). Prime entry for {action}!"
+                    dist_val = 0.0
+                elif action == "BUY":
+                    dist_val = round(current_p - overlap_top, 2) if current_p > overlap_top else round(overlap_bot - current_p, 2)
+                    if abs(dist_val) <= 1.0:
+                        cond_state = "APPROACHING"
+                        cond_title = "⚡ APPROACHING SUPPORT FLOOR"
+                        cond_desc = f"Gold (${current_p:.2f}) is only ${abs(dist_val):.2f} away ({abs(dist_val)*10:.1f} pips) from Support Floor."
+                    else:
+                        cond_state = "WAITING"
+                        cond_title = "⏳ WAITING FOR RETEST OF SUPPORT"
+                        cond_desc = f"Waiting for Gold (${current_p:.2f}) to test Support Confluence (${overlap_bot} - ${overlap_top})."
+                else:
+                    dist_val = round(overlap_bot - current_p, 2) if current_p < overlap_bot else round(current_p - overlap_top, 2)
+                    if abs(dist_val) <= 1.0:
+                        cond_state = "APPROACHING"
+                        cond_title = "⚡ APPROACHING RESISTANCE CEILING"
+                        cond_desc = f"Gold (${current_p:.2f}) is only ${abs(dist_val):.2f} away ({abs(dist_val)*10:.1f} pips) from Resistance Ceiling."
+                    else:
+                        cond_state = "WAITING"
+                        cond_title = "⏳ WAITING FOR RALLY TO RESISTANCE"
+                        cond_desc = f"Waiting for Gold (${current_p:.2f}) to rally into Resistance Confluence (${overlap_bot} - ${overlap_top})."
+
+                total_touches = z1["touches"] + z2["touches"]
+                has_flip = z1["flipped"] or z2["flipped"]
+
+                confluences.append({
+                    "action": action,
+                    "role": role_desc,
+                    "tf_lower": tf1,
+                    "tf_higher": tf2,
+                    "lower_zone": f"{z1['bottom']} - {z1['top']}",
+                    "higher_zone": f"{z2['bottom']} - {z2['top']}",
+                    "confluence_range": f"{overlap_bot} - {overlap_top}",
+                    "overlap_span": overlap_range,
+                    "midpoint": midpoint,
+                    "touches": total_touches,
+                    "flipped": has_flip,
+                    "quality": quality,
+                    "grade": "MAJOR" if (z1["grade"] == "MAJOR" or z2["grade"] == "MAJOR") else "SOLID",
+                    "condition": {
+                        "state": cond_state,
+                        "title": cond_title,
+                        "description": cond_desc,
+                        "distance_usd": abs(dist_val),
+                        "distance_pips": round(abs(dist_val) * 10.0, 1)
+                    },
+                    "trade_setup": {
+                        "action": action,
+                        "entry": midpoint,
+                        "sl": sl_price,
+                        "tp1": tp1_price,
+                        "tp2": tp2_price,
+                        "risk_pts": risk_pts,
+                        "reward_pts": round(risk_pts * 2.0, 3),
+                        "risk_pips": round(risk_pts * 10.0, 1),
+                        "reward_pips": round(risk_pts * 20.0, 1),
+                        "rr_ratio": "1:2.0"
+                    }
+                })
+
+    # Sort confluences by distance from current price
+    confluences.sort(key=lambda c: c["condition"]["distance_usd"])
+    return confluences
+
+
+def get_primary_sr_setup(
+    confluences: List[Dict[str, Any]],
+    sr_tf1: Dict[str, Any],
+    sr_tf2: Dict[str, Any],
+    current_price: float,
+    confirmations: Optional[List[Dict[str, Any]]] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Selects the primary active trading setup for Support and Resistance:
+    Prioritizes:
+    1. Active Confirmed Candlestick Breakout (e.g. Doji Support Breakout, setting SL to Doji lowest wick).
+    2. Active dual-timeframe confluence zones closest to price.
+    3. Nearest single-timeframe Major/Solid Support or Resistance level.
+    """
+    # 1. Prioritize freshly confirmed candlestick breakout (e.g. Doji at Support)
+    if confirmations:
+        active_c = next((c for c in confirmations if c.get("status") == "CONFIRMED" and c.get("bars_ago", 99) <= 4), None)
+        if active_c:
+            entry = float(current_price or active_c["entry"])
+            sl = float(active_c["sl"])
+            action = active_c["action"]
+            risk_pts = round(max(0.5, abs(entry - sl)), 3)
+            tp1 = round(entry + risk_pts * 2.0, 3) if action == "BUY" else round(entry - risk_pts * 2.0, 3)
+            tp2 = round(entry + risk_pts * 3.5, 3) if action == "BUY" else round(entry - risk_pts * 3.5, 3)
+            
+            return {
+                "action": action,
+                "role": f"⚡ {active_c['title']} ({active_c['timeframe']})",
+                "tf_lower": active_c["timeframe"],
+                "tf_higher": active_c["timeframe"],
+                "lower_zone": active_c["zone_range"],
+                "higher_zone": active_c["zone_range"],
+                "confluence_range": active_c["zone_range"],
+                "overlap_span": round(abs(active_c["doji_high"] - active_c["doji_low"]), 3),
+                "midpoint": round((active_c["doji_high"] + active_c["doji_low"]) / 2.0, 3),
+                "touches": 3,
+                "flipped": False,
+                "quality": "A+ Candlestick Confirmation",
+                "grade": "MAJOR",
+                "active_confirmation": active_c,
+                "condition": {
+                    "state": "TRIGGER_READY",
+                    "title": active_c["title"],
+                    "description": active_c["description"],
+                    "distance_usd": 0.0,
+                    "distance_pips": 0.0
+                },
+                "trade_setup": {
+                    "action": action,
+                    "entry": entry,
+                    "sl": sl,
+                    "sl_note": f"Doji Lowest Wick (${sl:.3f})" if action == "BUY" else f"Doji Highest Wick (${sl:.3f})",
+                    "tp1": tp1,
+                    "tp2": tp2,
+                    "risk_pts": risk_pts,
+                    "reward_pts": round(risk_pts * 2.0, 3),
+                    "risk_pips": round(risk_pts * 10.0, 1),
+                    "reward_pips": round(risk_pts * 20.0, 1),
+                    "rr_ratio": "1:2.0"
+                }
+            }
+
+    if confluences:
+        return confluences[0]
+
+    # Fallback to closest zone in lower or higher timeframe
+    all_candidates = sr_tf1.get("all_zones", []) + sr_tf2.get("all_zones", [])
+    if not all_candidates:
+        return None
+
+    # Filter Major first, then closest
+    candidates = sorted(
+        all_candidates, 
+        key=lambda z: (0 if z.get("grade") == "MAJOR" else (1 if z.get("grade") == "SOLID" else 2), z.get("distance_usd", 9999))
+    )
+    top_z = candidates[0]
+
+    action = "BUY" if top_z["side"] in ("SUPPORT", "PIVOT") else "SELL"
+    midpoint = top_z["mid"]
+    zone_span = round(top_z["top"] - top_z["bottom"], 3)
+    buffer = max(1.5, zone_span * 0.45)
+
+    if action == "BUY":
+        sl_price = round(top_z["bottom"] - buffer, 3)
+        risk_pts = round(max(1.0, midpoint - sl_price), 3)
+        tp1_price = round(midpoint + risk_pts * 2.0, 3)
+        tp2_price = round(midpoint + risk_pts * 3.5, 3)
+        dist_val = round(current_price - top_z["top"], 2) if current_price > top_z["top"] else round(top_z["bottom"] - current_price, 2)
+        cond_title = "WAITING FOR RETEST OF SUPPORT"
+        cond_desc = f"Waiting for Gold (${current_price:.2f}) to test {top_z['timeframe']} Support (${top_z['bottom']} - ${top_z['top']})."
+    else:
+        sl_price = round(top_z["top"] + buffer, 3)
+        risk_pts = round(max(1.0, sl_price - midpoint), 3)
+        tp1_price = round(midpoint - risk_pts * 2.0, 3)
+        tp2_price = round(midpoint - risk_pts * 3.5, 3)
+        dist_val = round(top_z["bottom"] - current_price, 2) if current_price < top_z["bottom"] else round(current_price - top_z["top"], 2)
+        cond_title = "WAITING FOR RALLY TO RESISTANCE"
+        cond_desc = f"Waiting for Gold (${current_price:.2f}) to test {top_z['timeframe']} Resistance (${top_z['bottom']} - ${top_z['top']})."
+
+    in_zone = top_z["bottom"] <= current_price <= top_z["top"]
+
+    return {
+        "action": action,
+        "role": f"{top_z['timeframe']} {top_z['kind']}",
+        "tf_lower": top_z["timeframe"],
+        "tf_higher": top_z["timeframe"],
+        "lower_zone": f"{top_z['bottom']} - {top_z['top']}",
+        "higher_zone": f"{top_z['bottom']} - {top_z['top']}",
+        "confluence_range": f"{top_z['bottom']} - {top_z['top']}",
+        "overlap_span": zone_span,
+        "midpoint": midpoint,
+        "touches": top_z.get("touches", 2),
+        "flipped": top_z.get("flipped", False),
+        "quality": f"{top_z['grade']} {top_z['kind']}",
+        "grade": top_z.get("grade", "SOLID"),
+        "condition": {
+            "state": "TRIGGER_READY" if in_zone else ("APPROACHING" if abs(dist_val) <= 1.0 else "WAITING"),
+            "title": f"⚡ CONDITION MET: IN {top_z['kind'].upper()} ZONE" if in_zone else cond_title,
+            "description": f"Gold is inside the {top_z['timeframe']} {top_z['kind']} band (${top_z['bottom']} - ${top_z['top']}). Prime {action} opportunity!" if in_zone else cond_desc,
+            "distance_usd": abs(dist_val),
+            "distance_pips": round(abs(dist_val) * 10.0, 1)
+        },
+        "trade_setup": {
+            "action": action,
+            "entry": midpoint,
+            "sl": sl_price,
+            "tp1": tp1_price,
+            "tp2": tp2_price,
+            "risk_pts": risk_pts,
+            "reward_pts": round(risk_pts * 2.0, 3),
+            "risk_pips": round(risk_pts * 10.0, 1),
+            "reward_pips": round(risk_pts * 20.0, 1),
+            "rr_ratio": "1:2.0"
+        }
+    }
+
 
