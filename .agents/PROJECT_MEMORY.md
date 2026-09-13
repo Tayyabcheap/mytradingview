@@ -37,6 +37,13 @@
      - Persistent audit stores: `data/haider_scalper_signals_audit.json`, `data/haider_scalper_signals_audit.csv`, and `data/weekly_scalper_coaching_report.md`.
      - Endpoints: `GET /api/scalper/audit/trades`, `GET /api/scalper/audit/report`, `POST /api/scalper/audit/sync`.
    - **Signal Engine (`src/signal_engine.py`, `src/real_dip_bt.py`)**: Real-time SMC and Haider-Gold-Scalper backtest/signal generator.
+   - **Autonomous Scalper Daemon (`src/scalper_bot.py`)**:
+     - Dedicated server-side 24/5 daemon monitoring 5M MT5 candles independently of the browser.
+     - Evaluates closed 5M bars against `Haider-Scalper-Enhanced` (and baseline `Haider-Gold-Scalper`).
+     - Executes institutional **2-Tranche scale-out orders** (Tranche 1 @ TP1, Tranche 2 Runner @ TP2).
+     - High-speed 1-second background tick monitor that autonomously moves Tranche 2 SL to Breakeven when TP1 is reached.
+     - Strictly enforces Gold volume cap $\le 1.0$ lot and demo account protection.
+     - Endpoints: `GET /api/scalper/bot/status`, `POST /api/scalper/bot/toggle`.
    - **Account Guardian (`src/trading_account.py`)**: Strict gate ensuring MT5 connects only to configured demo accounts, preventing real money exposure.
    - **Market Clock (`src/market_clock.py`)**: Time management enforcing weekend flat rules and Friday wind-down.
    - **MetaTrader 5 Bridge**: Interfaces with MetaTrader 5 terminal Python API for order placement and market data.

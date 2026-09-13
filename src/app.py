@@ -1407,6 +1407,37 @@ def sync_scalper_audit():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Autonomous Scalper Bot Controller Endpoints
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route("/api/scalper/bot/status", methods=["GET"])
+def scalper_bot_status():
+    """Retrieve telemetry of the autonomous server-side scalper bot."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+    return jsonify(bot.status())
+
+
+@app.route("/api/scalper/bot/toggle", methods=["POST"])
+def scalper_bot_toggle():
+    """Enable or disable autonomous MT5 execution or update bot settings."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+    data = request.get_json(force=True) or {}
+    
+    enabled = data.get("enabled")
+    strategy = data.get("strategy")
+    lot_size = data.get("lot_size")
+    symbol = data.get("symbol")
+    
+    # Auto-align broker symbol if passed
+    if symbol:
+        symbol = resolve_broker_symbol(symbol)
+    
+    res = bot.configure(enabled=enabled, strategy=strategy, lot_size=lot_size, symbol=symbol)
+    return jsonify(res)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Monte Carlo Stress Lab, Market Screener, and Discord Notification Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route("/api/stress_test/monte_carlo", methods=["GET", "POST"])
@@ -1883,4 +1914,10 @@ def serve_frontend(path):
 
 if __name__ == "__main__":
     init_mt5()
+    try:
+        from scalper_bot import get_scalper_bot
+        bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+        bot.start()
+    except Exception as _b_err:
+        print(f"[SCALPER_BOT] Startup warning: {_b_err}", flush=True)
     socketio.run(app, host=HOST, port=PORT, debug=True, use_reloader=False)

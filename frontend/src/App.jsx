@@ -395,6 +395,27 @@ function App() {
       .catch(() => {});
   }, []);
 
+  // Autonomous Scalper Bot state synchronization with backend daemon
+  const [botStatus, setBotStatus] = useState(null);
+  useEffect(() => {
+    const pollBotStatus = () => {
+      fetch('/api/scalper/bot/status')
+        .then(r => r.json())
+        .then(d => {
+          if (d && typeof d === 'object' && !d.error) {
+            setBotStatus(d);
+            if (typeof d.enabled === 'boolean') {
+              setAutoTradeSignals(d.enabled);
+            }
+          }
+        })
+        .catch(() => {});
+    };
+    pollBotStatus();
+    const iv = setInterval(pollBotStatus, 6000);
+    return () => clearInterval(iv);
+  }, []);
+
   const chartRef = useRef();
   const replayTimerRef = useRef(null);
 
@@ -880,6 +901,15 @@ function App() {
         visible: hasAny,
         params: { ...ind.params, strategy: next, timeframe }
       } : ind));
+
+      // Sync active strategy to backend autonomous bot
+      const activeStrat = next.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP';
+      fetch('/api/scalper/bot/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ strategy: activeStrat, enabled: hasAny && autoTradeSignals })
+      }).catch(() => {});
+
       return next;
     });
   };
@@ -1073,32 +1103,60 @@ function App() {
 
           const tradeComment = isEnhancedSig ? 'Haider-Scalper-Enhanced' : (isHaiderSig ? 'Haider-Gold-Scalper' : (sig.strategy || 'MT5-Auto-Trade'));
 
-          const tradePayload = {
-            symbol: symbol,
-            type: sig.signalType,
-            volume: safeLot,
-            sl: parseFloat(sig.slPrice.toFixed(3)),
-            tp: parseFloat(sig.tp1Price.toFixed(3)),
-            comment: tradeComment
-          };
-
-          try {
-            const res = await fetch('/api/order/send', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify(tradePayload)
+          // 2-Tranche institutional order split
+          const orderPlans = [];
+          if (isEnhancedSig && safeLot >= 0.02) {
+            const tr1 = +(safeLot * 0.5).toFixed(2);
+            const tr2 = +(safeLot - tr1).toFixed(2);
+            orderPlans.push({
+              symbol,
+              type: sig.signalType,
+              volume: tr1,
+              sl: parseFloat(sig.slPrice.toFixed(3)),
+              tp: parseFloat(sig.tp1Price.toFixed(3)),
+              comment: `${tradeComment} [TP1]`
             });
-            const d = await res.json();
-            if (res.ok && !d.error) {
-              const successMsg = `⚡ ${tradeComment}: Auto-Opened ${tradePayload.type} ${tradePayload.volume} Lots on ${symbol} @ ${(d.price || sig.entryPrice).toFixed(3)} (SL: ${tradePayload.sl.toFixed(3)}, TP: ${tradePayload.tp.toFixed(3)})`;
-              setAlertToast(successMsg);
-              playBeep(1050, 0.22);
-              fetchAccountAndSymbols();
-            } else {
-              setAlertToast(`⚠️ Auto-Trade Rejected: ${d.error || 'Check MT5 AlgoTrading status'}`);
+            orderPlans.push({
+              symbol,
+              type: sig.signalType,
+              volume: tr2,
+              sl: parseFloat(sig.slPrice.toFixed(3)),
+              tp: parseFloat((sig.tp2Price || sig.tp1Price).toFixed(3)),
+              auto_be: true,
+              auto_be_tp1: true,
+              tp1: parseFloat(sig.tp1Price.toFixed(3)),
+              comment: `${tradeComment} [Runner]`
+            });
+          } else {
+            orderPlans.push({
+              symbol,
+              type: sig.signalType,
+              volume: safeLot,
+              sl: parseFloat(sig.slPrice.toFixed(3)),
+              tp: parseFloat(sig.tp1Price.toFixed(3)),
+              comment: tradeComment
+            });
+          }
+
+          for (const tradePayload of orderPlans) {
+            try {
+              const res = await fetch('/api/order/send', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(tradePayload)
+              });
+              const d = await res.json();
+              if (res.ok && !d.error) {
+                const successMsg = `⚡ ${tradePayload.comment}: Auto-Opened ${tradePayload.type} ${tradePayload.volume} Lots on ${symbol} @ ${(d.price || sig.entryPrice).toFixed(3)} (SL: ${tradePayload.sl.toFixed(3)}, TP: ${tradePayload.tp.toFixed(3)})`;
+                setAlertToast(successMsg);
+                playBeep(1050, 0.22);
+                fetchAccountAndSymbols();
+              } else {
+                setAlertToast(`⚠️ Auto-Trade Rejected: ${d.error || 'Check MT5 AlgoTrading status'}`);
+              }
+            } catch (err) {
+              setAlertToast(`⚠️ Auto-Trade Network Error: ${err.message}`);
             }
-          } catch (err) {
-            setAlertToast(`⚠️ Auto-Trade Network Error: ${err.message}`);
           }
           setTimeout(() => setAlertToast(null), 9000);
         }
@@ -1576,6 +1634,12 @@ function App() {
                       const next = !autoTradeSignals;
                       setAutoTradeSignals(next);
                       saveLS('autoTradeSignals', next);
+                      const stratKey = activeSignalStrategies.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP';
+                      fetch('/api/scalper/bot/toggle', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ enabled: next, strategy: stratKey, lot_size: activeLotSize, symbol })
+                      }).catch(() => {});
                       fetch('/api/settings', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -1611,6 +1675,40 @@ function App() {
                       {autoTradeSignals ? 'ON' : 'OFF'}
                     </span>
                   </div>
+
+                  {/* AUTONOMOUS BACKEND BOT STATUS & MT5 WARNING */}
+                  {autoTradeSignals && (
+                    <div style={{
+                      padding: '8px 12px',
+                      background: 'rgba(0, 242, 254, 0.07)',
+                      borderTop: '1px solid rgba(0, 242, 254, 0.2)',
+                      borderBottom: '1px solid rgba(0, 242, 254, 0.2)',
+                      fontSize: 11,
+                      color: '#c9d1d9'
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: '#00f2fe' }}>
+                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#00f2fe', boxShadow: '0 0 6px #00f2fe' }} />
+                        <span>Autonomous Daemon: ACTIVE</span>
+                      </div>
+                      <div style={{ fontSize: 10.5, color: '#8b949e', marginTop: 3 }}>
+                        Monitoring 5M {symbol} 24/5 on backend directly. 2-Tranche split with Auto-BE at TP1.
+                      </div>
+                      {botStatus && botStatus.terminal_algo_trading === false && (
+                        <div style={{
+                          marginTop: 6,
+                          padding: '5px 8px',
+                          background: 'rgba(242, 54, 69, 0.15)',
+                          border: '1px solid rgba(242, 54, 69, 0.4)',
+                          borderRadius: 4,
+                          color: '#f87171',
+                          fontSize: 10.5,
+                          lineHeight: 1.3
+                        }}>
+                          ⚠️ MT5 AlgoTrading button is OFF in desktop terminal. Click the <strong>Algo Trading</strong> button in MT5 (must turn green) to allow execution.
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   <div style={{ height: 1, background: '#2a2e39', margin: '6px 0' }} />
 
