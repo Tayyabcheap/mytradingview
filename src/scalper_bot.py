@@ -285,6 +285,12 @@ class ScalperBot:
                     closed_bar_time = int(closed_bar["time"])
                     current_bar = rates[-1]
 
+                    if sym_state["last_bar_time"] == 0:
+                        # Initial sync on startup: record current bar timestamp to prevent firing stale historical bars
+                        sym_state["last_bar_time"] = closed_bar_time
+                        sym_state["scan_status"] = "SYNCED_AWAITING_BAR_CLOSE"
+                        continue
+
                     # Check if a new candle closed for this specific instrument
                     if closed_bar_time > sym_state["last_bar_time"]:
                         sym_state["last_bar_time"] = closed_bar_time
@@ -296,7 +302,7 @@ class ScalperBot:
                 logger.error(f"Error in multi-instrument worker loop: {e}", exc_info=True)
                 self.status_message = f"Error: {str(e)[:40]}"
 
-            self._stop_event.wait(3.0)
+            self._stop_event.wait(1.0)
 
     # ─────────────────────────────────────────────────────────────────────────
     # Closed Bar Setup Evaluator for a Specific Symbol
@@ -326,31 +332,7 @@ class ScalperBot:
 
         dt = datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc)
 
-        # Trigger execution if setup was pending from previous bar for this symbol
-        if sym_state["setup_state"] != 0:
-            next_entry = float(current_bar["open"])
-            strat_name = "Haider-Scalper-Enhanced" if self.strategy == "HAIDER_ENHANCED" else "Haider-Gold-Scalper"
-            if sym_state["setup_state"] == 1:  # SELL setup trigger
-                self._execute_signal(
-                    symbol=sym,
-                    signal_type="SELL",
-                    entry=next_entry,
-                    sl=sym_state["setup_sl"],
-                    tp1=sym_state["setup_tp"],
-                    strategy_name=strat_name
-                )
-            elif sym_state["setup_state"] == -1:  # BUY setup trigger
-                self._execute_signal(
-                    symbol=sym,
-                    signal_type="BUY",
-                    entry=next_entry,
-                    sl=sym_state["setup_sl"],
-                    tp1=sym_state["setup_tp"],
-                    strategy_name=strat_name
-                )
-            sym_state["setup_state"] = 0
-
-        # Evaluate current closed bar for new setup formation
+        # Evaluate current closed bar for signal setup
         if curr_atr is None or curr_rsi is None:
             return
 
@@ -376,41 +358,65 @@ class ScalperBot:
             is_sell = (c > o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi > self.rsi_sell_level)
             sl_buffer_mult = 1.0
 
+        strat_name = "Haider-Scalper-Enhanced" if self.strategy == "HAIDER_ENHANCED" else "Haider-Gold-Scalper"
+
         if is_sell:
+            entry = float(current_bar["open"])
+            tp1 = h - (crange * (self.target_level / 100.0))
+            sl = h + (curr_atr * sl_buffer_mult)
             sym_state["setup_state"] = 1
             sym_state["setup_high"] = h
             sym_state["setup_low"] = l
             sym_state["setup_range"] = crange
-            sym_state["setup_tp"] = h - (crange * (self.target_level / 100.0))
-            sym_state["setup_sl"] = h + (curr_atr * sl_buffer_mult)
+            sym_state["setup_tp"] = tp1
+            sym_state["setup_sl"] = sl
             sym_state["setup_bar_time"] = t
             sym_state["last_signal"] = {
                 "symbol": sym,
                 "type": "SELL",
                 "time": t,
                 "strategy": self.strategy,
-                "sl": sym_state["setup_sl"],
-                "tp1": sym_state["setup_tp"]
+                "sl": sl,
+                "tp1": tp1
             }
-            print(f"[SCALPER_BOT] >>> SELL Setup Formed on {sym} @ {c:.3f}! Primed for execution on next bar open.", flush=True)
+            print(f"[SCALPER_BOT] >>> SELL Signal on {sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
+            self._execute_signal(
+                symbol=sym,
+                signal_type="SELL",
+                entry=entry,
+                sl=sl,
+                tp1=tp1,
+                strategy_name=strat_name
+            )
 
         elif is_buy:
+            entry = float(current_bar["open"])
+            tp1 = l + (crange * (self.target_level / 100.0))
+            sl = l - (curr_atr * sl_buffer_mult)
             sym_state["setup_state"] = -1
             sym_state["setup_high"] = h
             sym_state["setup_low"] = l
             sym_state["setup_range"] = crange
-            sym_state["setup_tp"] = l + (crange * (self.target_level / 100.0))
-            sym_state["setup_sl"] = l - (curr_atr * sl_buffer_mult)
+            sym_state["setup_tp"] = tp1
+            sym_state["setup_sl"] = sl
             sym_state["setup_bar_time"] = t
             sym_state["last_signal"] = {
                 "symbol": sym,
                 "type": "BUY",
                 "time": t,
                 "strategy": self.strategy,
-                "sl": sym_state["setup_sl"],
-                "tp1": sym_state["setup_tp"]
+                "sl": sl,
+                "tp1": tp1
             }
-            print(f"[SCALPER_BOT] >>> BUY Setup Formed on {sym} @ {c:.3f}! Primed for execution on next bar open.", flush=True)
+            print(f"[SCALPER_BOT] >>> BUY Signal on {sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
+            self._execute_signal(
+                symbol=sym,
+                signal_type="BUY",
+                entry=entry,
+                sl=sl,
+                tp1=tp1,
+                strategy_name=strat_name
+            )
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2-Tranche Institutional Execution with Auto-BE Registration
@@ -506,7 +512,7 @@ class ScalperBot:
             )
 
     def _send_mt5_order(self, symbol: str, order_type_str: str, volume: float, sl: float, tp: float, comment: str) -> Optional[Dict[str, Any]]:
-        """Direct, thread-safe MT5 order submission."""
+        """Direct, thread-safe MT5 order submission with volume stepping, digits rounding, and filling fallbacks."""
         if not MT5_AVAILABLE:
             return None
 
@@ -520,44 +526,86 @@ class ScalperBot:
             if not s_info or not tick:
                 return None
 
-            price = float(tick.ask) if order_type_str == "BUY" else float(tick.bid)
+            is_gold = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
+            digits = int(s_info.digits) if (s_info and s_info.digits is not None) else (3 if is_gold else 5)
+
+            # Volume step rounding & broker min/max bounds checking
+            vol_min = float(s_info.volume_min or 0.01)
+            vol_max = float(s_info.volume_max or 100.0)
+            vol_step = float(s_info.volume_step or 0.01)
+            steps = round(volume / vol_step)
+            safe_volume = max(vol_min, min(vol_max, round(steps * vol_step, 2)))
+
+            price = round(float(tick.ask) if order_type_str == "BUY" else float(tick.bid), digits)
             action_type = mt5.ORDER_TYPE_BUY if order_type_str == "BUY" else mt5.ORDER_TYPE_SELL
 
-            # Filling mode
+            sl = round(sl, digits)
+            tp = round(tp, digits)
+
+            # Build prioritized list of valid filling modes for this broker symbol
             mode = s_info.filling_mode
-            filling = mt5.ORDER_FILLING_IOC
-            if mode & 2 or mode == 2: filling = mt5.ORDER_FILLING_IOC
-            elif mode & 1 or mode == 1: filling = mt5.ORDER_FILLING_FOK
-            elif mode & 4 or mode == 4: filling = mt5.ORDER_FILLING_RETURN
+            filling_candidates = []
+            if mode & 2 or mode == 2: filling_candidates.append(mt5.ORDER_FILLING_IOC)
+            if mode & 1 or mode == 1: filling_candidates.append(mt5.ORDER_FILLING_FOK)
+            if mode & 4 or mode == 4: filling_candidates.append(mt5.ORDER_FILLING_RETURN)
+            if not filling_candidates:
+                filling_candidates = [mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN, mt5.ORDER_FILLING_FOK]
 
-            req = {
-                "action": mt5.TRADE_ACTION_DEAL,
-                "symbol": symbol,
-                "volume": volume,
-                "type": action_type,
-                "price": price,
-                "sl": sl,
-                "tp": tp,
-                "deviation": 30,
-                "magic": 999333,  # ScalperBot magic number
-                "comment": comment[:31],
-                "type_time": mt5.ORDER_TIME_GTC,
-                "type_filling": filling,
-            }
+            done_codes = (mt5.TRADE_RETCODE_DONE, getattr(mt5, 'TRADE_RETCODE_PLACED', 10008))
 
-            res = mt5.order_send(req)
-            if res and res.retcode == mt5.TRADE_RETCODE_DONE:
-                return {
-                    "order": res.order,
-                    "deal": res.deal,
-                    "price": res.price or price,
-                    "retcode": res.retcode
+            for filling in filling_candidates:
+                req = {
+                    "action": mt5.TRADE_ACTION_DEAL,
+                    "symbol": symbol,
+                    "volume": safe_volume,
+                    "type": action_type,
+                    "price": price,
+                    "sl": sl,
+                    "tp": tp,
+                    "deviation": 30,
+                    "magic": 999333,  # ScalperBot magic number
+                    "comment": comment[:31],
+                    "type_time": mt5.ORDER_TIME_GTC,
+                    "type_filling": filling,
                 }
-            else:
+
+                res = mt5.order_send(req)
+                if res and res.retcode in done_codes:
+                    return {
+                        "order": res.order,
+                        "deal": res.deal,
+                        "price": res.price or price,
+                        "retcode": res.retcode
+                    }
+
+                # If rejected due to filling mode, immediately try next supported filling candidate
+                invalid_fill_code = getattr(mt5, 'TRADE_RETCODE_INVALID_FILL', 10030)
+                if res and res.retcode == invalid_fill_code:
+                    continue
+
+                # If fast price requote occurred, refresh tick and retry once
+                requote_codes = (getattr(mt5, 'TRADE_RETCODE_REQUOTE', 10004), getattr(mt5, 'TRADE_RETCODE_PRICE_CHANGED', 10020))
+                if res and res.retcode in requote_codes:
+                    fresh_tick = mt5.symbol_info_tick(symbol)
+                    if fresh_tick:
+                        fresh_px = round(float(fresh_tick.ask if order_type_str == "BUY" else fresh_tick.bid), digits)
+                        req["price"] = fresh_px
+                        retry_res = mt5.order_send(req)
+                        if retry_res and retry_res.retcode in done_codes:
+                            return {
+                                "order": retry_res.order,
+                                "deal": retry_res.deal,
+                                "price": retry_res.price or fresh_px,
+                                "retcode": retry_res.retcode
+                            }
+
+                # Other failure code
                 ret = res.retcode if res else "None"
                 comm = res.comment if res else "Unknown"
                 print(f"[SCALPER_BOT] Order failed on {symbol}: retcode={ret}, comment={comm}", flush=True)
                 return None
+
+            return None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Autonomous 1-Second Auto-Breakeven Engine Loop
@@ -604,15 +652,16 @@ class ScalperBot:
                             should_be = True
 
                         if should_be:
+                            digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
                             req = {
                                 "action": mt5.TRADE_ACTION_SLTP,
                                 "position": ticket,
                                 "symbol": pos.symbol,
-                                "sl": entry_px,
+                                "sl": round(entry_px, digits),
                                 "tp": float(pos.tp),
                             }
                             res = mt5.order_send(req)
-                            if res and res.retcode == mt5.TRADE_RETCODE_DONE:
+                            if res and res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, 'TRADE_RETCODE_PLACED', 10008)):
                                 trade["be_done"] = True
                                 print(f"[SCALPER_BOT:AUTO-BE] >>> Moved SL for #{ticket} ({pos.symbol}) to Breakeven @ {entry_px:.3f}!", flush=True)
                                 send_discord_alert(

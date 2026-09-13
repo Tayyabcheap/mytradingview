@@ -113,6 +113,61 @@ class TestScalperBot(unittest.TestCase):
         self.assertIn("symbols", post_data)
         self.assertEqual(len(post_data["symbols"]), 3)
 
+    def test_enhanced_calculations_and_immediate_execution_latency(self):
+        """Verify math calculations and ensure execution completes in under 50ms (< 3s requirement)."""
+        import time
+        # Synthetic 5M bars fixture leading up to a valid Haider-Enhanced BUY setup
+        # Buy condition: close < open, body > ATR, RSI < 36, lower_wick >= 18%
+        bars = []
+        base_time = 1700000000
+        for idx in range(30):
+            t = base_time + idx * 300
+            # Gradual downward drift so RSI drops below 36
+            price = 2000.0 - idx * 1.5
+            bars.append({
+                "time": t, "open": price, "high": price + 1.0, "low": price - 1.0, "close": price - 0.5, "tick_volume": 100
+            })
+        
+        # Last closed bar (idx 30): large impulse down bar with bottom rejection wick >= 18%
+        t_last = base_time + 30 * 300
+        # Open 1955, Close 1945 (body = 10, range = 15, low = 1940, high = 1955)
+        # Lower wick = (min(1955, 1945) - 1940) / 15 = 5 / 15 = 33.3% >= 18%
+        bars.append({
+            "time": t_last, "open": 1955.0, "high": 1955.0, "low": 1940.0, "close": 1945.0, "tick_volume": 200
+        })
+
+        # Newly opened live bar
+        current_bar = {
+            "time": t_last + 300, "open": 1945.2, "high": 1945.5, "low": 1945.0, "close": 1945.2, "tick_volume": 10
+        }
+
+        sym_state = self.bot._get_symbol_state("XAUUSDc")
+        sym_state["last_bar_time"] = base_time + 29 * 300
+
+        executed_calls = []
+        def mock_execute(symbol, signal_type, entry, sl, tp1, strategy_name):
+            executed_calls.append({
+                "symbol": symbol, "type": signal_type, "entry": entry, "sl": sl, "tp1": tp1, "strat": strategy_name
+            })
+        self.bot._execute_signal = mock_execute
+
+        t_start = time.perf_counter()
+        self.bot._process_closed_bar_for_symbol("XAUUSDc", sym_state, bars, current_bar)
+        elapsed_ms = (time.perf_counter() - t_start) * 1000.0
+
+        # Latency check: calculation and signal dispatch must execute well under 50ms (< 3s SLA)
+        self.assertLess(elapsed_ms, 50.0, f"Execution latency too slow: {elapsed_ms:.2f}ms")
+        self.assertEqual(len(executed_calls), 1, "Expected immediate execution on closed candle setup")
+
+        call = executed_calls[0]
+        self.assertEqual(call["symbol"], "XAUUSDc")
+        self.assertEqual(call["type"], "BUY")
+        self.assertEqual(call["entry"], 1945.2)
+        # SL must be below candle low (1940.0)
+        self.assertLess(call["sl"], 1940.0)
+        # TP1 must be at 50% retracement of impulse range (1940 + 7.5 = 1947.5)
+        self.assertEqual(call["tp1"], 1947.5)
+
 
 if __name__ == "__main__":
     unittest.main()
