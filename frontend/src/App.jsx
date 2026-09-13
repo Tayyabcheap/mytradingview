@@ -3,7 +3,7 @@ import {
   LineChart, Settings, Camera, Search, Maximize, X, 
   Bell, RotateCcw, ChevronDown, Download, Check, Zap, 
   TrendingUp, TrendingDown, Layers, LayoutDashboard, BookOpen, 
-  CandlestickChart, Plus, DollarSign, BarChart2, Award
+  CandlestickChart, Plus, DollarSign, BarChart2, Award, Sliders
 } from 'lucide-react';
 import TopTabBar from './components/TopTabBar';
 import DashboardTab from './components/DashboardTab';
@@ -17,6 +17,7 @@ import SupportResistanceTab from './components/SupportResistanceTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
 import SignalPerformanceModal from './components/SignalPerformanceModal';
+import ScalperPairSelectorModal from './components/ScalperPairSelectorModal';
 import UpdateModal from './components/UpdateModal';
 import QuantIntelligenceModal from './components/QuantIntelligenceModal';
 import { computeSignalSeries, scoreSignalSeries } from './components/signalCore';
@@ -278,6 +279,7 @@ function App() {
   const [showScreenerModal, setShowScreenerModal] = useState(false);
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showSignalPerformanceModal, setShowSignalPerformanceModal] = useState(false);
+  const [showPairSelectorModal, setShowPairSelectorModal] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showIntelligenceModal, setShowIntelligenceModal] = useState(false);
   const [appVersion, setAppVersion] = useState("v2.5.0");
@@ -395,9 +397,21 @@ function App() {
       .catch(() => {});
   }, []);
 
-  // Autonomous Scalper Bot state synchronization with backend daemon
+  // Autonomous Scalper Bot state synchronization with backend daemon (Multi-Symbol Concurrent Engine)
+  const [scalperSymbols, setScalperSymbols] = useState(() => loadLS('scalperSymbols', ['XAUUSDc']));
   const [botStatus, setBotStatus] = useState(null);
   useEffect(() => {
+    // Initial fetch of active symbols configured on backend
+    fetch('/api/scalper/bot/symbols')
+      .then(r => r.json())
+      .then(d => {
+        if (d && Array.isArray(d.symbols) && d.symbols.length > 0) {
+          setScalperSymbols(d.symbols);
+          saveLS('scalperSymbols', d.symbols);
+        }
+      })
+      .catch(() => {});
+
     const pollBotStatus = () => {
       fetch('/api/scalper/bot/status')
         .then(r => r.json())
@@ -407,6 +421,9 @@ function App() {
             if (typeof d.enabled === 'boolean') {
               setAutoTradeSignals(d.enabled);
             }
+            if (Array.isArray(d.symbols) && d.symbols.length > 0) {
+              setScalperSymbols(d.symbols);
+            }
           }
         })
         .catch(() => {});
@@ -415,6 +432,23 @@ function App() {
     const iv = setInterval(pollBotStatus, 6000);
     return () => clearInterval(iv);
   }, []);
+
+  const handleSaveScalperSymbols = async (newSymbols) => {
+    try {
+      const res = await fetch('/api/scalper/bot/symbols', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbols: newSymbols })
+      });
+      const data = await res.json();
+      if (data && data.symbols) {
+        setScalperSymbols(data.symbols);
+        saveLS('scalperSymbols', data.symbols);
+      }
+    } catch (err) {
+      console.error('Failed to update scalper symbols:', err);
+    }
+  };
 
   const chartRef = useRef();
   const replayTimerRef = useRef(null);
@@ -1628,6 +1662,88 @@ function App() {
 
                   <div style={{ height: 1, background: '#2a2e39', margin: '6px 0' }} />
 
+                  {/* MULTI-PAIR BACKGROUND SELECTOR FOR HAIDER-SCALPER-ENHANCED */}
+                  <div
+                    onClick={() => {
+                      setShowPairSelectorModal(true);
+                      setShowSignalsMenu(false);
+                    }}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 12.5,
+                      cursor: 'pointer',
+                      color: 'var(--text)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      background: 'rgba(0, 242, 254, 0.06)',
+                      borderTop: '1px solid rgba(0, 242, 254, 0.18)',
+                      borderBottom: '1px solid rgba(0, 242, 254, 0.18)',
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 242, 254, 0.14)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'rgba(0, 242, 254, 0.06)'}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                      <Sliders size={14} color="#00f2fe" />
+                      <div>
+                        <div style={{ fontWeight: 700, color: '#00f2fe', display: 'flex', alignItems: 'center', gap: 5 }}>
+                          Active Pairs ({scalperSymbols.length}/10)
+                          <span style={{ fontSize: 9, padding: '1px 5px', borderRadius: 3, background: 'rgba(0, 242, 254, 0.2)', color: '#00f2fe' }}>
+                            Background
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Continuous multi-symbol calculation</div>
+                      </div>
+                    </div>
+                    <div style={{
+                      fontSize: 10,
+                      fontWeight: 800,
+                      padding: '2px 7px',
+                      borderRadius: 3,
+                      background: 'rgba(0, 242, 254, 0.18)',
+                      color: '#00f2fe',
+                      border: '1px solid rgba(0, 242, 254, 0.4)'
+                    }}>
+                      CHOOSE
+                    </div>
+                  </div>
+
+                  {/* ACTIVE PAIR CHIPS SUMMARY */}
+                  <div style={{
+                    padding: '6px 12px 8px',
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 4,
+                    background: 'rgba(0,0,0,0.25)',
+                    borderBottom: '1px solid rgba(255,255,255,0.06)'
+                  }}>
+                    {scalperSymbols.map(sym => (
+                      <span
+                        key={sym}
+                        style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          padding: '1px 6px',
+                          borderRadius: 3,
+                          background: sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD')
+                            ? 'rgba(234, 179, 8, 0.2)'
+                            : 'rgba(59, 130, 246, 0.18)',
+                          color: sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD')
+                            ? '#fbbf24'
+                            : '#93c5fd',
+                          border: `1px solid ${
+                            sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD')
+                              ? 'rgba(234, 179, 8, 0.4)'
+                              : 'rgba(59, 130, 246, 0.35)'
+                          }`
+                        }}
+                      >
+                        {sym}
+                      </span>
+                    ))}
+                  </div>
+
                   {/* AUTO-TRADE TOGGLE */}
                   <div
                     onClick={() => {
@@ -1638,7 +1754,7 @@ function App() {
                       fetch('/api/scalper/bot/toggle', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: next, strategy: stratKey, lot_size: activeLotSize, symbol })
+                        body: JSON.stringify({ enabled: next, strategy: stratKey, lot_size: activeLotSize, symbols: scalperSymbols })
                       }).catch(() => {});
                       fetch('/api/settings', {
                         method: 'POST',
@@ -1686,12 +1802,17 @@ function App() {
                       fontSize: 11,
                       color: '#c9d1d9'
                     }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: '#00f2fe' }}>
-                        <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#00f2fe', boxShadow: '0 0 6px #00f2fe' }} />
-                        <span>Autonomous Daemon: ACTIVE</span>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: '#00f2fe' }}>
+                          <span style={{ width: 7, height: 7, borderRadius: '50%', background: '#00f2fe', boxShadow: '0 0 6px #00f2fe' }} />
+                          <span>Autonomous Daemon: ACTIVE</span>
+                        </div>
+                        <span style={{ fontSize: 10, color: '#8b949e', fontWeight: 600 }}>
+                          {scalperSymbols.length}/10 Active
+                        </span>
                       </div>
                       <div style={{ fontSize: 10.5, color: '#8b949e', marginTop: 3 }}>
-                        Monitoring 5M {symbol} 24/5 on backend directly. 2-Tranche split with Auto-BE at TP1.
+                        Calculating 5M across all {scalperSymbols.length} pairs in background simultaneously. 2-Tranche split with Auto-BE at TP1.
                       </div>
                       {botStatus && botStatus.terminal_algo_trading === false && (
                         <div style={{
@@ -2425,6 +2546,15 @@ function App() {
         onClose={() => setShowSignalPerformanceModal(false)}
         activeSignalStrategies={activeSignalStrategies}
         onToggleStrategy={handleToggleSignalStrategy}
+      />
+
+      {/* SCALPER PAIR SELECTOR MODAL (MULTI-SYMBOL BACKGROUND ENGINE) */}
+      <ScalperPairSelectorModal
+        isOpen={showPairSelectorModal}
+        onClose={() => setShowPairSelectorModal(false)}
+        activeSymbols={scalperSymbols}
+        availableSymbols={symbols}
+        onSaveSymbols={handleSaveScalperSymbols}
       />
 
       {/* CHECK FOR UPDATES MODAL */}

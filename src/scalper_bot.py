@@ -1,8 +1,10 @@
 """
-Autonomous MT5 Scalper Execution Daemon
-=======================================
-Server-side background engine that monitors 5M bars directly from MetaTrader 5,
-evaluates closed bars using Haider-Scalper-Enhanced (and Haider-Gold-Scalper),
+Autonomous MT5 Scalper Execution Daemon (Multi-Instrument Engine)
+=================================================================
+Server-side background engine that monitors 5M bars directly from MetaTrader 5
+across up to 10 selected currency pairs / instruments simultaneously.
+
+Evaluates closed bars using Haider-Scalper-Enhanced (and Haider-Gold-Scalper),
 and autonomously executes 2-tranche scaling trades with dynamic Auto-Breakeven at TP1.
 
 Operates 24/5 completely independent of the browser frontend.
@@ -29,6 +31,9 @@ from notifications import send_discord_alert
 logger = logging.getLogger("scalper_bot")
 logger.setLevel(logging.INFO)
 
+MAX_INSTRUMENTS = 10
+DEFAULT_SYMBOLS = ["XAUUSDc"]
+
 
 class ScalperBot:
     def __init__(self, store=None, mt5_lock: Optional[threading.RLock] = None):
@@ -38,7 +43,8 @@ class ScalperBot:
         # Configuration
         self.enabled = False
         self.strategy = "HAIDER_ENHANCED"  # "HAIDER_ENHANCED" or "REAL_DIP"
-        self.symbol = "XAUUSD"
+        self.symbols = list(DEFAULT_SYMBOLS)
+        self.max_instruments = MAX_INSTRUMENTS
         self.timeframe_str = "5M"
         self.lot_size = 0.10
         self.max_gold_lot = 1.0  # Mandatory safety cap: <= 1.0 lot on Gold
@@ -50,7 +56,7 @@ class ScalperBot:
         self.rsi_buy_level = 36.0
         self.rsi_sell_level = 64.0
         self.target_level = 50.0
-        self.sl_buffer = 1.35  # Anti-Hunt Buffer
+        self.sl_buffer = 1.35  # Anti-Hunt Buffer (1.35x ATR)
         self.min_wick_ratio = 0.18  # Rejection Wick confirmation (>= 18%)
         self.skip_rollover = True   # Spread defense 21:00-22:30 UTC
         
@@ -60,20 +66,12 @@ class ScalperBot:
         self._worker_thread: Optional[threading.Thread] = None
         self._autobe_thread: Optional[threading.Thread] = None
         
-        self.last_bar_time = 0
-        self.last_signal: Optional[Dict[str, Any]] = None
-        self.last_trade: Optional[Dict[str, Any]] = None
         self.status_message = "INITIALIZING"
         self.active_bot_orders: Dict[int, Dict[str, Any]] = {}
+        self.last_trade: Optional[Dict[str, Any]] = None
         
-        # Pending setup state between bar close and next bar trigger
-        self.setup_state = 0  # 1 = SELL setup formed, -1 = BUY setup formed
-        self.setup_high = 0.0
-        self.setup_low = 0.0
-        self.setup_range = 0.0
-        self.setup_tp = 0.0
-        self.setup_sl = 0.0
-        self.setup_bar_time = 0
+        # Per-symbol state tracking: symbol -> state dict
+        self.symbol_states: Dict[str, Dict[str, Any]] = {}
 
         # Load persisted settings if store available
         if self.store:
@@ -83,9 +81,34 @@ class ScalperBot:
                     self.enabled = bool(saved.get("enabled", False))
                     self.strategy = saved.get("strategy", "HAIDER_ENHANCED")
                     self.lot_size = float(saved.get("lot_size", 0.10))
-                    self.symbol = saved.get("symbol", "XAUUSD")
+                    saved_syms = saved.get("symbols")
+                    if isinstance(saved_syms, list) and len(saved_syms) > 0:
+                        self.symbols = [str(s).strip() for s in saved_syms if s][:MAX_INSTRUMENTS]
+                    elif saved.get("symbol"):
+                        self.symbols = [str(saved.get("symbol")).strip()]
             except Exception as e:
                 logger.warning(f"Failed to load bot settings: {e}")
+
+        # Ensure at least 1 symbol
+        if not self.symbols:
+            self.symbols = list(DEFAULT_SYMBOLS)
+
+    def _get_symbol_state(self, sym: str) -> Dict[str, Any]:
+        if sym not in self.symbol_states:
+            self.symbol_states[sym] = {
+                "last_bar_time": 0,
+                "setup_state": 0,  # 1 = SELL setup, -1 = BUY setup
+                "setup_high": 0.0,
+                "setup_low": 0.0,
+                "setup_range": 0.0,
+                "setup_tp": 0.0,
+                "setup_sl": 0.0,
+                "setup_bar_time": 0,
+                "last_signal": None,
+                "last_scanned_at": 0,
+                "scan_status": "PENDING"
+            }
+        return self.symbol_states[sym]
 
     def start(self):
         """Start the background daemon threads."""
@@ -95,23 +118,25 @@ class ScalperBot:
         self.is_running = True
         self.status_message = "RUNNING"
         
-        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True, name="ScalperBot-Worker")
+        self._worker_thread = threading.Thread(target=self._worker_loop, daemon=True, name="ScalperBot-MultiWorker")
         self._worker_thread.start()
         
         self._autobe_thread = threading.Thread(target=self._autobe_loop, daemon=True, name="ScalperBot-AutoBE")
         self._autobe_thread.start()
-        print(f"[SCALPER_BOT] >>> Autonomous MT5 Execution Daemon started for {self.symbol} (Strategy: {self.strategy})", flush=True)
+        syms_str = ", ".join(self.symbols)
+        print(f"[SCALPER_BOT] >>> Autonomous Multi-Instrument Scalper Daemon started for [{syms_str}] (Strategy: {self.strategy})", flush=True)
 
     def stop(self):
         """Stop the background daemon threads."""
         self.is_running = False
         self._stop_event.set()
         self.status_message = "STOPPED"
-        print("[SCALPER_BOT] <<< Autonomous MT5 Execution Daemon stopped.", flush=True)
+        print("[SCALPER_BOT] <<< Autonomous Scalper Daemon stopped.", flush=True)
 
     def configure(self, enabled: Optional[bool] = None, strategy: Optional[str] = None,
-                  lot_size: Optional[float] = None, symbol: Optional[str] = None):
-        """Update bot configuration and persist."""
+                  lot_size: Optional[float] = None, symbol: Optional[str] = None,
+                  symbols: Optional[List[str]] = None) -> Dict[str, Any]:
+        """Update bot configuration, active pairs (up to 10), and persist."""
         if enabled is not None:
             self.enabled = bool(enabled)
         if strategy in ("HAIDER_ENHANCED", "REAL_DIP"):
@@ -120,8 +145,18 @@ class ScalperBot:
             # Strictly cap Gold at 1.0
             val = max(0.01, min(self.max_gold_lot, float(lot_size)))
             self.lot_size = round(val, 2)
-        if symbol:
-            self.symbol = symbol
+        if symbols is not None and isinstance(symbols, list):
+            cleaned = []
+            for s in symbols:
+                s_str = str(s).strip()
+                if s_str and s_str not in cleaned:
+                    cleaned.append(s_str)
+            if cleaned:
+                self.symbols = cleaned[:MAX_INSTRUMENTS]
+        elif symbol:
+            s_clean = str(symbol).strip()
+            if s_clean and s_clean not in self.symbols:
+                self.symbols = [s_clean] + [x for x in self.symbols if x != s_clean][:MAX_INSTRUMENTS - 1]
 
         if self.store:
             try:
@@ -129,7 +164,8 @@ class ScalperBot:
                     "enabled": self.enabled,
                     "strategy": self.strategy,
                     "lot_size": self.lot_size,
-                    "symbol": self.symbol
+                    "symbols": self.symbols,
+                    "symbol": self.symbols[0] if self.symbols else "XAUUSDc"
                 })
             except Exception:
                 pass
@@ -156,12 +192,27 @@ class ScalperBot:
 
         ready_to_trade = self.enabled and self.is_running and mt5_connected and algo_allowed and account_trade_allowed
 
+        # Compile per-symbol summary
+        per_symbol_telemetry = {}
+        for sym in self.symbols:
+            st = self._get_symbol_state(sym)
+            per_symbol_telemetry[sym] = {
+                "last_bar_time": st["last_bar_time"],
+                "last_bar_time_str": datetime.datetime.fromtimestamp(st["last_bar_time"]).strftime("%Y-%m-%d %H:%M:%S") if st["last_bar_time"] else "None",
+                "setup_state": st["setup_state"],
+                "last_signal": st["last_signal"],
+                "scan_status": st["scan_status"]
+            }
+
         return {
             "is_running": self.is_running,
             "enabled": self.enabled,
             "ready_to_trade": ready_to_trade,
             "strategy": self.strategy,
-            "symbol": self.symbol,
+            "symbols": self.symbols,
+            "symbol": self.symbols[0] if self.symbols else "XAUUSDc",
+            "active_pairs_count": len(self.symbols),
+            "max_instruments": self.max_instruments,
             "timeframe": self.timeframe_str,
             "lot_size": self.lot_size,
             "max_gold_lot": self.max_gold_lot,
@@ -169,16 +220,14 @@ class ScalperBot:
             "terminal_algo_trading": algo_allowed,
             "account_trade_allowed": account_trade_allowed,
             "status_message": self.status_message,
-            "last_bar_time": self.last_bar_time,
-            "last_bar_time_str": datetime.datetime.fromtimestamp(self.last_bar_time).strftime("%Y-%m-%d %H:%M:%S") if self.last_bar_time else "None",
-            "last_signal": self.last_signal,
+            "per_symbol": per_symbol_telemetry,
             "last_trade": self.last_trade,
             "active_orders_count": len(self.active_bot_orders),
             "active_orders": list(self.active_bot_orders.values())
         }
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Background Worker Loop: Evaluates 5M Bar Closes
+    # Background Worker Loop: Iterates over all active instruments
     # ─────────────────────────────────────────────────────────────────────────
     def _worker_loop(self):
         while not self._stop_event.is_set():
@@ -211,36 +260,48 @@ class ScalperBot:
                         self._stop_event.wait(5.0)
                         continue
 
-                    # Fetch live 5M rates from MT5
-                    rates = mt5.copy_rates_from_pos(self.symbol, mt5.TIMEFRAME_M5, 0, 100)
+                # Iterate through all configured instruments
+                active_syms = list(self.symbols)
+                for sym in active_syms:
+                    if self._stop_event.is_set() or not self.enabled:
+                        break
 
-                if rates is None or len(rates) < 40:
-                    self.status_message = f"Waiting for {self.symbol} 5M rates from MT5..."
-                    self._stop_event.wait(3.0)
-                    continue
+                    sym_state = self._get_symbol_state(sym)
+                    with self.mt5_lock:
+                        if not mt5.symbol_select(sym, True):
+                            sym_state["scan_status"] = "SYMBOL_NOT_FOUND"
+                            continue
+                        rates = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 100)
 
-                # Bar -1 is currently forming live bar. Bar -2 is the most recently CLOSED bar.
-                closed_bar = rates[-2]
-                closed_bar_time = int(closed_bar["time"])
-                current_bar = rates[-1]
+                    if rates is None or len(rates) < 40:
+                        sym_state["scan_status"] = "WAITING_FOR_DATA"
+                        continue
 
-                # Check if a new candle just closed
-                if closed_bar_time > self.last_bar_time:
-                    self.last_bar_time = closed_bar_time
-                    self._process_closed_bar(rates[:-1], current_bar)
+                    sym_state["last_scanned_at"] = int(time.time())
+                    sym_state["scan_status"] = "SCANNING_OK"
 
-                self.status_message = f"ACTIVE: Monitoring 5M {self.symbol} (Last closed bar: {datetime.datetime.fromtimestamp(closed_bar_time).strftime('%H:%M')})"
+                    # Bar -1 is currently forming live bar. Bar -2 is the most recently CLOSED bar.
+                    closed_bar = rates[-2]
+                    closed_bar_time = int(closed_bar["time"])
+                    current_bar = rates[-1]
+
+                    # Check if a new candle closed for this specific instrument
+                    if closed_bar_time > sym_state["last_bar_time"]:
+                        sym_state["last_bar_time"] = closed_bar_time
+                        self._process_closed_bar_for_symbol(sym, sym_state, rates[:-1], current_bar)
+
+                self.status_message = f"ACTIVE: Monitoring {len(active_syms)} Pairs simultaneously on 5M"
 
             except Exception as e:
-                logger.error(f"Error in scalper bot worker loop: {e}", exc_info=True)
+                logger.error(f"Error in multi-instrument worker loop: {e}", exc_info=True)
                 self.status_message = f"Error: {str(e)[:40]}"
 
             self._stop_event.wait(3.0)
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Closed Bar Setup Evaluator
+    # Closed Bar Setup Evaluator for a Specific Symbol
     # ─────────────────────────────────────────────────────────────────────────
-    def _process_closed_bar(self, closed_rates, current_bar):
+    def _process_closed_bar_for_symbol(self, sym: str, sym_state: Dict[str, Any], closed_rates, current_bar):
         n = len(closed_rates)
         if n < 20:
             return
@@ -265,26 +326,29 @@ class ScalperBot:
 
         dt = datetime.datetime.fromtimestamp(t, tz=datetime.timezone.utc)
 
-        # Trigger execution if setup was pending from previous bar
-        if self.setup_state != 0:
+        # Trigger execution if setup was pending from previous bar for this symbol
+        if sym_state["setup_state"] != 0:
             next_entry = float(current_bar["open"])
-            if self.setup_state == 1:  # SELL setup trigger
+            strat_name = "Haider-Scalper-Enhanced" if self.strategy == "HAIDER_ENHANCED" else "Haider-Gold-Scalper"
+            if sym_state["setup_state"] == 1:  # SELL setup trigger
                 self._execute_signal(
+                    symbol=sym,
                     signal_type="SELL",
                     entry=next_entry,
-                    sl=self.setup_sl,
-                    tp1=self.setup_tp,
-                    strategy_name="Haider-Scalper-Enhanced" if self.strategy == "HAIDER_ENHANCED" else "Haider-Gold-Scalper"
+                    sl=sym_state["setup_sl"],
+                    tp1=sym_state["setup_tp"],
+                    strategy_name=strat_name
                 )
-            elif self.setup_state == -1:  # BUY setup trigger
+            elif sym_state["setup_state"] == -1:  # BUY setup trigger
                 self._execute_signal(
+                    symbol=sym,
                     signal_type="BUY",
                     entry=next_entry,
-                    sl=self.setup_sl,
-                    tp1=self.setup_tp,
-                    strategy_name="Haider-Scalper-Enhanced" if self.strategy == "HAIDER_ENHANCED" else "Haider-Gold-Scalper"
+                    sl=sym_state["setup_sl"],
+                    tp1=sym_state["setup_tp"],
+                    strategy_name=strat_name
                 )
-            self.setup_state = 0
+            sym_state["setup_state"] = 0
 
         # Evaluate current closed bar for new setup formation
         if curr_atr is None or curr_rsi is None:
@@ -313,48 +377,54 @@ class ScalperBot:
             sl_buffer_mult = 1.0
 
         if is_sell:
-            self.setup_state = 1
-            self.setup_high = h
-            self.setup_low = l
-            self.setup_range = crange
-            self.setup_tp = h - (crange * (self.target_level / 100.0))
-            self.setup_sl = h + (curr_atr * sl_buffer_mult)
-            self.setup_bar_time = t
-            self.last_signal = {
+            sym_state["setup_state"] = 1
+            sym_state["setup_high"] = h
+            sym_state["setup_low"] = l
+            sym_state["setup_range"] = crange
+            sym_state["setup_tp"] = h - (crange * (self.target_level / 100.0))
+            sym_state["setup_sl"] = h + (curr_atr * sl_buffer_mult)
+            sym_state["setup_bar_time"] = t
+            sym_state["last_signal"] = {
+                "symbol": sym,
                 "type": "SELL",
                 "time": t,
                 "strategy": self.strategy,
-                "sl": self.setup_sl,
-                "tp1": self.setup_tp
+                "sl": sym_state["setup_sl"],
+                "tp1": sym_state["setup_tp"]
             }
-            print(f"[SCALPER_BOT] >>> SELL Setup Formed on {self.symbol} @ {c:.3f}! Primed for execution on next bar open.", flush=True)
+            print(f"[SCALPER_BOT] >>> SELL Setup Formed on {sym} @ {c:.3f}! Primed for execution on next bar open.", flush=True)
 
         elif is_buy:
-            self.setup_state = -1
-            self.setup_high = h
-            self.setup_low = l
-            self.setup_range = crange
-            self.setup_tp = l + (crange * (self.target_level / 100.0))
-            self.setup_sl = l - (curr_atr * sl_buffer_mult)
-            self.setup_bar_time = t
-            self.last_signal = {
+            sym_state["setup_state"] = -1
+            sym_state["setup_high"] = h
+            sym_state["setup_low"] = l
+            sym_state["setup_range"] = crange
+            sym_state["setup_tp"] = l + (crange * (self.target_level / 100.0))
+            sym_state["setup_sl"] = l - (curr_atr * sl_buffer_mult)
+            sym_state["setup_bar_time"] = t
+            sym_state["last_signal"] = {
+                "symbol": sym,
                 "type": "BUY",
                 "time": t,
                 "strategy": self.strategy,
-                "sl": self.setup_sl,
-                "tp1": self.setup_tp
+                "sl": sym_state["setup_sl"],
+                "tp1": sym_state["setup_tp"]
             }
-            print(f"[SCALPER_BOT] >>> BUY Setup Formed on {self.symbol} @ {c:.3f}! Primed for execution on next bar open.", flush=True)
+            print(f"[SCALPER_BOT] >>> BUY Setup Formed on {sym} @ {c:.3f}! Primed for execution on next bar open.", flush=True)
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2-Tranche Institutional Execution with Auto-BE Registration
     # ─────────────────────────────────────────────────────────────────────────
-    def _execute_signal(self, signal_type: str, entry: float, sl: float, tp1: float, strategy_name: str):
+    def _execute_signal(self, symbol: str, signal_type: str, entry: float, sl: float, tp1: float, strategy_name: str):
         # Strict user risk constraint: Gold lot size <= 1.0
-        total_lot = min(self.max_gold_lot, max(0.01, self.lot_size))
+        is_gold = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
+        raw_lot = self.lot_size
+        total_lot = min(self.max_gold_lot, raw_lot) if is_gold else raw_lot
+        total_lot = max(0.01, round(total_lot, 2))
+
         direction = 1 if signal_type == "BUY" else -1
         t_dist = abs(tp1 - entry)
-        tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.01, entry - t_dist * 2.2)
+        tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.001, entry - t_dist * 2.2)
 
         # Tranche volume calculation
         if total_lot >= 0.02 and self.strategy == "HAIDER_ENHANCED":
@@ -372,23 +442,23 @@ class ScalperBot:
         executed_orders = []
         for plan in orders_to_place:
             res = self._send_mt5_order(
-                symbol=self.symbol,
+                symbol=symbol,
                 order_type_str=signal_type,
                 volume=plan["vol"],
-                sl=round(sl, 3),
-                tp=round(plan["tp"], 3),
+                sl=round(sl, 3 if is_gold else 5),
+                tp=round(plan["tp"], 3 if is_gold else 5),
                 comment=plan["comment"]
             )
             if res and res.get("order"):
                 ticket = res["order"]
                 trade_info = {
                     "ticket": ticket,
-                    "symbol": self.symbol,
+                    "symbol": symbol,
                     "type": signal_type,
                     "volume": plan["vol"],
                     "entry_price": res.get("price", entry),
-                    "sl": round(sl, 3),
-                    "tp": round(plan["tp"], 3),
+                    "sl": round(sl, 3 if is_gold else 5),
+                    "tp": round(plan["tp"], 3 if is_gold else 5),
                     "is_runner": plan.get("is_runner", False),
                     "auto_be_target": plan.get("auto_be_target"),
                     "be_done": False,
@@ -403,12 +473,12 @@ class ScalperBot:
                     try:
                         from app import AUTO_BE_TRACKER
                         AUTO_BE_TRACKER[ticket] = {
-                            "symbol": self.symbol,
+                            "symbol": symbol,
                             "type": signal_type,
                             "open_price": res.get("price", entry),
                             "tp1": plan["auto_be_target"],
-                            "tp": round(plan["tp"], 3),
-                            "sl": round(sl, 3),
+                            "tp": round(plan["tp"], 3 if is_gold else 5),
+                            "sl": round(sl, 3 if is_gold else 5),
                             "be_done": False
                         }
                     except Exception:
@@ -418,15 +488,15 @@ class ScalperBot:
             self.last_trade = {
                 "time": int(time.time()),
                 "signal_type": signal_type,
-                "symbol": self.symbol,
+                "symbol": symbol,
                 "strategy": strategy_name,
                 "orders": executed_orders
             }
-            summary_msg = f"⚡ Autonomous MT5 Execution: Opened {len(executed_orders)} Tranche(s) for {signal_type} {self.symbol} (Total {total_lot} Lots, SL: {sl:.3f}, TP1: {tp1:.3f})"
+            summary_msg = f"⚡ Autonomous MT5 Execution: Opened {len(executed_orders)} Tranche(s) for {signal_type} {symbol} (Total {total_lot} Lots, SL: {sl:.3f}, TP1: {tp1:.3f})"
             print(f"[SCALPER_BOT] >>> {summary_msg}", flush=True)
 
             send_discord_alert(
-                title=f"🤖 Autonomous Scalper Trade: {signal_type} {self.symbol}",
+                title=f"🤖 Autonomous Scalper Trade: {signal_type} {symbol}",
                 description=f"Executed **{len(executed_orders)} Tranche(s)** on MetaTrader 5 without user interference.\n"
                             f"• Total Volume: `{total_lot:.2f} lots`\n"
                             f"• Stop Loss: `{sl:.3f}`\n"
@@ -486,14 +556,14 @@ class ScalperBot:
             else:
                 ret = res.retcode if res else "None"
                 comm = res.comment if res else "Unknown"
-                print(f"[SCALPER_BOT] Order failed: retcode={ret}, comment={comm}", flush=True)
+                print(f"[SCALPER_BOT] Order failed on {symbol}: retcode={ret}, comment={comm}", flush=True)
                 return None
 
     # ─────────────────────────────────────────────────────────────────────────
     # Autonomous 1-Second Auto-Breakeven Engine Loop
     # ─────────────────────────────────────────────────────────────────────────
     def _autobe_loop(self):
-        """Continuous high-frequency tick monitor for Auto-BE on Tranche 2 runners."""
+        """Continuous high-frequency tick monitor for Auto-BE on Tranche 2 runners across all symbols."""
         while not self._stop_event.is_set():
             try:
                 if not self.active_bot_orders or not MT5_AVAILABLE:
@@ -547,7 +617,7 @@ class ScalperBot:
                                 print(f"[SCALPER_BOT:AUTO-BE] >>> Moved SL for #{ticket} ({pos.symbol}) to Breakeven @ {entry_px:.3f}!", flush=True)
                                 send_discord_alert(
                                     title=f"🛡️ Auto-Breakeven Activated: #{ticket} ({pos.symbol})",
-                                    description=f"Tranche 2 Runner hit TP1 target `{target_tp1:.3f}`. Stop Loss automatically moved to Breakeven (`{entry_px:.3f}`). Trade is now 100% risk-free!",
+                                    description=f"Tranche 2 Runner hit TP1 target `{target_tp1:.3f}` on **{pos.symbol}**. Stop Loss automatically moved to Breakeven (`{entry_px:.3f}`). Trade is now 100% risk-free!",
                                     color=0x089981
                                 )
             except Exception as e:

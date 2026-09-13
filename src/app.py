@@ -1428,13 +1428,34 @@ def scalper_bot_toggle():
     strategy = data.get("strategy")
     lot_size = data.get("lot_size")
     symbol = data.get("symbol")
+    symbols = data.get("symbols")
     
-    # Auto-align broker symbol if passed
+    # Auto-align broker symbols if passed
     if symbol:
         symbol = resolve_broker_symbol(symbol)
+    if symbols and isinstance(symbols, list):
+        symbols = [resolve_broker_symbol(s) for s in symbols if s]
     
-    res = bot.configure(enabled=enabled, strategy=strategy, lot_size=lot_size, symbol=symbol)
+    res = bot.configure(enabled=enabled, strategy=strategy, lot_size=lot_size, symbol=symbol, symbols=symbols)
     return jsonify(res)
+
+
+@app.route("/api/scalper/bot/symbols", methods=["GET", "POST"])
+def scalper_bot_symbols():
+    """Get or update active currency pairs / instruments for autonomous execution (up to 10)."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        raw_symbols = data.get("symbols", [])
+        resolved = [resolve_broker_symbol(s) for s in raw_symbols if s]
+        res = bot.configure(symbols=resolved)
+        return jsonify(res)
+    return jsonify({
+        "symbols": bot.symbols,
+        "max_instruments": bot.max_instruments,
+        "active_pairs_count": len(bot.symbols)
+    })
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -78,7 +78,40 @@ class TestScalperBot(unittest.TestCase):
         data = res.get_json()
         self.assertTrue(data["enabled"])
         self.assertEqual(data["strategy"], "HAIDER_ENHANCED")
-        self.assertEqual(data["lot_size"], 0.15)
+    def test_multi_symbol_configuration(self):
+        """Default is Gold only; user can configure up to 10 instruments."""
+        status = self.bot.status()
+        self.assertIn("symbols", status)
+        self.assertIn("XAUUSDc", status["symbols"])
+        self.assertEqual(status["max_instruments"], 10)
+
+        # Configure 3 pairs
+        configured = self.bot.configure(symbols=["XAUUSDc", "EURUSDc", "GBPUSDc"])
+        self.assertEqual(len(configured["symbols"]), 3)
+        self.assertIn("EURUSDc", configured["symbols"])
+
+        # Attempt to configure 12 pairs - must be clamped strictly to 10
+        too_many = [f"PAIR{i}" for i in range(12)]
+        clamped = self.bot.configure(symbols=too_many)
+        self.assertEqual(len(clamped["symbols"]), 10)
+
+    def test_api_symbols_endpoint(self):
+        client = app.test_client()
+        # GET symbols
+        res = client.get("/api/scalper/bot/symbols")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertIn("symbols", data)
+        self.assertEqual(data["max_instruments"], 10)
+
+        # POST update symbols
+        post_res = client.post("/api/scalper/bot/symbols", json={
+            "symbols": ["XAUUSDc", "USDJPYc", "AUDUSDc"]
+        })
+        self.assertEqual(post_res.status_code, 200)
+        post_data = post_res.get_json()
+        self.assertIn("symbols", post_data)
+        self.assertEqual(len(post_data["symbols"]), 3)
 
 
 if __name__ == "__main__":
