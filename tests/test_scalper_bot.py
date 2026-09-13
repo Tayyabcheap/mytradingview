@@ -168,6 +168,24 @@ class TestScalperBot(unittest.TestCase):
         # TP1 must be at 50% retracement of impulse range (1940 + 7.5 = 1947.5)
         self.assertEqual(call["tp1"], 1947.5)
 
+    def test_clean_base_symbol(self):
+        from symbol_utils import clean_base_symbol
+        self.assertEqual(clean_base_symbol("BTCUSDc"), "BTCUSD")
+        self.assertEqual(clean_base_symbol("BTCUSDm"), "BTCUSD")
+        self.assertEqual(clean_base_symbol("XAUUSD.m"), "XAUUSD")
+        self.assertEqual(clean_base_symbol("EURUSD_i"), "EURUSD")
+        self.assertEqual(clean_base_symbol("GBPUSDpro"), "GBPUSD")
+        self.assertEqual(clean_base_symbol("USDJPYraw"), "USDJPY")
+        self.assertEqual(clean_base_symbol("BTCUSD"), "BTCUSD")
+
+    def test_multi_instrument_telemetry_broker_symbol(self):
+        self.bot.configure(symbols=["BTCUSDc", "XAUUSDc"])
+        status = self.bot.status()
+        self.assertIn("BTCUSDc", status["per_symbol"])
+        self.assertIn("XAUUSDc", status["per_symbol"])
+        self.assertIn("broker_symbol", status["per_symbol"]["BTCUSDc"])
+
 
 if __name__ == "__main__":
     unittest.main()
+

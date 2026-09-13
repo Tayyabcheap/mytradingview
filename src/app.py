@@ -132,6 +132,8 @@ def get_filling_mode(symbol_info):
         return mt5.ORDER_FILLING_RETURN
     return mt5.ORDER_FILLING_IOC
 
+from symbol_utils import resolve_broker_symbol as _resolve_broker_symbol, clean_base_symbol
+
 def resolve_broker_symbol(symbol: str) -> str:
     """Find the exact matching symbol in MT5, handling broker suffix variations
     (e.g., XAUUSD vs XAUUSDc vs XAUUSDm vs XAUUSD.m)."""
@@ -139,55 +141,8 @@ def resolve_broker_symbol(symbol: str) -> str:
         return symbol
     if not init_mt5():
         return symbol
+    return _resolve_broker_symbol(symbol, mt5_lock=mt5_lock)
 
-    with mt5_lock:
-        # 1. Exact match
-        info = mt5.symbol_info(symbol)
-        if info is not None:
-            if not info.visible:
-                mt5.symbol_select(symbol, True)
-            return symbol
-
-        # 2. Try clean base symbol and common broker suffixes
-        base = symbol
-        for suffix in ["c", "m", ".m", ".c", "_i", "k", "pro", "raw", "m.raw", "c.raw"]:
-            if symbol.lower().endswith(suffix):
-                base = symbol[:-len(suffix)]
-                break
-
-        candidates = [
-            base,
-            base + "m",
-            base + "c",
-            base + ".m",
-            base + ".c",
-            base + "_i",
-            base + "k",
-            base + "m.raw",
-            base + "c.raw",
-        ]
-        for cand in candidates:
-            info = mt5.symbol_info(cand)
-            if info is not None:
-                if not info.visible:
-                    mt5.symbol_select(cand, True)
-                return cand
-
-        # 3. Search all available broker symbols for a match
-        try:
-            all_syms = mt5.symbols_get()
-            if all_syms:
-                base_upper = base.upper()
-                for s in all_syms:
-                    s_up = s.name.upper()
-                    if s_up == base_upper or s_up.startswith(base_upper):
-                        if not s.visible:
-                            mt5.symbol_select(s.name, True)
-                        return s.name
-        except Exception:
-            pass
-
-        return symbol
 
 @app.route("/api/account", methods=["GET"])
 def get_account():

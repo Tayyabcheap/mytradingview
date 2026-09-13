@@ -49,22 +49,26 @@ export default function ScalperPairSelectorModal({
 
   if (!isOpen) return null;
 
+  const cleanBase = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
+
   // Match broker symbols if available
   const matchBrokerSymbol = (target) => {
     if (!availableSymbols || !availableSymbols.length) return target;
+    const baseTarget = cleanBase(target);
     const found = availableSymbols.find(s => {
       const name = (s.name || s).toUpperCase();
-      return name === target.toUpperCase() || name.startsWith(target.toUpperCase().slice(0, 6));
+      return name === target.toUpperCase() || cleanBase(name) === baseTarget;
     });
     return found ? (found.name || found) : target;
   };
 
   const handleToggleSymbol = (sym) => {
-    const isSelected = selected.includes(sym);
+    const symBase = cleanBase(sym);
+    const isSelected = selected.some(s => s === sym || cleanBase(s) === symBase);
     if (isSelected) {
       // Must keep at least 1 instrument active
       if (selected.length <= 1) return;
-      setSelected(prev => prev.filter(s => s !== sym));
+      setSelected(prev => prev.filter(s => s !== sym && cleanBase(s) !== symBase));
     } else {
       if (selected.length >= MAX_INSTRUMENTS) return;
       setSelected(prev => [...prev, sym]);
@@ -294,7 +298,8 @@ export default function ScalperPairSelectorModal({
                 <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8 }}>
                   {filteredItems.map(item => {
                     const resolvedSym = matchBrokerSymbol(item.symbol);
-                    const isChecked = selected.includes(resolvedSym) || selected.includes(item.symbol) || (item.alt && selected.includes(item.alt));
+                    const symBase = cleanBase(item.symbol);
+                    const isChecked = selected.some(s => s === resolvedSym || s === item.symbol || cleanBase(s) === symBase);
                     const isAtMax = selected.length >= MAX_INSTRUMENTS && !isChecked;
 
                     return (

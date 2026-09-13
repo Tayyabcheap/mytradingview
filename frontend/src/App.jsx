@@ -453,6 +453,28 @@ function App() {
   const chartRef = useRef();
   const replayTimerRef = useRef(null);
 
+  const symbolAlignedRef = useRef(false);
+
+  // Helper to resolve user symbols against MT5 broker available symbols (e.g. BTCUSD -> BTCUSDm)
+  const resolveSymbolAgainstBroker = (rawSym, brokerSyms = symbols) => {
+    if (!rawSym || !brokerSyms || !brokerSyms.length) return rawSym;
+    // 1. Exact match
+    const exact = brokerSyms.find(s => (s.name || s).toUpperCase() === rawSym.toUpperCase());
+    if (exact) return exact.name || exact;
+
+    // 2. Base match (strip .m, .c, _i, pro, raw, c, m, k)
+    const clean = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
+    const base = clean(rawSym);
+    const baseMatch = brokerSyms.find(s => clean(s.name || s) === base);
+    if (baseMatch) return baseMatch.name || baseMatch;
+
+    // 3. Prefix match
+    const prefixMatch = brokerSyms.find(s => (s.name || s).toUpperCase().startsWith(base));
+    if (prefixMatch) return prefixMatch.name || prefixMatch;
+
+    return rawSym;
+  };
+
   // Load account info & broker symbols from backend
   const fetchAccountAndSymbols = () => {
     fetch('/api/account')
@@ -467,20 +489,21 @@ function App() {
       .then(data => {
         if (Array.isArray(data) && data.length > 0) {
           setSymbols(data);
-          // Auto-align symbol if the currently selected symbol does not exist on this broker account
-          setSymbol(curr => {
-            if (data.some(s => s.name === curr)) return curr;
-            const goldMatch = data.find(s => {
-              const u = s.name.toUpperCase();
-              return u.startsWith('XAUUSD') || u.includes('GOLD');
+          // ONLY align symbol format ONCE on initial startup if needed, NEVER reset user's active chart during polling!
+          if (!symbolAlignedRef.current) {
+            symbolAlignedRef.current = true;
+            setSymbol(curr => {
+              const resolved = resolveSymbolAgainstBroker(curr, data);
+              return resolved;
             });
-            const matched = goldMatch ? goldMatch.name : (data[0]?.name || curr);
-            setWorkspaceTabs(tabs => tabs.map(t => (t.type === 'chart' && !data.some(s => s.name === t.symbol))
-              ? { ...t, symbol: matched, title: `Chart: ${matched}` }
-              : t
-            ));
-            return matched;
-          });
+            setWorkspaceTabs(tabs => tabs.map(t => {
+              if (t.type === 'chart' && t.symbol) {
+                const resolved = resolveSymbolAgainstBroker(t.symbol, data);
+                return { ...t, symbol: resolved, title: `Chart: ${resolved}` };
+              }
+              return t;
+            }));
+          }
         }
       })
       .catch(() => {});
@@ -678,18 +701,19 @@ function App() {
   };
 
   const handleAddChartTab = (initialSymbol = 'EURUSDc', initialTf = '1H') => {
+    const resolved = resolveSymbolAgainstBroker(initialSymbol, symbols);
     const newId = `chart-${Date.now()}`;
     const newTab = {
       id: newId,
-      title: `Chart: ${initialSymbol}`,
+      title: `Chart: ${resolved}`,
       type: 'chart',
-      symbol: initialSymbol,
+      symbol: resolved,
       timeframe: initialTf,
       closable: true
     };
     setWorkspaceTabs(prev => [...prev, newTab]);
     setActiveTabId(newId);
-    setSymbol(initialSymbol);
+    setSymbol(resolved);
     setTimeframe(initialTf);
   };
 
@@ -718,20 +742,22 @@ function App() {
 
   // Switch symbol & jump to chart
   const handleSelectSymbolAndGoToChart = (newSym) => {
-    setSymbol(newSym);
+    const resolved = resolveSymbolAgainstBroker(newSym, symbols);
+    setSymbol(resolved);
     // Find first chart tab or activate current
     const chartTab = workspaceTabs.find(t => t.type === 'chart');
     if (chartTab) {
       setActiveTabId(chartTab.id);
-      setWorkspaceTabs(prev => prev.map(t => t.id === chartTab.id ? { ...t, symbol: newSym, title: `Chart: ${newSym}` } : t));
+      setWorkspaceTabs(prev => prev.map(t => t.id === chartTab.id ? { ...t, symbol: resolved, title: `Chart: ${resolved}` } : t));
     } else {
-      handleAddChartTab(newSym, '1H');
+      handleAddChartTab(resolved, '1H');
     }
   };
 
   const handleSelectSymbol = (newSym) => {
-    setSymbol(newSym);
-    setWorkspaceTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, symbol: newSym, title: `Chart: ${newSym}` } : t));
+    const resolved = resolveSymbolAgainstBroker(newSym, symbols);
+    setSymbol(resolved);
+    setWorkspaceTabs(prev => prev.map(t => t.id === activeTabId ? { ...t, symbol: resolved, title: `Chart: ${resolved}` } : t));
   };
 
   // Drawing Tool selection
@@ -2145,25 +2171,27 @@ function App() {
                       </div>
                     )}
                     {watchlist.map(sym => {
-                      const q = watchQuotes[sym];
+                      const resolvedSym = resolveSymbolAgainstBroker(sym, symbols);
+                      const isSymActive = symbol === sym || resolvedSym === symbol;
+                      const q = watchQuotes[resolvedSym] || watchQuotes[sym];
                       const digits = sym.includes('JPY') ? 3 : 2;
                       const priceStr = q && typeof q.price === 'number'
                         ? q.price.toFixed(digits)
-                        : (symbol === sym && currentPrice ? currentPrice.toFixed(digits) : '---');
+                        : (isSymActive && currentPrice ? currentPrice.toFixed(digits) : '---');
                       const priceColor = q?.dir === 'up' ? '#089981'
                         : q?.dir === 'down' ? '#f23645'
-                        : (symbol === sym ? 'var(--brand)' : 'var(--text-muted)');
+                        : (isSymActive ? 'var(--brand)' : 'var(--text-muted)');
                       return (
                         <div
                           key={sym}
-                          className={`watchlist-item ${symbol === sym ? 'active' : ''}`}
+                          className={`watchlist-item ${isSymActive ? 'active' : ''}`}
                           onClick={() => handleSelectSymbol(sym)}
                           style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
                             padding: '10px 14px', cursor: 'pointer',
-                            background: symbol === sym ? 'rgba(41, 98, 255, 0.12)' : 'transparent',
-                            borderLeft: symbol === sym ? '3px solid var(--brand)' : '3px solid transparent' }}
+                            background: isSymActive ? 'rgba(41, 98, 255, 0.12)' : 'transparent',
+                            borderLeft: isSymActive ? '3px solid var(--brand)' : '3px solid transparent' }}
                         >
-                          <span className="wl-symbol" style={{ fontWeight: symbol === sym ? 700 : 500 }}>{sym}</span>
+                          <span className="wl-symbol" style={{ fontWeight: isSymActive ? 700 : 500 }}>{sym}</span>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span className="wl-price" style={{ color: priceColor, fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>
                               {priceStr}

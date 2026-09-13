@@ -27,6 +27,7 @@ except ImportError:
 
 from real_dip_bt import wilder_atr, wilder_rsi
 from notifications import send_discord_alert
+from symbol_utils import resolve_broker_symbol, clean_base_symbol
 
 logger = logging.getLogger("scalper_bot")
 logger.setLevel(logging.INFO)
@@ -96,6 +97,7 @@ class ScalperBot:
     def _get_symbol_state(self, sym: str) -> Dict[str, Any]:
         if sym not in self.symbol_states:
             self.symbol_states[sym] = {
+                "broker_symbol": sym,
                 "last_bar_time": 0,
                 "setup_state": 0,  # 1 = SELL setup, -1 = BUY setup
                 "setup_high": 0.0,
@@ -197,6 +199,7 @@ class ScalperBot:
         for sym in self.symbols:
             st = self._get_symbol_state(sym)
             per_symbol_telemetry[sym] = {
+                "broker_symbol": st.get("broker_symbol", sym),
                 "last_bar_time": st["last_bar_time"],
                 "last_bar_time_str": datetime.datetime.fromtimestamp(st["last_bar_time"]).strftime("%Y-%m-%d %H:%M:%S") if st["last_bar_time"] else "None",
                 "setup_state": st["setup_state"],
@@ -262,23 +265,26 @@ class ScalperBot:
 
                 # Iterate through all configured instruments
                 active_syms = list(self.symbols)
-                for sym in active_syms:
+                for config_sym in active_syms:
                     if self._stop_event.is_set() or not self.enabled:
                         break
 
-                    sym_state = self._get_symbol_state(sym)
+                    sym_state = self._get_symbol_state(config_sym)
+                    broker_sym = resolve_broker_symbol(config_sym, self.mt5_lock)
+                    sym_state["broker_symbol"] = broker_sym
+
                     with self.mt5_lock:
-                        if not mt5.symbol_select(sym, True):
-                            sym_state["scan_status"] = "SYMBOL_NOT_FOUND"
+                        if not mt5.symbol_select(broker_sym, True):
+                            sym_state["scan_status"] = f"SYMBOL_NOT_FOUND ({broker_sym})"
                             continue
-                        rates = mt5.copy_rates_from_pos(sym, mt5.TIMEFRAME_M5, 0, 100)
+                        rates = mt5.copy_rates_from_pos(broker_sym, mt5.TIMEFRAME_M5, 0, 100)
 
                     if rates is None or len(rates) < 40:
                         sym_state["scan_status"] = "WAITING_FOR_DATA"
                         continue
 
                     sym_state["last_scanned_at"] = int(time.time())
-                    sym_state["scan_status"] = "SCANNING_OK"
+                    sym_state["scan_status"] = f"SCANNING_OK ({broker_sym})"
 
                     # Bar -1 is currently forming live bar. Bar -2 is the most recently CLOSED bar.
                     closed_bar = rates[-2]
@@ -288,13 +294,13 @@ class ScalperBot:
                     if sym_state["last_bar_time"] == 0:
                         # Initial sync on startup: record current bar timestamp to prevent firing stale historical bars
                         sym_state["last_bar_time"] = closed_bar_time
-                        sym_state["scan_status"] = "SYNCED_AWAITING_BAR_CLOSE"
+                        sym_state["scan_status"] = f"SYNCED_AWAITING_BAR_CLOSE ({broker_sym})"
                         continue
 
                     # Check if a new candle closed for this specific instrument
                     if closed_bar_time > sym_state["last_bar_time"]:
                         sym_state["last_bar_time"] = closed_bar_time
-                        self._process_closed_bar_for_symbol(sym, sym_state, rates[:-1], current_bar)
+                        self._process_closed_bar_for_symbol(broker_sym, sym_state, rates[:-1], current_bar, config_sym=config_sym)
 
                 self.status_message = f"ACTIVE: Monitoring {len(active_syms)} Pairs simultaneously on 5M"
 
@@ -307,7 +313,9 @@ class ScalperBot:
     # ─────────────────────────────────────────────────────────────────────────
     # Closed Bar Setup Evaluator for a Specific Symbol
     # ─────────────────────────────────────────────────────────────────────────
-    def _process_closed_bar_for_symbol(self, sym: str, sym_state: Dict[str, Any], closed_rates, current_bar):
+    def _process_closed_bar_for_symbol(self, broker_sym: str, sym_state: Dict[str, Any], closed_rates, current_bar, config_sym: Optional[str] = None):
+        if config_sym is None:
+            config_sym = broker_sym
         n = len(closed_rates)
         if n < 20:
             return
@@ -372,16 +380,17 @@ class ScalperBot:
             sym_state["setup_sl"] = sl
             sym_state["setup_bar_time"] = t
             sym_state["last_signal"] = {
-                "symbol": sym,
+                "symbol": broker_sym,
+                "config_symbol": config_sym,
                 "type": "SELL",
                 "time": t,
                 "strategy": self.strategy,
                 "sl": sl,
                 "tp1": tp1
             }
-            print(f"[SCALPER_BOT] >>> SELL Signal on {sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
+            print(f"[SCALPER_BOT] >>> SELL Signal on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
             self._execute_signal(
-                symbol=sym,
+                symbol=broker_sym,
                 signal_type="SELL",
                 entry=entry,
                 sl=sl,
@@ -401,16 +410,17 @@ class ScalperBot:
             sym_state["setup_sl"] = sl
             sym_state["setup_bar_time"] = t
             sym_state["last_signal"] = {
-                "symbol": sym,
+                "symbol": broker_sym,
+                "config_symbol": config_sym,
                 "type": "BUY",
                 "time": t,
                 "strategy": self.strategy,
                 "sl": sl,
                 "tp1": tp1
             }
-            print(f"[SCALPER_BOT] >>> BUY Signal on {sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
+            print(f"[SCALPER_BOT] >>> BUY Signal on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
             self._execute_signal(
-                symbol=sym,
+                symbol=broker_sym,
                 signal_type="BUY",
                 entry=entry,
                 sl=sl,
@@ -516,6 +526,7 @@ class ScalperBot:
         if not MT5_AVAILABLE:
             return None
 
+        symbol = resolve_broker_symbol(symbol, self.mt5_lock)
         with self.mt5_lock:
             if not mt5.symbol_select(symbol, True):
                 print(f"[SCALPER_BOT] Symbol select failed for {symbol}", flush=True)
