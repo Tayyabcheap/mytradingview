@@ -28,6 +28,16 @@ function periodToTf(period) {
   return '1H';
 }
 
+// Curated 24-Color Trading Palette for Drawing Lines & Figures
+export const DRAWING_PRESET_COLORS = [
+  '#2962ff', '#00bcd4', '#00e5ff', '#38bdf8', // Blues & Cyans
+  '#089981', '#10b981', '#22c55e', '#a3e635', // Greens & Limes
+  '#ffd600', '#facc15', '#f59e0b', '#ff9800', // Golds, Yellows & Ambers
+  '#f97316', '#f23645', '#ef4444', '#f43f5e', // Oranges & Reds
+  '#ec4899', '#a855f7', '#8b5cf6', '#d946ef', // Pinks & Purples
+  '#ffffff', '#cbd5e1', '#94a3b8', '#475569'  // Whites, Slates & Grays
+];
+
 // Fast tick poll (responsive price + forming candle) and slower bar poll (new-bar rollover)
 const QUOTE_POLL_MS = 700;
 const BARS_POLL_MS = 3000;
@@ -60,6 +70,13 @@ const KLineChartArea = forwardRef(({
   const [loading, setLoading] = useState(true);
   const [selectedSignalInfo, setSelectedSignalInfo] = useState(null);
   const [selDrawing, setSelDrawing] = useState(null); // floating edit toolbar for a selected drawing
+  const [activeDrawingColor, setActiveDrawingColor] = useState(() => {
+    try { return localStorage.getItem('twr_drawing_color') || '#2962ff'; } catch { return '#2962ff'; }
+  });
+  const activeDrawingColorRef = useRef(activeDrawingColor);
+  useEffect(() => {
+    activeDrawingColorRef.current = activeDrawingColor;
+  }, [activeDrawingColor]);
 
   // ---- Live feed helpers -------------------------------------------------
   const stopLiveFeed = () => {
@@ -161,6 +178,10 @@ const KLineChartArea = forwardRef(({
     if (!chartRef.current || !selDrawing) return;
     const color = colorArg || selDrawing.color;
     const size = sizeArg || selDrawing.size;
+    if (colorArg) {
+      setActiveDrawingColor(colorArg);
+      try { localStorage.setItem('twr_drawing_color', colorArg); } catch {}
+    }
     const st = drawingStyleObj(color, size);
     chartRef.current.overrideOverlay({ id: selDrawing.id, styles: st });
     const entry = overlaysRef.current.get(selDrawing.id);
@@ -353,8 +374,17 @@ const KLineChartArea = forwardRef(({
   // Expose methods to App
   useImperativeHandle(ref, () => ({
     createDrawing: (name) => {
-      if (chartRef.current) chartRef.current.createOverlay({ name, ...overlayCallbacks() });
+      if (chartRef.current) {
+        const color = activeDrawingColorRef.current || '#2962ff';
+        const st = drawingStyleObj(color, 1);
+        chartRef.current.createOverlay({ name, styles: st, ...overlayCallbacks() });
+      }
     },
+    setActiveDrawingColor: (col) => {
+      setActiveDrawingColor(col);
+      try { localStorage.setItem('twr_drawing_color', col); } catch {}
+    },
+    getActiveDrawingColor: () => activeDrawingColorRef.current,
     clearDrawings: () => {
       if (chartRef.current) chartRef.current.removeOverlay();
       overlaysRef.current.clear();
@@ -763,44 +793,133 @@ const KLineChartArea = forwardRef(({
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'absolute', zIndex: 70,
-            left: Math.max(8, (selDrawing.x || 40) - 120),
-            top: Math.max(8, (selDrawing.y || 40) - 48),
-            display: 'flex', alignItems: 'center', gap: 6,
-            background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 6,
-            padding: '5px 8px', boxShadow: '0 6px 20px rgba(0,0,0,0.6)'
+            left: Math.max(8, (selDrawing.x || 40) - 160),
+            top: Math.max(8, (selDrawing.y || 40) - 62),
+            display: 'flex', flexDirection: 'column', gap: 6,
+            background: '#1e222d', border: '1px solid #2a2e39', borderRadius: 8,
+            padding: '7px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.7)',
+            maxWidth: 380
           }}
         >
-          {['#2962ff', '#089981', '#f23645', '#ff9800', '#ffd600', '#ffffff'].map(c => (
-            <button key={c} onClick={() => applyDrawingStyle(c, null)}
-              title={`Colour ${c}`} aria-label={`Set drawing colour ${c}`}
-              style={{ width: 16, height: 16, borderRadius: '50%', background: c, cursor: 'pointer', padding: 0,
-                border: selDrawing.color === c ? '2px solid #fff' : '1px solid #2a2e39' }} />
-          ))}
-          <div style={{ width: 1, height: 18, background: '#2a2e39' }} />
-          {[1, 2, 3].map(w => (
-            <button key={w} onClick={() => applyDrawingStyle(null, w)}
-              title={`Line width ${w}`} aria-label={`Set line width ${w}`}
-              style={{ width: 24, height: 22, background: selDrawing.size === w ? '#2962ff' : '#131722',
-                border: '1px solid #2a2e39', borderRadius: 4, cursor: 'pointer',
-                display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-              <div style={{ width: 14, height: w, background: '#d1d4dc', borderRadius: 1 }} />
+          {/* Top row: Palette swatches + Custom Color Picker */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
+            {DRAWING_PRESET_COLORS.map(c => {
+              const isSelected = selDrawing.color?.toLowerCase() === c.toLowerCase();
+              return (
+                <button
+                  key={c}
+                  onClick={() => applyDrawingStyle(c, null)}
+                  title={`Color ${c}`}
+                  aria-label={`Set drawing color ${c}`}
+                  style={{
+                    width: 15,
+                    height: 15,
+                    borderRadius: '50%',
+                    background: c,
+                    cursor: 'pointer',
+                    padding: 0,
+                    outline: 'none',
+                    border: isSelected ? '2px solid #ffffff' : '1px solid rgba(0,0,0,0.5)',
+                    boxShadow: isSelected ? '0 0 5px ' + c : 'none',
+                    transform: isSelected ? 'scale(1.15)' : 'scale(1)',
+                    transition: 'transform 0.1s ease'
+                  }}
+                  onMouseEnter={e => { if (!isSelected) e.currentTarget.style.transform = 'scale(1.2)'; }}
+                  onMouseLeave={e => { if (!isSelected) e.currentTarget.style.transform = 'scale(1)'; }}
+                />
+              );
+            })}
+
+            {/* Custom Color Picker Input */}
+            <label
+              title="Pick any custom color..."
+              style={{
+                position: 'relative',
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 17,
+                height: 17,
+                borderRadius: '50%',
+                background: 'conic-gradient(red, yellow, lime, aqua, blue, magenta, red)',
+                cursor: 'pointer',
+                border: '1.5px solid #ffffff',
+                boxShadow: '0 0 4px rgba(0,0,0,0.5)',
+                marginLeft: 2,
+                flexShrink: 0
+              }}
+            >
+              <input
+                type="color"
+                value={selDrawing.color || '#2962ff'}
+                onChange={e => applyDrawingStyle(e.target.value, null)}
+                style={{
+                  position: 'absolute',
+                  opacity: 0,
+                  width: '100%',
+                  height: '100%',
+                  cursor: 'pointer'
+                }}
+              />
+            </label>
+          </div>
+
+          {/* Bottom row: Line width, alert, delete */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 4, borderTop: '1px solid #2a2e39' }}>
+            <span style={{ fontSize: 10, color: '#787b86', fontWeight: 600, marginRight: 2 }}>WIDTH:</span>
+            {[1, 2, 3, 4].map(w => (
+              <button
+                key={w}
+                onClick={() => applyDrawingStyle(null, w)}
+                title={`Line width ${w}px`}
+                aria-label={`Set line width ${w}`}
+                style={{
+                  width: 22, height: 20,
+                  background: selDrawing.size === w ? '#2962ff' : '#131722',
+                  border: '1px solid #2a2e39', borderRadius: 4, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center'
+                }}
+              >
+                <div style={{ width: 12, height: w, background: '#d1d4dc', borderRadius: 1 }} />
+              </button>
+            ))}
+
+            <div style={{ width: 1, height: 16, background: '#2a2e39', margin: '0 2px' }} />
+
+            <button
+              onClick={alertOnSelectedLine}
+              title="Alert when price touches this line"
+              aria-label="Alert on this line"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 4,
+                background: 'rgba(247, 166, 0, 0.1)', border: '1px solid rgba(247, 166, 0, 0.3)',
+                borderRadius: 4, color: '#f7a600', padding: '2px 6px', fontSize: 11, cursor: 'pointer'
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              <span>Alert</span>
             </button>
-          ))}
-          <div style={{ width: 1, height: 18, background: '#2a2e39' }} />
-          <button onClick={alertOnSelectedLine} title="Alert when price touches this line" aria-label="Alert on this line"
-            style={{ background: 'none', border: 'none', color: '#f7a600', cursor: 'pointer', padding: 2, display: 'flex' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" /><path d="M13.73 21a2 2 0 0 1-3.46 0" />
-            </svg>
-          </button>
-          <div style={{ width: 1, height: 18, background: '#2a2e39' }} />
-          <button onClick={deleteSelectedDrawing} title="Delete drawing" aria-label="Delete drawing"
-            style={{ background: 'none', border: 'none', color: '#f23645', cursor: 'pointer', padding: 2, display: 'flex' }}>
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-              <path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-            </svg>
-          </button>
+
+            <button
+              onClick={deleteSelectedDrawing}
+              title="Delete drawing"
+              aria-label="Delete drawing"
+              style={{
+                display: 'flex', alignItems: 'center', gap: 3,
+                background: 'rgba(242, 54, 69, 0.1)', border: '1px solid rgba(242, 54, 69, 0.3)',
+                borderRadius: 4, color: '#f23645', padding: '2px 6px', fontSize: 11, cursor: 'pointer',
+                marginLeft: 'auto'
+              }}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polyline points="3 6 5 6 21 6" /><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                <path d="M10 11v6M14 11v6" /><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+              </svg>
+              <span>Delete</span>
+            </button>
+          </div>
         </div>
       )}
 

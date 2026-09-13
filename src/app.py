@@ -458,6 +458,28 @@ def send_order():
             ]
         )
 
+        # Log to Haider-Gold-Scalper audit store
+        try:
+            from scalper_logger import upsert_trade
+            upsert_trade({
+                "id": f"mt5_{res.order}",
+                "ticket": res.order,
+                "symbol": symbol,
+                "direction": order_type_str,
+                "strategy": comment or "Haider-Gold-Scalper",
+                "timeframe": data.get("timeframe", "5M"),
+                "volume": volume,
+                "entry_time": int(time.time()),
+                "entry_time_str": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "entry_price": float(res.price or price),
+                "planned_sl": sl,
+                "planned_tp1": tp,
+                "status": "OPEN",
+                "notes": f"MT5 order #{res.order} executed"
+            })
+        except Exception as _log_err:
+            print(f"[SCALPER_LOGGER] order log warning: {_log_err}", flush=True)
+
         return jsonify({
             "success": True,
             "order": res.order,
@@ -529,6 +551,22 @@ def close_order():
                 "retcode": res.retcode,
                 "comment": res.comment
             }), 400
+
+        # Update audit store for closed position
+        try:
+            from scalper_logger import upsert_trade
+            upsert_trade({
+                "id": f"mt5_{pos.ticket}",
+                "ticket": pos.ticket,
+                "exit_time": int(time.time()),
+                "exit_time_str": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "exit_price": float(res.price or price),
+                "exit_reason": "MANUAL_CLOSE",
+                "pnl_usd": float(pos.profit or 0.0),
+                "status": "CLOSED"
+            })
+        except Exception as _c_err:
+            print(f"[SCALPER_LOGGER] close log warning: {_c_err}", flush=True)
 
         return jsonify({
             "success": True,
@@ -1059,6 +1097,60 @@ def backtest_haider_gold_scalper():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
+@app.route("/api/backtest/haider_enhanced", methods=["GET"])
+def backtest_haider_enhanced():
+    """Run Haider-Scalper-Enhanced (Anti-Hunt Buffer + 18% Rejection Wick + 2-Tranche Auto-BE) on MT5 history."""
+    if not init_mt5():
+        return jsonify({"error": "MT5 not connected"}), 500
+
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
+    tf_str = request.args.get("timeframe", "5M")
+    bars_n = int(request.args.get("bars", 3000))
+
+    tf_const = TF_MAP.get(tf_str)
+    if tf_const is None:
+        alt = {"H1": "1H", "H4": "4H", "D1": "1D", "M1": "1M", "M5": "5M",
+               "M15": "15M", "M30": "30M", "W1": "1W"}.get(tf_str)
+        tf_const = TF_MAP.get(alt) if alt else None
+    if tf_const is None:
+        return jsonify({"error": f"Invalid timeframe: {tf_str}"}), 400
+
+    with mt5_lock:
+        if not mt5.symbol_select(symbol, True):
+            return jsonify({"error": f"Symbol not found: {symbol}"}), 404
+        info = mt5.symbol_info(symbol)
+        mintick = float(info.point) if (info and info.point) else float(request.args.get("mintick", 0.01))
+        rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, bars_n)
+
+    if rates is None or len(rates) == 0:
+        return jsonify({"error": "No history returned from MT5"}), 404
+
+    bars = [(int(r["time"]), float(r["open"]), float(r["high"]),
+             float(r["low"]), float(r["close"])) for r in rates]
+
+    try:
+        from enhanced_scalper_bt import backtest as _bt_enh
+        res = _bt_enh(
+            bars,
+            atr_len=int(request.args.get("atr_len", 14)),
+            impulse_mult=float(request.args.get("impulse_mult", 1.0)),
+            rsi_len=int(request.args.get("rsi_len", 14)),
+            rsi_buy_level=float(request.args.get("rsi_buy", 36.0)),
+            rsi_sell_level=float(request.args.get("rsi_sell", 64.0)),
+            target_level=float(request.args.get("target_level", 50.0)),
+            sl_buffer=float(request.args.get("sl_buffer", 1.35)),
+            min_wick_ratio=float(request.args.get("min_wick_ratio", 0.18)),
+            skip_rollover=True,
+            lot_size=float(request.args.get("lot_size", 0.10)),
+            mintick=mintick,
+        )
+        res["symbol"] = symbol
+        res["timeframe"] = tf_str
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 @app.route("/api/signals/accuracy", methods=["GET"])
 def signals_accuracy():
     """Backtest the SWING_CORE / SWING_PRO signals on real history: for each signal,
@@ -1233,6 +1325,85 @@ def signals_log():
         log = log[-2000:]
     store.put("signal_log", "entries", log)
     return jsonify({"success": True, "count": len(log)})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Haider-Gold-Scalper Trade Audit & Post-Mortem Diagnostics
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route("/api/scalper/audit/trades", methods=["GET"])
+def get_scalper_audit_trades():
+    """Retrieve logged Haider-Gold-Scalper trades with post-mortem diagnostic metrics."""
+    try:
+        from scalper_logger import load_audit_trades
+        trades = load_audit_trades(seed_if_empty=True)
+        symbol = request.args.get("symbol", "").strip().upper()
+        verdict = request.args.get("verdict", "").strip().upper()
+        days = request.args.get("days", type=int)
+
+        if days:
+            cutoff = datetime.datetime.now() - datetime.timedelta(days=days)
+            cutoff_ts = int(cutoff.timestamp())
+            trades = [t for t in trades if (t.get("exit_time") or t.get("entry_time") or 0) >= cutoff_ts]
+
+        if symbol:
+            trades = [t for t in trades if symbol in (t.get("symbol") or "").upper()]
+
+        if verdict and verdict != "ALL":
+            trades = [
+                t for t in trades 
+                if (t.get("post_exit_analysis") or {}).get("diagnosis_verdict") == verdict
+            ]
+
+        # Return latest trades first
+        trades.sort(key=lambda x: x.get("entry_time") or 0, reverse=True)
+        limit = request.args.get("limit", 200, type=int)
+        return jsonify(trades[:limit])
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scalper/audit/report", methods=["GET"])
+def get_scalper_audit_report():
+    """Retrieve weekly diagnostic scorecard and prescriptive algorithmic coaching recommendations."""
+    try:
+        from scalper_logger import generate_weekly_scalper_report
+        days = request.args.get("days", 7, type=int)
+        report = generate_weekly_scalper_report(days=days)
+        return jsonify(report)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/scalper/audit/sync", methods=["POST"])
+def sync_scalper_audit():
+    """Sync MT5 history or backtest signals into the audit log with forward trajectory evaluations."""
+    try:
+        from scalper_logger import sync_backtest_trades, load_audit_trades
+        data = request.get_json(force=True) or {}
+        raw_sym = data.get("symbol", "XAUUSD")
+        symbol = resolve_broker_symbol(raw_sym)
+        bars_n = int(data.get("bars", 3000))
+
+        count = 0
+        if init_mt5():
+            with mt5_lock:
+                mt5.symbol_select(symbol, True)
+                rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, bars_n)
+            if rates is not None and len(rates) > 50:
+                bars = [(int(r["time"]), float(r["open"]), float(r["high"]),
+                         float(r["low"]), float(r["close"])) for r in rates]
+                from real_dip_bt import backtest as _bt
+                res = _bt(bars)
+                raw_trades = res.get("trades", [])
+                count = sync_backtest_trades(raw_trades, bars, symbol=symbol)
+
+        return jsonify({
+            "success": True,
+            "synced_trades": count,
+            "total_audit_trades": len(load_audit_trades())
+        })
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 
 # ─────────────────────────────────────────────────────────────────────────────

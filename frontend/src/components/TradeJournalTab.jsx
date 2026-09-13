@@ -2,8 +2,9 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Calendar as CalendarIcon, Clock, TrendingUp, TrendingDown, DollarSign, 
   Search, Filter, Download, ChevronLeft, ChevronRight, CheckCircle, 
-  AlertCircle, RefreshCw, BarChart2, Layers, ShieldCheck, FileSpreadsheet
+  AlertCircle, RefreshCw, BarChart2, Layers, ShieldCheck, FileSpreadsheet, Sparkles
 } from 'lucide-react';
+import ScalperAuditView from './ScalperAuditView';
 
 export default function TradeJournalTab({
   accountInfo,
@@ -326,13 +327,14 @@ export default function TradeJournalTab({
         gap: 10
       }}>
         {/* Navigation Tabs */}
-        <div style={{ display: 'flex', gap: 6 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {[
             { id: 'monthly', label: 'Monthly Calendar', icon: CalendarIcon },
             { id: 'daily', label: 'Daily Breakdown', icon: Clock },
             { id: 'weekly', label: 'Weekly Summary', icon: Layers },
             { id: 'annual', label: 'Annual Matrix', icon: BarChart2 },
-            { id: 'table', label: 'All Trade Records', icon: FileSpreadsheet }
+            { id: 'table', label: 'All Trade Records', icon: FileSpreadsheet },
+            { id: 'ai_diagnostics', label: 'AI Scalper Audit & Coach', icon: Sparkles }
           ].map(tab => {
             const Icon = tab.icon;
             const isSel = activeView === tab.id;
@@ -807,6 +809,11 @@ export default function TradeJournalTab({
             </table>
           </div>
         </div>
+      )}
+
+      {/* 6. AI SCALPER AUDIT & POST-MORTEM DIAGNOSTICS */}
+      {activeView === 'ai_diagnostics' && (
+        <ScalperAuditView onSelectSymbolAndGoToChart={onSelectSymbolAndGoToChart} />
       )}
     </div>
   );

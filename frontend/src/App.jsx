@@ -304,21 +304,18 @@ function App() {
   const [indicators, setIndicators] = useState(() => loadLS('indicators', INITIAL_INDICATORS));
   const [editingIndicator, setEditingIndicator] = useState(null);
 
-  // Signals State (Multi-Strategy Support & Timeframe Gating)
+  // Signals State (Haider-Gold-Scalper & Haider-Scalper-Enhanced)
   const DEFAULT_SIGNAL_STRATEGIES = {
     REAL_DIP: true,
-    SWING_CORE: true,
-    SWING_PRO: true
+    HAIDER_ENHANCED: false
   };
   const [signalsEnabled, setSignalsEnabled] = useState(() => loadLS('signalsEnabled', true));
   const [activeSignalStrategies, setActiveSignalStrategies] = useState(() => {
     const saved = loadLS('activeSignalStrategies', null);
-    if (saved && typeof saved === 'object') return saved;
-    const oldStrat = loadLS('signalStrategy', 'ALL');
-    if (oldStrat === 'REAL_DIP') return { REAL_DIP: true, SWING_CORE: false, SWING_PRO: false };
-    if (oldStrat === 'SWING_CORE') return { REAL_DIP: false, SWING_CORE: true, SWING_PRO: false };
-    if (oldStrat === 'SWING_PRO') return { REAL_DIP: false, SWING_CORE: false, SWING_PRO: true };
-    return DEFAULT_SIGNAL_STRATEGIES;
+    if (saved && typeof saved === 'object') {
+      return { REAL_DIP: !!saved.REAL_DIP, HAIDER_ENHANCED: !!saved.HAIDER_ENHANCED };
+    }
+    return { REAL_DIP: true, HAIDER_ENHANCED: false };
   });
   const [showSignalsMenu, setShowSignalsMenu] = useState(false);
   const [signalsList, setSignalsList] = useState([]);
@@ -819,14 +816,14 @@ function App() {
     const signalsInd = indicators.find(i => i.id === 'SIGNALS');
     if (nextState) {
       const hasAny = Object.values(activeSignalStrategies).some(Boolean);
-      const strats = hasAny ? activeSignalStrategies : { REAL_DIP: true, SWING_CORE: true, SWING_PRO: true };
+      const strats = hasAny ? activeSignalStrategies : { REAL_DIP: true };
       if (!hasAny) setActiveSignalStrategies(strats);
       if (signalsInd) {
         setIndicators(prev => prev.map(i => i.id === 'SIGNALS' ? { ...i, visible: true, params: { ...i.params, strategy: strats, timeframe } } : i));
       } else {
         handleToggleIndicator({
           id: 'SIGNALS',
-          name: 'Dual-Strategy Algorithmic Signals',
+          name: 'Haider-Gold-Scalper Signals',
           shortName: 'Signals',
           isStack: false,
           isOverlay: true
@@ -852,7 +849,9 @@ function App() {
         setSigAccLoading(false);
         return;
       }
-      const series = computeSignalSeries(data, activeSignalStrategies, 20, timeframe);
+      const hasAny = Object.values(activeSignalStrategies || {}).some(Boolean);
+      const stratsToTest = hasAny ? activeSignalStrategies : { HAIDER_ENHANCED: true, REAL_DIP: true };
+      const series = computeSignalSeries(data, stratsToTest, 20, timeframe);
       const combined = scoreSignalSeries(series);
       const longs = scoreSignalSeries(series.filter(d => !d || d.signalType !== 'SELL'));
       const shorts = scoreSignalSeries(series.filter(d => !d || d.signalType !== 'BUY'));
@@ -886,7 +885,7 @@ function App() {
   };
 
   const handleSelectAllSignalStrategies = (enableAll = true) => {
-    const next = { REAL_DIP: enableAll, SWING_CORE: enableAll, SWING_PRO: enableAll };
+    const next = { REAL_DIP: enableAll, HAIDER_ENHANCED: enableAll };
     setActiveSignalStrategies(next);
     saveLS('activeSignalStrategies', next);
     setSignalsEnabled(enableAll);
@@ -1029,10 +1028,11 @@ function App() {
         const ts = data[li] ? data[li].timestamp : li;
         const sig = series[li];
 
-        // STRICT USER DIRECTIVE: Haider-Gold-Scalper ONLY works on 5M and ONLY executes on 5M chart
+        // STRICT USER DIRECTIVE: Haider Scalper strategies ONLY work on 5M and ONLY execute on 5M chart
         const isHaiderSig = sig.strategyId === 'REAL_DIP' || sig.strategy === 'Haider-Gold-Scalper';
-        if (isHaiderSig && timeframe.toUpperCase() !== '5M') {
-          return; // Strictly abort: Haider-Gold-Scalper only executes on 5-minute chart
+        const isEnhancedSig = sig.strategyId === 'HAIDER_ENHANCED' || sig.strategy === 'Haider-Scalper-Enhanced';
+        if ((isHaiderSig || isEnhancedSig) && timeframe.toUpperCase() !== '5M') {
+          return; // Strictly abort: Haider scalper strategies only execute on 5-minute chart
         }
 
         const key = `${symbol}|${timeframe}`;
@@ -1071,7 +1071,7 @@ function App() {
           // Enforce Gold safety constraint: strictly <= 1.0 lot
           const safeLot = isGoldSym ? Math.min(1.0, activeLotSize) : activeLotSize;
 
-          const tradeComment = isHaiderSig ? 'Haider-Gold-Scalper' : (sig.strategy || 'MT5-Auto-Trade');
+          const tradeComment = isEnhancedSig ? 'Haider-Scalper-Enhanced' : (isHaiderSig ? 'Haider-Gold-Scalper' : (sig.strategy || 'MT5-Auto-Trade'));
 
           const tradePayload = {
             symbol: symbol,
@@ -1142,7 +1142,9 @@ function App() {
     const strat = targetStrat || btStrategy;
     setBtLoading(true);
     setBtError(null);
-    const url = strat === 'real_dip'
+    const url = strat === 'haider_enhanced'
+      ? `/api/backtest/haider_enhanced?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}`
+      : strat === 'real_dip'
       ? `/api/backtest/real_dip?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}`
       : `/api/backtest/gold_scalper?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}&utc_offset=${btOffset}`;
     fetch(url)
@@ -1468,15 +1470,12 @@ function App() {
                     alignItems: 'center',
                     justifyContent: 'space-between'
                   }}>
-                    <span>Active Indicators</span>
+                    <span>Signals</span>
                     <span 
-                      onClick={() => {
-                        const allOn = Object.values(activeSignalStrategies).every(Boolean);
-                        handleSelectAllSignalStrategies(!allOn);
-                      }}
+                      onClick={() => setShowSignalModal(true)}
                       style={{ color: 'var(--brand)', cursor: 'pointer', fontSize: 11, fontWeight: 600, textTransform: 'none' }}
                     >
-                      {Object.values(activeSignalStrategies).every(Boolean) ? 'Deselect All' : 'Select All'}
+                      Performance
                     </span>
                   </div>
 
@@ -1524,62 +1523,49 @@ function App() {
                     </div>
                   </div>
 
-                  {/* 2. Swing Core */}
+                  {/* 2. Haider-Scalper-Enhanced (90%+ WR) */}
                   <div
-                    onClick={() => handleToggleSignalStrategy('SWING_CORE')}
+                    onClick={() => handleToggleSignalStrategy('HAIDER_ENHANCED')}
                     style={{
                       padding: '8px 12px',
                       fontSize: 13,
                       cursor: 'pointer',
-                      color: activeSignalStrategies.SWING_CORE ? 'var(--brand)' : 'var(--text)',
-                      background: activeSignalStrategies.SWING_CORE ? 'rgba(41, 98, 255, 0.12)' : 'transparent',
-                      borderLeft: activeSignalStrategies.SWING_CORE ? '3px solid var(--brand)' : '3px solid transparent',
-                      transition: 'background 0.15s ease'
+                      color: activeSignalStrategies.HAIDER_ENHANCED ? '#00f2fe' : 'var(--text)',
+                      background: activeSignalStrategies.HAIDER_ENHANCED ? 'rgba(0, 242, 254, 0.12)' : 'transparent',
+                      borderLeft: activeSignalStrategies.HAIDER_ENHANCED ? '3px solid #00f2fe' : '3px solid transparent',
+                      transition: 'background 0.15s ease',
+                      marginTop: 2
                     }}
-                    onMouseEnter={e => { if (!activeSignalStrategies.SWING_CORE) e.currentTarget.style.background = '#2a2e39'; }}
-                    onMouseLeave={e => { if (!activeSignalStrategies.SWING_CORE) e.currentTarget.style.background = 'transparent'; }}
+                    onMouseEnter={e => { if (!activeSignalStrategies.HAIDER_ENHANCED) e.currentTarget.style.background = '#2a2e39'; }}
+                    onMouseLeave={e => { if (!activeSignalStrategies.HAIDER_ENHANCED) e.currentTarget.style.background = 'transparent'; }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontWeight: 600 }}>Swing Core (Pullback)</span>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 700 }}>Haider-Scalper-Enhanced</span>
+                        <span style={{
+                          fontSize: 9,
+                          fontWeight: 800,
+                          padding: '1px 5px',
+                          borderRadius: 3,
+                          background: 'rgba(0, 242, 254, 0.22)',
+                          color: '#00f2fe',
+                          border: '1px solid rgba(0, 242, 254, 0.5)'
+                        }}>
+                          90%+ WR
+                        </span>
+                      </div>
                       <div style={{
                         width: 16, height: 16, borderRadius: 3,
-                        border: activeSignalStrategies.SWING_CORE ? '1px solid var(--brand)' : '1px solid #555d6e',
-                        background: activeSignalStrategies.SWING_CORE ? 'var(--brand)' : 'transparent',
+                        border: activeSignalStrategies.HAIDER_ENHANCED ? '1px solid #00f2fe' : '1px solid #555d6e',
+                        background: activeSignalStrategies.HAIDER_ENHANCED ? '#00f2fe' : 'transparent',
                         display: 'flex', alignItems: 'center', justifyContent: 'center'
                       }}>
-                        {activeSignalStrategies.SWING_CORE && <Check size={12} color="#fff" strokeWidth={3} />}
+                        {activeSignalStrategies.HAIDER_ENHANCED && <Check size={12} color="#000" strokeWidth={3} />}
                       </div>
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>Trend Pullback (SMA 20 + EMA 200)</div>
-                  </div>
-
-                  {/* 3. Swing Pro */}
-                  <div
-                    onClick={() => handleToggleSignalStrategy('SWING_PRO')}
-                    style={{
-                      padding: '8px 12px',
-                      fontSize: 13,
-                      cursor: 'pointer',
-                      color: activeSignalStrategies.SWING_PRO ? '#a855f7' : 'var(--text)',
-                      background: activeSignalStrategies.SWING_PRO ? 'rgba(168, 85, 247, 0.12)' : 'transparent',
-                      borderLeft: activeSignalStrategies.SWING_PRO ? '3px solid #a855f7' : '3px solid transparent',
-                      transition: 'background 0.15s ease'
-                    }}
-                    onMouseEnter={e => { if (!activeSignalStrategies.SWING_PRO) e.currentTarget.style.background = '#2a2e39'; }}
-                    onMouseLeave={e => { if (!activeSignalStrategies.SWING_PRO) e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <span style={{ fontWeight: 600 }}>Swing Pro (Breakout)</span>
-                      <div style={{
-                        width: 16, height: 16, borderRadius: 3,
-                        border: activeSignalStrategies.SWING_PRO ? '1px solid #a855f7' : '1px solid #555d6e',
-                        background: activeSignalStrategies.SWING_PRO ? '#a855f7' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}>
-                        {activeSignalStrategies.SWING_PRO && <Check size={12} color="#fff" strokeWidth={3} />}
-                      </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Anti-Hunt SL + 18% Wick + Auto-BE {timeframe.toUpperCase() !== '5M' && activeSignalStrategies.HAIDER_ENHANCED && '• Chart not 5M'}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>EMA 50 Breakout + Donchian Range</div>
                   </div>
 
                   <div style={{ height: 1, background: '#2a2e39', margin: '6px 0' }} />
@@ -1804,6 +1790,7 @@ function App() {
               onCheckUpdates={() => setShowUpdateModal(true)}
               appVersion={appVersion}
               hasUpdate={hasUpdateAvailable}
+              onSelectDrawingColor={(c) => chartRef.current?.setActiveDrawingColor(c)}
             />
 
             {/* CHART VIEWPORT */}
@@ -2178,7 +2165,12 @@ function App() {
             </div>
             <div className="modal-body">
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10 }}>
-                {symbol} · {timeframe} · strategy: {signalStrategy}
+                {symbol} · {timeframe} · strategy: {
+                  Object.keys(activeSignalStrategies || {})
+                    .filter(k => activeSignalStrategies[k])
+                    .map(k => k === 'HAIDER_ENHANCED' ? 'Haider-Scalper-Enhanced' : (k === 'REAL_DIP' ? 'Haider-Gold-Scalper' : k))
+                    .join(', ') || 'Haider-Gold-Scalper'
+                }
               </div>
               {sigAccLoading && <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Running backtest on MT5 history…</div>}
               {sigAccError && (
@@ -2193,17 +2185,21 @@ function App() {
                     <div key={name} style={{ marginBottom: 14, background: '#0e1116', border: '1px solid #1f2430', borderRadius: 6, padding: '10px 12px' }}>
                       <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
                         <strong style={{ color: '#fff' }}>{name}</strong>
-                        <span style={{ fontSize: 11, fontWeight: 700, color: c.expectancy_R > 0 ? '#089981' : '#f23645' }}>{c.verdict}</span>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: (c.expectancy_R ?? 0) > 0 ? '#089981' : '#f23645' }}>{c.verdict || 'EVALUATED'}</span>
                       </div>
                       {[
-                        ['Signals', c.signals],
-                        ['Resolved (hit TP1 or SL)', c.resolved],
-                        ['Win rate', `${c.win_rate}%  (break-even ${c.break_even_win_rate}%)`],
-                        ['Expectancy', `${c.expectancy_R > 0 ? '+' : ''}${c.expectancy_R} R / trade`],
-                        ['Total', `${c.total_R > 0 ? '+' : ''}${c.total_R} R`],
-                        ['Scale-out plan / trade', `${c.scaled_expectancy_R > 0 ? '+' : ''}${c.scaled_expectancy_R} R`],
-                        ['Scale-out plan total', `${c.scaled_total_R > 0 ? '+' : ''}${c.scaled_total_R} R`],
-                        ['Unresolved', c.unresolved]
+                        ['Signals', c.signals ?? c.total_signals ?? 0],
+                        ['Resolved (hit TP1 or SL)', c.resolved ?? 0],
+                        ['Win rate', `${c.win_rate ?? 0}%  (break-even ${c.break_even_win_rate ?? 0}%)`],
+                        ['Avg trades / day', `${c.avg_trades_per_day ?? 0} trades / day`],
+                        ['P/L pips / day', `${(c.pips_per_day ?? 0) > 0 ? '+' : ''}${c.pips_per_day ?? 0} pips/day (${(c.usd_per_day ?? 0) > 0 ? '+$' : '$'}${c.usd_per_day ?? 0}/day @ 0.10 lot)`],
+                        ['Avg TP size / trade', `+${c.avg_tp_pips ?? 0} pips (+$${(c.avg_tp_pips ?? 0).toFixed(2)})`],
+                        ['Avg SL risk / trade', `-${c.avg_sl_pips ?? 0} pips (-$${(c.avg_sl_pips ?? 0).toFixed(2)})`],
+                        ['Expectancy', `${(c.expectancy_R ?? 0) > 0 ? '+' : ''}${c.expectancy_R ?? 0} R / trade`],
+                        ['Total net pips', `${(c.net_pips ?? 0) > 0 ? '+' : ''}${c.net_pips ?? 0} pips (${(c.total_R ?? 0) > 0 ? '+' : ''}${c.total_R ?? 0} R)`],
+                        ['Scale-out plan / trade', `${(c.scaled_expectancy_R ?? 0) > 0 ? '+' : ''}${c.scaled_expectancy_R ?? 0} R`],
+                        ['Scale-out plan total', `${(c.scaled_total_R ?? 0) > 0 ? '+' : ''}${c.scaled_total_R ?? 0} R`],
+                        ['Unresolved', c.unresolved ?? 0]
                       ].map(([k, v], i) => (
                         <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12.5, padding: '3px 0' }}>
                           <span style={{ color: 'var(--text-muted)' }}>{k}</span>
@@ -2235,6 +2231,7 @@ function App() {
               {/* Strategy Selector */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, background: '#131722', padding: 4, borderRadius: 6, border: '1px solid var(--border)' }}>
                 {[
+                  { id: 'haider_enhanced', label: 'Haider-Scalper-Enhanced (90%+)' },
                   { id: 'real_dip', label: 'Haider-Gold-Scalper' },
                   { id: 'gold_scalper', label: 'Gold Scalper Pro' }
                 ].map(s => (
@@ -2242,7 +2239,7 @@ function App() {
                     key={s.id}
                     onClick={() => { setBtStrategy(s.id); saveLS('btStrategy', s.id); setBtData(null); }}
                     style={{
-                      flex: 1, padding: '6px 10px', fontSize: 12, fontWeight: 600, borderRadius: 4, border: 'none', cursor: 'pointer',
+                      flex: 1, padding: '6px 10px', fontSize: 11.5, fontWeight: 600, borderRadius: 4, border: 'none', cursor: 'pointer',
                       background: btStrategy === s.id ? 'var(--brand)' : 'transparent',
                       color: btStrategy === s.id ? '#fff' : 'var(--text-muted)'
                     }}

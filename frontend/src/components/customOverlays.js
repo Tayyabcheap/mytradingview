@@ -797,11 +797,24 @@ const signalsIndicator = {
       ctx.restore();
 
       // Format card rows to 3 decimal places
+      const isEnh = d.strategyId === 'HAIDER_ENHANCED' || d.isEnhanced;
+      const cardTitle = isEnh 
+        ? `${isBuy ? '\u25B2 BUY [ENHANCED]' : '\u25BC SELL [ENHANCED]'}  ${d.entryPrice.toFixed(3)}`
+        : `${isBuy ? '\u25B2 BUY' : '\u25BC SELL'}  ${d.entryPrice.toFixed(3)}`;
+
+      const tp1Pips = d.tp1_pips ?? +(Math.abs(d.tp1Price - d.entryPrice) * 10).toFixed(1);
+      const tp1Usd = d.tp1_usd ?? +(tp1Pips * 1.0).toFixed(2);
+      const slPips = d.sl_pips ?? +(Math.abs(d.entryPrice - d.slPrice) * 10).toFixed(1);
+      const slUsd = d.sl_usd ?? +(slPips * 1.0).toFixed(2);
+      const hasTp2 = d.tp2Price && Math.abs(d.tp2Price - d.tp1Price) > 0.001;
+      const tp2Pips = hasTp2 ? (d.tp2_pips ?? +(Math.abs(d.tp2Price - d.entryPrice) * 10).toFixed(1)) : 0;
+      const tp2Usd = hasTp2 ? (d.tp2_usd ?? +(tp2Pips * 1.0).toFixed(2)) : 0;
+
       const rows = [
-        { t: `${isBuy ? '\u25B2 BUY' : '\u25BC SELL'}  ${d.entryPrice.toFixed(3)}`, c: accent, bold: true },
-        { t: `TP1  ${d.tp1Price.toFixed(3)}`, c: '#2ea88f' },
-        ...(d.tp2Price && Math.abs(d.tp2Price - d.tp1Price) > 0.001 ? [{ t: `TP2  ${d.tp2Price.toFixed(3)}`, c: '#089981' }] : []),
-        { t: `SL   ${d.slPrice.toFixed(3)}`, c: '#f23645' },
+        { t: cardTitle, c: isEnh ? '#00f2fe' : accent, bold: true },
+        { t: `TP1  ${d.tp1Price.toFixed(3)} (+${tp1Pips}p / +$${tp1Usd})`, c: '#2ea88f' },
+        ...(hasTp2 ? [{ t: `TP2  ${d.tp2Price.toFixed(3)} (+${tp2Pips}p / +$${tp2Usd})`, c: '#089981' }] : []),
+        { t: `SL   ${d.slPrice.toFixed(3)} (-${slPips}p / -$${slUsd})`, c: '#f23645' },
         { t: st.t, badge: true, bg: st.bg }
       ];
       ctx.font = 'bold 10px Inter, sans-serif';
@@ -816,7 +829,7 @@ const signalsIndicator = {
 
       // Dotted leader line marking WHICH candle the signal started from
       ctx.save();
-      ctx.setLineDash([2, 3]); ctx.strokeStyle = accent; ctx.globalAlpha = 0.7; ctx.lineWidth = 1;
+      ctx.setLineDash([2, 3]); ctx.strokeStyle = isEnh ? '#00f2fe' : accent; ctx.globalAlpha = 0.7; ctx.lineWidth = 1;
       ctx.beginPath();
       if (isBuy) { ctx.moveTo(x, ay + 2); ctx.lineTo(x, cy); }
       else { ctx.moveTo(x, ay - 2); ctx.lineTo(x, cy + ch); }
@@ -826,7 +839,7 @@ const signalsIndicator = {
       // Card
       ctx.save();
       ctx.fillStyle = 'rgba(19,23,34,0.96)';
-      ctx.strokeStyle = accent; ctx.lineWidth = 1.5;
+      ctx.strokeStyle = isEnh ? '#00f2fe' : accent; ctx.lineWidth = 1.5;
       ctx.beginPath();
       if (ctx.roundRect) ctx.roundRect(cx, cy, cw, ch, 5); else ctx.rect(cx, cy, cw, ch);
       ctx.fill(); ctx.stroke();
@@ -912,10 +925,10 @@ const signalsIndicator = {
       ctx.lineTo(xEnd, yTp1);
       ctx.stroke();
       ctx.restore();
-      drawLevelBadge('TP1', d.tp1Price.toFixed(3), xEnd, yTp1, '#089981');
+      drawLevelBadge('TP1', `${d.tp1Price.toFixed(3)} (+${tp1Pips}p)`, xEnd, yTp1, '#089981');
 
       // 4. Take Profit 2 Line & Badge (if defined and distinct)
-      if (d.tp2Price && Math.abs(d.tp2Price - d.tp1Price) > 0.001) {
+      if (hasTp2) {
         const yTp2 = yAxis.convertToPixel(d.tp2Price);
         ctx.save();
         ctx.strokeStyle = '#26a69a';
@@ -926,7 +939,7 @@ const signalsIndicator = {
         ctx.lineTo(xEnd, yTp2);
         ctx.stroke();
         ctx.restore();
-        drawLevelBadge('TP2', d.tp2Price.toFixed(3), xEnd, yTp2, '#26a69a');
+        drawLevelBadge('TP2', `${d.tp2Price.toFixed(3)} (+${tp2Pips}p)`, xEnd, yTp2, '#26a69a');
       }
 
       // 5. Stop Loss Line & Badge
@@ -939,7 +952,7 @@ const signalsIndicator = {
       ctx.lineTo(xEnd, ySl);
       ctx.stroke();
       ctx.restore();
-      drawLevelBadge('SL', d.slPrice.toFixed(3), xEnd, ySl, '#f23645');
+      drawLevelBadge('SL', `${d.slPrice.toFixed(3)} (-${slPips}p)`, xEnd, ySl, '#f23645');
     });
     return true;
   }

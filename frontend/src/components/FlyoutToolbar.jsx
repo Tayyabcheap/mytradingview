@@ -3,6 +3,7 @@ import {
   TrendingUp, Trash2, Lock, Eye, Magnet, Star, 
   ChevronRight, ArrowRight, Minus, Move, RefreshCw 
 } from 'lucide-react';
+import { DRAWING_PRESET_COLORS } from './KLineChartArea';
 
 const ICONS = {
   cursor: (
@@ -194,10 +195,21 @@ export default function FlyoutToolbar({
   onToggleFavorite,
   onCheckUpdates,
   appVersion = "v2.5.0",
-  hasUpdate = false
+  hasUpdate = false,
+  onSelectDrawingColor
 }) {
   const [activeFlyout, setActiveFlyout] = useState(null);
   const [activeGroup, setActiveGroup] = useState('cursor');
+  const [drawingColor, setDrawingColor] = useState(() => {
+    try { return localStorage.getItem('twr_drawing_color') || '#2962ff'; } catch { return '#2962ff'; }
+  });
+  const [showColorPopover, setShowColorPopover] = useState(false);
+
+  const handleColorChange = (c) => {
+    setDrawingColor(c);
+    try { localStorage.setItem('twr_drawing_color', c); } catch {}
+    if (typeof onSelectDrawingColor === 'function') onSelectDrawingColor(c);
+  };
   const [selectedTools, setSelectedTools] = useState({
     cursor: 'cursor',
     lines: 'segment',
@@ -219,6 +231,7 @@ export default function FlyoutToolbar({
     const handleOutside = (e) => {
       if (toolbarRef.current && !toolbarRef.current.contains(e.target)) {
         setActiveFlyout(null);
+        setShowColorPopover(false);
       }
     };
     document.addEventListener('mousedown', handleOutside);
@@ -423,6 +436,82 @@ export default function FlyoutToolbar({
           </div>
         );
       })}
+
+      <div style={{ width: 32, height: 1, background: '#2a2e39', margin: '4px 0' }} />
+
+      {/* Active Line Drawing Color Selector */}
+      <div style={{ position: 'relative', width: 44, height: 38, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <button
+          className="btn-icon"
+          onClick={() => setShowColorPopover(!showColorPopover)}
+          title={`Active Drawing Color (${drawingColor})`}
+          style={{
+            width: 36, height: 32,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: showColorPopover ? '#2a2e39' : 'transparent',
+            borderRadius: 4, cursor: 'pointer', border: 'none'
+          }}
+        >
+          <span style={{
+            width: 17, height: 17, borderRadius: '50%',
+            background: drawingColor,
+            border: '2px solid #ffffff',
+            boxShadow: '0 0 6px ' + drawingColor
+          }} />
+        </button>
+
+        {showColorPopover && (
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              position: 'absolute',
+              left: 50,
+              top: -60,
+              background: '#1e222d',
+              border: '1px solid #2a2e39',
+              borderRadius: 8,
+              padding: 10,
+              boxShadow: '0 8px 28px rgba(0,0,0,0.8)',
+              zIndex: 9999,
+              width: 175
+            }}
+          >
+            <div style={{ fontSize: 11, fontWeight: 700, color: '#8b949e', marginBottom: 8, letterSpacing: 0.5 }}>
+              DRAWING COLOR
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6 }}>
+              {DRAWING_PRESET_COLORS.map(c => {
+                const isCur = drawingColor?.toLowerCase() === c.toLowerCase();
+                return (
+                  <button
+                    key={c}
+                    onClick={() => {
+                      handleColorChange(c);
+                      setShowColorPopover(false);
+                    }}
+                    style={{
+                      width: 22, height: 22, borderRadius: '50%', background: c,
+                      border: isCur ? '2px solid #fff' : '1px solid rgba(0,0,0,0.5)',
+                      boxShadow: isCur ? '0 0 5px ' + c : 'none',
+                      cursor: 'pointer', padding: 0
+                    }}
+                    title={c}
+                  />
+                );
+              })}
+            </div>
+            <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid #2a2e39', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: 11, color: '#8b949e' }}>Custom:</span>
+              <input
+                type="color"
+                value={drawingColor}
+                onChange={e => handleColorChange(e.target.value)}
+                style={{ width: 28, height: 22, padding: 0, border: 'none', background: 'transparent', cursor: 'pointer' }}
+              />
+            </div>
+          </div>
+        )}
+      </div>
 
       <div style={{ width: 32, height: 1, background: '#2a2e39', margin: '4px 0' }} />
 

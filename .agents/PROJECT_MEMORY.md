@@ -1,6 +1,6 @@
 # Project Memory & Context: MyTradingView
 
-**Last Updated:** September 11, 2026  
+**Last Updated:** September 12, 2026  
 **Repository:** `https://github.com/haider2804/mytradingview.git`  
 **Branch:** `main` (clean, fully in sync)
 
@@ -13,15 +13,30 @@
 1. **Frontend (`frontend/`)**:
    - Built with **React 19 + Vite**, modern dark glassmorphic terminal aesthetic.
    - **TradingView-style Charting**: Advanced candlestick chart rendering, multi-timeframe navigation (1M, 5M, 15M, 1H, 4H, 1D), custom indicators (EMA, MACD, RSI, ATR, Order Blocks, Liquidity, SR Zones).
+   - **Expanded Drawing Engine (`KLineChartArea.jsx`, `FlyoutToolbar.jsx`)**:
+     - Curated 24-color professional trading palette + native custom color picker (`<input type="color">`).
+     - Pre-draw color selection from the left sidebar and auto-inheritance for subsequent drawings.
    - **Pine Script v6 Engine (`pineEngine.js`)**: Interactive script execution directly in the browser with full overlay/study support.
    - **Operational Tabs**:
      - `DashboardTab`: Core overview, market activity, active orders, and broker connection status.
      - `Chart`: Full-featured KLine trading chart with drawing tools and order management.
-     - `TradeJournalTab`: Deal-pairing trade journal with statistics, performance metrics, and history logs.
+     - `TradeJournalTab`: Deal-pairing trade journal with statistics, performance metrics, and **AI Scalper Audit & Coach** post-mortem diagnostic view.
+     - `MonteCarloTab`: Vectorized risk modeling, sequence permutations, bootstrap drawdown distributions.
+     - `GoldOrderBlocksTab`: Dual-timeframe institutional SMC order block detection with nearest-zone filters.
+     - `SupportResistanceTab`: Multi-timeframe institutional S&R zones with Doji/Hammer reversal & continuation validation.
+   - **Signals System**:
+     - Dedicated algorithmic execution engine featuring **`Haider-Gold-Scalper`** (68.4% WR, 5.3 trades/day, +219 pips/day) and **`Haider-Scalper-Enhanced`** (90.8% WR, 4.7 trades/day, +416 pips/day, 3.85 PF).
+     - Both strategies strictly locked to 5M candles with 2-tranche auto-BE execution at TP1 and Anti-Hunt structural protection.
+     - Direct on-chart signal cards and horizontal badges displaying exact TP1/TP2 gains and SL risk in pips and dollars per 0.10 lot.
 
 2. **Backend (`src/`)**:
    - **Flask Application (`src/app.py`)**: REST endpoints and WebSocket/event streaming for quotes, chart data, orders, alarms, and engine control.
-   - **Signal Engine (`src/signal_engine.py`)**: Real-time SMC and Swing strategy setup generator.
+   - **Scalper Diagnostic & Post-Mortem Logging Engine (`src/scalper_logger.py`, `tools/analyze_scalper_logs.py`)**:
+     - Counterfactual 40-bar trajectory evaluation.
+     - Premature SL hunt detection ($\le 12$ pips overshoot before reversing to TP) and undersized TP runner detection.
+     - Persistent audit stores: `data/haider_scalper_signals_audit.json`, `data/haider_scalper_signals_audit.csv`, and `data/weekly_scalper_coaching_report.md`.
+     - Endpoints: `GET /api/scalper/audit/trades`, `GET /api/scalper/audit/report`, `POST /api/scalper/audit/sync`.
+   - **Signal Engine (`src/signal_engine.py`, `src/real_dip_bt.py`)**: Real-time SMC and Haider-Gold-Scalper backtest/signal generator.
    - **Account Guardian (`src/trading_account.py`)**: Strict gate ensuring MT5 connects only to configured demo accounts, preventing real money exposure.
    - **Market Clock (`src/market_clock.py`)**: Time management enforcing weekend flat rules and Friday wind-down.
    - **MetaTrader 5 Bridge**: Interfaces with MetaTrader 5 terminal Python API for order placement and market data.
@@ -93,8 +108,11 @@ Optionally, create `secrets.local.json` in the root folder (git-ignored) if you 
 
 ### Step 5: Verification
 ```bash
-# Run pytest test suite (29 tests)
-python -m pytest
+# Run unit test suite (56 tests)
+python -m unittest discover tests
+
+# Build and verify frontend client
+cd frontend && npm run build && cd ..
 
 # Run parity check (17 test cases, 0 drift)
 python tools/parity_check.py

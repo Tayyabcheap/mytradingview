@@ -304,5 +304,6 @@ def backtest(
         "net_pnl": round(net_pnl, 2),
         "profit_factor": round(profit_factor, 2),
         "max_drawdown_pct": round(max_dd * 100.0, 2),
-        "trades_count": len(trades)
+        "trades_count": len(trades),
+        "trades": trades
     }
