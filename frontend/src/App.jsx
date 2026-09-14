@@ -1162,7 +1162,7 @@ function App() {
           // Enforce Gold safety constraint: strictly <= 1.0 lot
           const safeLot = isGoldSym ? Math.min(1.0, activeLotSize) : activeLotSize;
 
-          const tradeComment = isEnhancedSig ? 'Haider-Scalper-Enhanced' : (isHaiderSig ? 'Haider-Gold-Scalper' : (sig.strategy || 'MT5-Auto-Trade'));
+          const tradeComment = isEnhancedSig ? 'Haider-Scalper' : (isHaiderSig ? 'Haider-Gold' : (sig.strategy || 'MT5-Auto'));
 
           // 2-Tranche institutional order split
           const orderPlans = [];

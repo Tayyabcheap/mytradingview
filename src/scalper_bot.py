@@ -448,12 +448,12 @@ class ScalperBot:
             tranche_1_vol = round(total_lot * 0.5, 2)
             tranche_2_vol = round(total_lot - tranche_1_vol, 2)
             orders_to_place = [
-                {"vol": tranche_1_vol, "tp": tp1, "comment": f"{strategy_name} [TP1]", "is_runner": False},
-                {"vol": tranche_2_vol, "tp": tp2, "comment": f"{strategy_name} [Runner]", "is_runner": True, "auto_be_target": tp1}
+                {"vol": tranche_1_vol, "tp": tp1, "comment": "Haider-Scalper [TP1]", "is_runner": False},
+                {"vol": tranche_2_vol, "tp": tp2, "comment": "Haider-Scalper [Runner]", "is_runner": True, "auto_be_target": tp1}
             ]
         else:
             orders_to_place = [
-                {"vol": total_lot, "tp": tp1, "comment": strategy_name, "is_runner": False}
+                {"vol": total_lot, "tp": tp1, "comment": "Haider-Scalper", "is_runner": False}
             ]
 
         executed_orders = []
@@ -576,7 +576,7 @@ class ScalperBot:
                     "tp": tp,
                     "deviation": 30,
                     "magic": 999333,  # ScalperBot magic number
-                    "comment": comment[:31],
+                    "comment": str(comment or "")[:27],
                     "type_time": mt5.ORDER_TIME_GTC,
                     "type_filling": filling,
                 }

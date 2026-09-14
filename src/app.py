@@ -345,7 +345,8 @@ def send_order():
     
     sl = float(data.get("sl") or 0.0)
     tp = float(data.get("tp") or 0.0)
-    comment = data.get("comment", "Haider-Gold-Scalper")
+    raw_comment = data.get("comment", "Haider-Scalper")
+    safe_comment = str(raw_comment)[:27] if raw_comment else "Haider-Scalper"
 
     if not symbol:
         return jsonify({"error": "Symbol is required"}), 400
@@ -390,7 +391,7 @@ def send_order():
             "tp": tp,
             "deviation": 30,
             "magic": 888201,
-            "comment": comment,
+            "comment": safe_comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling,
         }
