@@ -1795,9 +1795,10 @@ def app_update_status():
     if not _is_git_repo():
         return jsonify({"ok": False, "reason": "This install is not a git checkout, so it can't self-update."}), 200
 
-    ok_fetch, fetch_out = _run("git fetch --quiet", timeout=60)
     dirty_ok, dirty_out = _run("git status --porcelain", timeout=30)
-    dirty_files = [l for l in (dirty_out or "").splitlines() if l.strip()]
+    lines = [l for l in (dirty_out or "").splitlines() if l.strip()]
+    tracked_dirty = [l[3:] if len(l) > 3 else l for l in lines if not l.startswith("??")]
+    untracked_files = [l[3:] if len(l) > 3 else l for l in lines if l.startswith("??")]
 
     cur_ok, cur = _run('git log -1 --format="%h|%ci|%s"', timeout=15)
     up_ok, upstream = _run("git rev-parse --abbrev-ref --symbolic-full-name @{u}", timeout=15)
@@ -1832,9 +1833,11 @@ def app_update_status():
         "behind": behind,
         "ahead": ahead,
         "up_to_date": (behind == 0),
-        "dirty": len(dirty_files) > 0,
-        "dirty_files": [f[3:] if len(f) > 3 else f for f in dirty_files][:50],
-        "dirty_count": len(dirty_files),
+        "dirty": len(tracked_dirty) > 0,
+        "dirty_files": tracked_dirty[:50],
+        "dirty_count": len(tracked_dirty),
+        "untracked_count": len(untracked_files),
+        "can_force": True,
         "current": current,
         "latest": latest_obj,
     }), 200
@@ -1865,13 +1868,24 @@ def app_update():
     if not _is_git_repo():
         return jsonify({"error": "This install is not a git checkout, so it can't self-update."}), 400
 
-    # 1) Never run over local edits.
+    data = request.get_json(silent=True) or {}
+    force = bool(data.get("force", False) or data.get("discard_local", False))
+
+    # 1) Handle local edits
     _, dirty_out = _run("git status --porcelain", timeout=30)
-    dirty_files = [l[3:] if len(l) > 3 else l for l in (dirty_out or "").splitlines() if l.strip()]
-    if dirty_files:
+    lines = [l for l in (dirty_out or "").splitlines() if l.strip()]
+    tracked_dirty = [l[3:] if len(l) > 3 else l for l in lines if not l.startswith("??")]
+
+    if force:
+        _run("git reset --hard HEAD", timeout=30)
+        _run("git clean -fd", timeout=30)
+    elif tracked_dirty:
         return jsonify({
             "error": "You have local changes in this folder. Commit or discard them before updating — the updater will not overwrite your work.",
-            "dirty": True, "dirty_files": dirty_files[:50], "dirty_count": len(dirty_files),
+            "dirty": True,
+            "dirty_files": tracked_dirty[:50],
+            "dirty_count": len(tracked_dirty),
+            "can_force": True
         }), 409
 
     # 2) Make sure we actually have something to pull.

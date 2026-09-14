@@ -6,16 +6,21 @@ export default function UpdateModal({ isOpen, onClose, appVersion = "v2.5.0" }) 
   const [updating, setUpdating] = useState(false);
   const [status, setStatus] = useState(null);
   const [error, setError] = useState(null);
+  const [dirtyFiles, setDirtyFiles] = useState(null);
   const [updateResult, setUpdateResult] = useState(null);
 
   const checkUpdates = async () => {
     setChecking(true);
     setError(null);
+    setDirtyFiles(null);
     setUpdateResult(null);
     try {
       const res = await fetch('/api/app/update-status');
       const data = await res.json();
       setStatus(data);
+      if (data && data.dirty_files) {
+        setDirtyFiles(data.dirty_files);
+      }
     } catch (err) {
       setError("Failed to contact local update service: " + err.message);
     } finally {
@@ -29,14 +34,21 @@ export default function UpdateModal({ isOpen, onClose, appVersion = "v2.5.0" }) 
     }
   }, [isOpen]);
 
-  const applyUpdate = async () => {
+  const applyUpdate = async (force = false) => {
     setUpdating(true);
     setError(null);
     try {
-      const res = await fetch('/api/app/update', { method: 'POST' });
+      const res = await fetch('/api/app/update', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force })
+      });
       const data = await res.json();
       if (!res.ok || data.error) {
         setError(data.error || "Update failed to apply cleanly.");
+        if (data.dirty_files) {
+          setDirtyFiles(data.dirty_files);
+        }
       } else {
         setUpdateResult(data);
         setTimeout(() => {
@@ -275,22 +287,45 @@ export default function UpdateModal({ isOpen, onClose, appVersion = "v2.5.0" }) 
             </div>
           )}
 
-          {/* Error Message */}
+          {/* Error Message & Local Changes Resolution */}
           {error && (
             <div style={{
               background: 'rgba(242, 54, 69, 0.1)',
               border: '1px solid rgba(242, 54, 69, 0.3)',
               borderRadius: 6,
-              padding: '10px 14px',
-              color: '#f23645',
+              padding: '12px 14px',
+              color: '#f87171',
               fontSize: 12,
-              marginBottom: 14,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 8
+              marginBottom: 14
             }}>
-              <AlertTriangle size={16} />
-              <span>{error}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <AlertTriangle size={16} color="#f87171" style={{ flexShrink: 0 }} />
+                <span>{error}</span>
+              </div>
+
+              {(status?.dirty || (dirtyFiles && dirtyFiles.length > 0)) && (
+                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid rgba(242, 54, 69, 0.25)' }}>
+                  <div style={{ fontSize: 11, color: '#d1d4dc', marginBottom: 6 }}>
+                    Local modified files on VM: <code style={{ color: '#fca5a5' }}>{(dirtyFiles || status?.dirty_files || []).slice(0, 5).join(', ')}</code>
+                  </div>
+                  <button
+                    onClick={() => applyUpdate(true)}
+                    disabled={updating}
+                    style={{
+                      background: '#f23645',
+                      color: '#fff',
+                      border: 'none',
+                      borderRadius: 4,
+                      padding: '6px 12px',
+                      fontSize: 11.5,
+                      fontWeight: 700,
+                      cursor: updating ? 'not-allowed' : 'pointer'
+                    }}
+                  >
+                    {updating ? 'Overwriting & Updating…' : 'Discard Local Changes & Force Update'}
+                  </button>
+                </div>
+              )}
             </div>
           )}
 
