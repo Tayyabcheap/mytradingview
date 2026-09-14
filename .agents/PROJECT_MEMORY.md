@@ -53,7 +53,8 @@
   - Concurrently monitors 5M closed bars across up to 10 configured instruments.
   - Reads custom lot sizes per symbol from configuration (`symbol_lots`).
   - Dynamically resolves broker symbols before data copying and order submission.
-  - Executes institutional **2-Tranche scale-out orders** (Tranche 1 @ TP1, Tranche 2 Runner @ TP2) in under 50ms (< 3s SLA).
+  - Executes institutional **2-Tranche scale-out orders** (Tranche 1 @ TP1, Tranche 2 Runner @ TP2) in under 50ms (< 3s SLA). Order comments explicitly denote strategy within MT5's 27-character limit: `Haider-Enhanced [TP1]` (21 chars), `Haider-Enhanced [Runner]` (24 chars), or `Haider-Gold` (11 chars).
+  - **Single Source of Execution**: Automated signal trading is strictly centralized to the Python Autonomous Daemon; legacy frontend client-side order dispatching is retired to permanently prevent duplicate orders.
   - High-speed 1-second background tick monitor (`_autobe_loop`) that autonomously moves Tranche 2 SL to Breakeven when TP1 is hit.
   - Strictly enforces Gold volume cap $\le 1.0$ lot and demo account protection.
   - Endpoints: `GET /api/scalper/bot/status`, `POST /api/scalper/bot/toggle`, `GET/POST /api/scalper/bot/symbols`.
