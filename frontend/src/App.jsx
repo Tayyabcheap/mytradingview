@@ -2622,6 +2622,9 @@ function App() {
         onClose={() => setShowSignalPerformanceModal(false)}
         activeSignalStrategies={activeSignalStrategies}
         onToggleStrategy={handleToggleSignalStrategy}
+        scalperSymbols={scalperSymbols}
+        currentSymbol={symbol}
+        availableSymbols={symbols}
       />
 
       {/* SCALPER PAIR SELECTOR MODAL (MULTI-SYMBOL BACKGROUND ENGINE) */}

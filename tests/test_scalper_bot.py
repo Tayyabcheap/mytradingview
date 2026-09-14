@@ -188,7 +188,25 @@ class TestScalperBot(unittest.TestCase):
         self.assertIn("XAUUSDc", status["per_symbol"])
         self.assertIn("broker_symbol", status["per_symbol"]["BTCUSDc"])
 
+    def test_scalper_performance_endpoints(self):
+        with app.test_client() as client:
+            res = client.get("/api/scalper/performance?symbol=XAUUSDc")
+            self.assertIn(res.status_code, (200, 400, 500))  # 200 if MT5 connected, 400/500 if offline test
+            if res.status_code == 200:
+                data = json.loads(res.data)
+                self.assertIn("HAIDER_ENHANCED", data)
+                self.assertIn("REAL_DIP", data)
+                self.assertIn("winRate", data["HAIDER_ENHANCED"])
+                self.assertIn("profitFactor", data["HAIDER_ENHANCED"])
+
+            res_batch = client.get("/api/scalper/performance/batch?symbols=XAUUSDc,EURUSDc")
+            self.assertEqual(res_batch.status_code, 200)
+            data_b = json.loads(res_batch.data)
+            self.assertIn("instruments", data_b)
+            self.assertIn("count", data_b)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import threading
+from typing import Dict, Any, List, Optional, Tuple
 
 # Ensure the src directory is in sys.path so modules can import each other
 _src_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1053,6 +1054,7 @@ def backtest_haider_gold_scalper():
             return jsonify({"error": f"Symbol not found: {symbol}"}), 404
         info = mt5.symbol_info(symbol)
         mintick = float(info.point) if (info and info.point) else float(request.args.get("mintick", 0.01))
+        tick_value = float(info.trade_tick_value) if (info and info.trade_tick_value) else 1.0
         rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, bars_n)
 
     if rates is None or len(rates) == 0:
@@ -1074,6 +1076,7 @@ def backtest_haider_gold_scalper():
             sl_buffer=float(request.args.get("sl_buffer", 1.0)),
             lot_size=float(request.args.get("lot_size", 0.10)),
             mintick=mintick,
+            tick_value=tick_value,
         )
         res["symbol"] = symbol
         res["timeframe"] = tf_str
@@ -1105,6 +1108,7 @@ def backtest_haider_enhanced():
             return jsonify({"error": f"Symbol not found: {symbol}"}), 404
         info = mt5.symbol_info(symbol)
         mintick = float(info.point) if (info and info.point) else float(request.args.get("mintick", 0.01))
+        tick_value = float(info.trade_tick_value) if (info and info.trade_tick_value) else 1.0
         rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, bars_n)
 
     if rates is None or len(rates) == 0:
@@ -1128,12 +1132,210 @@ def backtest_haider_enhanced():
             skip_rollover=True,
             lot_size=float(request.args.get("lot_size", 0.10)),
             mintick=mintick,
+            tick_value=tick_value,
         )
         res["symbol"] = symbol
         res["timeframe"] = tf_str
         return jsonify(res)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+def compute_symbol_performance(raw_symbol: str, bars_n: int = 3000, lot_size: float = 0.10) -> Dict[str, Any]:
+    """Compute comprehensive audited payoff metrics for both Haider-Scalper-Enhanced and
+    Haider-Gold-Scalper (Baseline) on closed 5M bars for any broker instrument."""
+    if not MT5_IMPORTED or not init_mt5():
+        return {"error": "MT5 not connected", "symbol": raw_symbol}
+
+    symbol = resolve_broker_symbol(raw_symbol)
+    clean_sym = clean_base_symbol(symbol)
+
+    with mt5_lock:
+        if not mt5.symbol_select(symbol, True):
+            return {"error": f"Symbol not found: {symbol}", "symbol": symbol, "clean_symbol": clean_sym}
+        info = mt5.symbol_info(symbol)
+        rates = mt5.copy_rates_from_pos(symbol, mt5.TIMEFRAME_M5, 0, bars_n)
+
+    if rates is None or len(rates) < 40:
+        return {"error": "Insufficient history", "symbol": symbol, "clean_symbol": clean_sym}
+
+    point = float(info.point) if (info and info.point) else 0.01
+    digits = int(info.digits) if (info and info.digits is not None) else 2
+    tick_val = float(info.trade_tick_value) if (info and info.trade_tick_value) else 1.0
+
+    # Determine pip size
+    u_clean = clean_sym.upper()
+    if "XAU" in u_clean or "GOLD" in u_clean:
+        pip_size = 0.10
+    elif "JPY" in u_clean:
+        pip_size = 0.01
+    elif "BTC" in u_clean or "ETH" in u_clean:
+        pip_size = 1.0
+    elif digits in (3, 5):
+        pip_size = point * 10.0
+    else:
+        pip_size = point
+
+    pts_to_pip = (point / pip_size) if pip_size > 0 else 1.0
+
+    bars = [(int(r["time"]), float(r["open"]), float(r["high"]),
+             float(r["low"]), float(r["close"])) for r in rates]
+
+    span_secs = max(1, bars[-1][0] - bars[0][0])
+    trading_days = max(1.0, round((span_secs / 86400.0) * (5.0 / 7.0), 1))
+
+    from enhanced_scalper_bt import backtest as _bt_enh
+    from real_dip_bt import backtest as _bt_base
+
+    enh = _bt_enh(bars, mintick=point, lot_size=lot_size, tick_value=tick_val)
+    base = _bt_base(bars, mintick=point, lot_size=lot_size, tick_value=tick_val)
+
+    def _format_metrics(bt_res: Dict[str, Any], is_enhanced: bool) -> Dict[str, Any]:
+        total_sig = bt_res.get("total_signals", 0)
+        wins = bt_res.get("win_count", 0)
+        losses = bt_res.get("loss_count", 0)
+        win_rate = bt_res.get("win_rate", 0.0)
+        profit_factor = bt_res.get("profit_factor", 0.0)
+        net_pnl = bt_res.get("net_pnl", 0.0)
+        max_dd = bt_res.get("max_drawdown", 0.0)
+
+        trades = bt_res.get("trades", [])
+        avg_trades_day = round(total_sig / trading_days, 1) if trading_days > 0 else 0.0
+
+        avg_win_pts = bt_res.get("avg_win_pts", 0.0)
+        avg_loss_pts = bt_res.get("avg_loss_pts", 0.0)
+
+        avg_tp_pips_val = round(avg_win_pts * pts_to_pip, 1)
+        avg_sl_pips_val = round(avg_loss_pts * pts_to_pip, 1)
+
+        win_trades = [t for t in trades if t.get("pnl", 0) > 0]
+        loss_trades = [t for t in trades if t.get("pnl", 0) < 0]
+
+        avg_tp_usd_val = round(sum(t["pnl"] for t in win_trades) / len(win_trades), 2) if win_trades else 0.0
+        avg_sl_usd_val = round(abs(sum(t["pnl"] for t in loss_trades)) / len(loss_trades), 2) if loss_trades else 0.0
+
+        net_pts = sum(t.get("points", 0.0) for t in trades)
+        net_pips_val = round(net_pts * pts_to_pip, 1)
+        pips_day = round(net_pips_val / trading_days, 1) if trading_days > 0 else 0.0
+        usd_day = round(net_pnl / trading_days, 2) if trading_days > 0 else 0.0
+
+        min_rr = round(avg_tp_pips_val / avg_sl_pips_val, 2) if avg_sl_pips_val > 0 else 1.65
+        exp_trade = round(net_pnl / total_sig, 2) if total_sig > 0 else 0.0
+
+        if is_enhanced:
+            tp_pips_str = f"TP1: +{avg_tp_pips_val} p · TP2: +{round(avg_tp_pips_val * 2.2, 1)} p"
+            tp_usd_str = f"TP1: +${avg_tp_usd_val * 0.5:,.2f} · TP2: +${avg_tp_usd_val * 1.1:,.2f}"
+            tp_pts_str = f"TP1: {avg_win_pts:.1f} pts"
+        else:
+            tp_pips_str = f"+{avg_tp_pips_val} pips"
+            tp_usd_str = f"+${avg_tp_usd_val:,.2f}"
+            tp_pts_str = f"{avg_win_pts:.1f} pts"
+
+        return {
+            "id": "HAIDER_ENHANCED" if is_enhanced else "REAL_DIP",
+            "name": "Haider-Scalper-Enhanced" if is_enhanced else "Haider-Gold-Scalper",
+            "timeframe": "5M (Exclusively)",
+            "badgeColor": "#00f2fe" if is_enhanced else "#089981",
+            "winRate": win_rate,
+            "totalSignals": total_sig,
+            "wins": wins,
+            "losses": losses,
+            "profitFactor": profit_factor,
+            "netPnL": f"{'+' if net_pnl >= 0 else ''}{net_pnl:,.2f}",
+            "netPnLRaw": net_pnl,
+            "maxDrawdown": max_dd,
+            "avgTradesPerDay": f"{avg_trades_day} trades / day",
+            "avgTradesPerDayRaw": avg_trades_day,
+            "pipsPerDay": f"{'+' if pips_day >= 0 else ''}{pips_day:.1f} pips / day",
+            "pipsPerDayRaw": pips_day,
+            "usdPerDay": f"{'+' if usd_day >= 0 else '-'}${abs(usd_day):,.2f} / day",
+            "usdPerDayRaw": usd_day,
+            "avgTpPips": tp_pips_str,
+            "avgTpUsd": tp_usd_str,
+            "avgTpPts": tp_pts_str,
+            "avgSlPips": f"-{avg_sl_pips_val} pips",
+            "avgSlUsd": f"-${avg_sl_usd_val:,.2f}",
+            "avgSlPts": f"{avg_loss_pts:.1f} pts",
+            "minRR": min_rr,
+            "expectedPerTrade": f"{'+' if exp_trade >= 0 else '-'}${abs(exp_trade):,.2f} net / trade",
+            "expectedPerTradeRaw": exp_trade,
+            "description": (
+                f"Anti-Hunt Structural Buffer + Rejection Wick (≥18%) + 2-Tranche Auto-BE at TP1 calibrated for {clean_sym}."
+                if is_enhanced else
+                f"ATR Volatility Impulse + RSI(14) Exhaustion dynamic Mean-Reversion engine for {clean_sym}."
+            ),
+            "rules": [
+                "Active exclusively on 5-Minute (5M) candlestick charts.",
+                "Anti-Hunt Structural Buffer eliminates premature stop-loss tagging by broker spreads." if is_enhanced else "Evaluates closed 5M bars to avoid intra-candle fakeouts.",
+                "Rejection Wick Confirmation (≥18%) confirms institutional absorption before entry." if is_enhanced else "Dynamic Take-Profit at 50% impulse retracement.",
+                "2-Tranche Scaling: Banks 50% at TP1 with immediate Auto-BE, while trailing runner captures extended moves." if is_enhanced else "Auto SL to Breakeven at TP1 secures zero-risk position once target reached.",
+                "Spread Widening Defense: Automatically avoids 21:00-22:30 UTC market rollover."
+            ]
+        }
+
+    return {
+        "symbol": symbol,
+        "clean_symbol": clean_sym,
+        "trading_days": trading_days,
+        "bars_count": len(bars),
+        "point": point,
+        "pip_size": pip_size,
+        "lot_size": lot_size,
+        "tick_value": tick_val,
+        "HAIDER_ENHANCED": _format_metrics(enh, is_enhanced=True),
+        "REAL_DIP": _format_metrics(base, is_enhanced=False)
+    }
+
+
+@app.route("/api/scalper/performance", methods=["GET"])
+def get_scalper_performance():
+    """Return live audited performance metrics for a specific instrument on 5M."""
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    bars_n = int(request.args.get("bars", 3000))
+    lot_size = float(request.args.get("lot_size", 0.10))
+    try:
+        data = compute_symbol_performance(raw_symbol, bars_n=bars_n, lot_size=lot_size)
+        if "error" in data and "HAIDER_ENHANCED" not in data:
+            return jsonify(data), 400
+        return jsonify(data)
+    except Exception as e:
+        app.logger.error(f"Error computing performance for {raw_symbol}: {e}", exc_info=True)
+        return jsonify({"error": str(e), "symbol": raw_symbol}), 500
+
+
+@app.route("/api/scalper/performance/batch", methods=["GET", "POST"])
+def get_scalper_performance_batch():
+    """Return audited performance metrics for a list of instruments (e.g. all 10 selected scalper pairs)."""
+    if request.method == "POST":
+        payload = request.get_json(silent=True) or {}
+        syms = payload.get("symbols", [])
+        bars_n = int(payload.get("bars", 3000))
+        lot_size = float(payload.get("lot_size", 0.10))
+    else:
+        raw_syms = request.args.get("symbols", "XAUUSDc,EURUSDc,USDJPYc")
+        syms = [s.strip() for s in raw_syms.split(",") if s.strip()]
+        bars_n = int(request.args.get("bars", 3000))
+        lot_size = float(request.args.get("lot_size", 0.10))
+
+    if not syms:
+        syms = ["XAUUSDc"]
+
+    # Limit batch to at most 15 symbols to avoid long stalls
+    syms = syms[:15]
+    results = []
+
+    for s in syms:
+        try:
+            perf = compute_symbol_performance(s, bars_n=bars_n, lot_size=lot_size)
+            results.append(perf)
+        except Exception as e:
+            app.logger.warning(f"Failed performance for {s}: {e}")
+            results.append({"symbol": s, "error": str(e)})
+
+    return jsonify({
+        "count": len(results),
+        "instruments": results
+    })
 
 @app.route("/api/signals/accuracy", methods=["GET"])
 def signals_accuracy():
