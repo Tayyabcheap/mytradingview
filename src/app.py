@@ -1795,6 +1795,8 @@ def app_update_status():
     if not _is_git_repo():
         return jsonify({"ok": False, "reason": "This install is not a git checkout, so it can't self-update."}), 200
 
+    ok_fetch, fetch_out = _run("git fetch --quiet", timeout=45)
+
     dirty_ok, dirty_out = _run("git status --porcelain", timeout=30)
     lines = [l for l in (dirty_out or "").splitlines() if l.strip()]
     tracked_dirty = [l[3:] if len(l) > 3 else l for l in lines if not l.startswith("??")]

@@ -16,6 +16,19 @@ export default function UpdateModal({ isOpen, onClose, appVersion = "v2.5.0" }) 
     setUpdateResult(null);
     try {
       const res = await fetch('/api/app/update-status');
+      if (!res.ok) {
+        const text = await res.text();
+        let msg = `Service responded with HTTP ${res.status}`;
+        try {
+          const j = JSON.parse(text);
+          if (j.error) msg = j.error;
+        } catch {
+          if (text.includes("500") || text.includes("Internal Server Error")) {
+            msg = "Backend service encountered an error (HTTP 500). Please check python logs.";
+          }
+        }
+        throw new Error(msg);
+      }
       const data = await res.json();
       setStatus(data);
       if (data && data.dirty_files) {

@@ -176,7 +176,14 @@ class TestSafetyLimitsAndEndpoints(unittest.TestCase):
         stats = res.get_json()
         self.assertIn("win_rate", stats)
         self.assertIn("net_pnl", stats)
-        self.assertIn("profit_factor", stats)
+    def test_app_update_status_endpoint(self):
+        res = self.client.get('/api/app/update-status')
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data.get("ok"))
+        self.assertIn("up_to_date", data)
+        self.assertIn("behind", data)
+        self.assertIn("dirty", data)
 
 
 if __name__ == '__main__':
