@@ -2131,6 +2131,7 @@ function App() {
                 activeRange={activeRange}
                 onSelectRange={setActiveRange}
                 timezone={chartSettings.timezone}
+                onResetView={() => chartRef.current?.resetView?.()}
               />
             </div>
 

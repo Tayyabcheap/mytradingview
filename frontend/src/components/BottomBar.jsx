@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { Globe, Clock } from 'lucide-react';
+import { Globe, Clock, RotateCcw } from 'lucide-react';
 
 const RANGES = ['1D', '5D', '1M', '3M', '6M', 'YTD', '1Y', '5Y', 'ALL'];
 
-export default function BottomBar({ onSelectRange, activeRange = '1M', timezone = 'UTC' }) {
+export default function BottomBar({ onSelectRange, activeRange = '1M', timezone = 'UTC', onResetView }) {
   const [isLog, setIsLog] = useState(false);
   const [isAuto, setIsAuto] = useState(true);
 
@@ -76,18 +76,46 @@ export default function BottomBar({ onSelectRange, activeRange = '1M', timezone 
         </button>
 
         <button
-          onClick={() => setIsAuto(!isAuto)}
+          onClick={() => {
+            setIsAuto(prev => !prev);
+            if (onResetView) onResetView();
+          }}
           style={{
-            background: 'none',
+            background: isAuto ? 'rgba(41, 98, 255, 0.15)' : 'none',
             border: 'none',
+            borderRadius: 3,
+            padding: '2px 6px',
             color: isAuto ? '#2962ff' : '#787b86',
             fontWeight: 700,
             fontSize: 11,
             cursor: 'pointer'
           }}
-          title="Toggle Auto Scale"
+          title="Auto-Fit Price & Reset View"
         >
           auto
+        </button>
+
+        <button
+          onClick={() => onResetView && onResetView()}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 3,
+            background: 'none',
+            border: 'none',
+            borderRadius: 3,
+            padding: '2px 6px',
+            color: '#787b86',
+            fontWeight: 600,
+            fontSize: 11,
+            cursor: 'pointer'
+          }}
+          title="Reset Chart View & Recenter"
+          onMouseEnter={e => e.currentTarget.style.color = '#d1d4dc'}
+          onMouseLeave={e => e.currentTarget.style.color = '#787b86'}
+        >
+          <RotateCcw size={11} />
+          <span>reset</span>
         </button>
       </div>
     </div>

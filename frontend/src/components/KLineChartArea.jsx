@@ -19,6 +19,23 @@ const TF_TO_PERIOD = {
   '1W': { type: 'week', span: 1 },
 };
 
+import { RotateCcw, Crosshair } from 'lucide-react';
+
+// Resolve accurate decimal precision per instrument (Forex 5 digits, JPY 3, Gold 2/3, Crypto 2)
+export function getSymbolPrecision(sym) {
+  if (!sym) return 2;
+  const u = sym.toUpperCase();
+  if (u.includes('JPY')) return 3;
+  if (u.includes('XAU') || u.includes('GOLD')) return u.endsWith('C') ? 3 : 2;
+  if (u.includes('BTC') || u.includes('ETH')) return 2;
+  // All standard forex currencies: EUR, GBP, AUD, NZD, CAD, CHF, USD
+  const fxCurrencies = ['EUR', 'GBP', 'AUD', 'NZD', 'CAD', 'CHF', 'USD'];
+  if (fxCurrencies.some(c => u.includes(c))) {
+    return 5;
+  }
+  return 2;
+}
+
 // Convert a KLineCharts period object back to our timeframe string
 function periodToTf(period) {
   if (!period) return '1H';
@@ -464,14 +481,11 @@ const KLineChartArea = forwardRef(({
       try { chartRef.current.scrollToDataIndex(idx, 300); } catch (e) { /* ignore */ }
     },
 
-    // Reset the chart to a clean, logical view: default zoom + scroll to latest.
-    resetView: () => {
-      if (!chartRef.current) return;
-      try {
-        chartRef.current.setBarSpace(8);
-        chartRef.current.scrollToRealTime(200);
-      } catch (e) { /* ignore */ }
-    },
+    // Reset the chart to a clean, logical view: default zoom + margin + scroll to latest.
+    resetView: () => handleResetView(),
+    zoomIn: () => handleZoom(1.2),
+    zoomOut: () => handleZoom(0.8),
+    scrollToRealTime: () => chartRef.current?.scrollToRealTime(180),
     refreshIndicators: () => syncIndicators(),
 
     // ---- Replay API ------------------------------------------------------
@@ -608,6 +622,12 @@ const KLineChartArea = forwardRef(({
             if (onPriceUpdate && klineData.length > 0) {
               onPriceUpdate(klineData[klineData.length - 1].close);
             }
+            // Auto recenter after loading new instrument data
+            setTimeout(() => {
+              if (chartRef.current) {
+                handleResetView();
+              }
+            }, 60);
           } else {
             callback([], false);
           }
@@ -646,6 +666,28 @@ const KLineChartArea = forwardRef(({
     };
   }, []);
 
+  // TradingView-style Reset View & Auto-fit calculation
+  const handleResetView = () => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    try {
+      chart.setBarSpace(8);
+      chart.setOffsetRightDistance(90);
+      chart.scrollToRealTime(180);
+      chart.resize();
+    } catch (e) { /* ignore */ }
+  };
+
+  const handleZoom = (factor) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    try {
+      const currentSpace = chart.getBarSpace()?.bar || 8;
+      const nextSpace = Math.max(2, Math.min(45, currentSpace * factor));
+      chart.setBarSpace(nextSpace);
+    } catch (e) { /* ignore */ }
+  };
+
   // Update symbol and period when props change
   useEffect(() => {
     if (!chartRef.current) return;
@@ -654,12 +696,20 @@ const KLineChartArea = forwardRef(({
     // Changing symbol/timeframe leaves replay mode.
     replayRef.current = { active: false, index: 0 };
 
+    const precision = getSymbolPrecision(symbol);
+
     chartRef.current.setSymbol({
       ticker: symbol,
-      pricePrecision: symbol.includes('JPY') ? 3 : symbol.includes('BTC') ? 2 : 2,
+      pricePrecision: precision,
       volumePrecision: 2
     });
     chartRef.current.setPeriod(period);
+
+    // Auto-fit & recenter on instrument change so candles & price scale are immediately clean and clear
+    const resetTimer = setTimeout(() => {
+      handleResetView();
+    }, 180);
+    return () => clearTimeout(resetTimer);
   }, [symbol, timeframe]);
 
   // Restore saved drawings when the symbol changes (drawings are per-symbol,
@@ -923,7 +973,97 @@ const KLineChartArea = forwardRef(({
         </div>
       )}
 
-      <div ref={chartContainerRef} style={{ width: '100%', height: '100%' }} />
+      {/* TRADINGVIEW-STYLE FLOATING QUICK CHART CONTROLS (BOTTOM-RIGHT) */}
+      <div 
+        style={{
+          position: 'absolute',
+          bottom: 10,
+          right: 68,
+          zIndex: 40,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 3,
+          background: 'rgba(19, 23, 34, 0.88)',
+          backdropFilter: 'blur(6px)',
+          border: '1px solid rgba(42, 46, 57, 0.8)',
+          borderRadius: 6,
+          padding: '2px 6px',
+          boxShadow: '0 4px 14px rgba(0,0,0,0.5)',
+          userSelect: 'none'
+        }}
+      >
+        <button
+          onClick={handleResetView}
+          title="Reset View & Auto-Fit Price (Double-click chart to reset anytime)"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 4,
+            background: 'none',
+            border: 'none',
+            color: '#c9d1d9',
+            fontSize: 11,
+            fontWeight: 700,
+            cursor: 'pointer',
+            padding: '2px 6px',
+            borderRadius: 4
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = '#00f2fe'}
+          onMouseLeave={e => e.currentTarget.style.color = '#c9d1d9'}
+        >
+          <RotateCcw size={12} />
+          <span>Reset View</span>
+        </button>
+
+        <div style={{ width: 1, height: 12, background: '#2a2e39', margin: '0 2px' }} />
+
+        <button
+          onClick={() => handleZoom(1.2)}
+          title="Zoom In (+)"
+          style={{ background: 'none', border: 'none', color: '#c9d1d9', fontSize: 13, fontWeight: 700, cursor: 'pointer', padding: '0 4px' }}
+          onMouseEnter={e => e.currentTarget.style.color = '#00f2fe'}
+          onMouseLeave={e => e.currentTarget.style.color = '#c9d1d9'}
+        >
+          +
+        </button>
+
+        <button
+          onClick={() => handleZoom(0.8)}
+          title="Zoom Out (−)"
+          style={{ background: 'none', border: 'none', color: '#c9d1d9', fontSize: 13, fontWeight: 700, cursor: 'pointer', padding: '0 4px' }}
+          onMouseEnter={e => e.currentTarget.style.color = '#00f2fe'}
+          onMouseLeave={e => e.currentTarget.style.color = '#c9d1d9'}
+        >
+          −
+        </button>
+
+        <div style={{ width: 1, height: 12, background: '#2a2e39', margin: '0 2px' }} />
+
+        <button
+          onClick={handleResetView}
+          title="Scroll to Real-Time Candle"
+          style={{
+            background: 'none',
+            border: 'none',
+            color: '#089981',
+            cursor: 'pointer',
+            padding: '2px 4px',
+            display: 'flex',
+            alignItems: 'center'
+          }}
+          onMouseEnter={e => e.currentTarget.style.color = '#4ade80'}
+          onMouseLeave={e => e.currentTarget.style.color = '#089981'}
+        >
+          <Crosshair size={12} />
+        </button>
+      </div>
+
+      <div 
+        ref={chartContainerRef} 
+        onDoubleClick={handleResetView}
+        title="Double-click to Auto-Fit & Reset View"
+        style={{ width: '100%', height: '100%' }} 
+      />
     </div>
   );
 });
