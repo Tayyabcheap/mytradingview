@@ -1,8 +1,8 @@
 # Project Memory & Context: MyTradingView
 
-**Last Updated:** September 13, 2026  
+**Last Updated:** September 14, 2026  
 **Repository:** `https://github.com/haider2804/mytradingview.git`  
-**Branch:** `main` (clean, fully tested, in sync)
+**Branch:** `main` (clean, 69 unit tests passing, in sync, commit `f782e60`)
 
 ---
 
@@ -13,6 +13,9 @@
 ### 1. Frontend (`frontend/`)
 - Built with **React 19 + Vite**, modern dark glassmorphic terminal aesthetic.
 - **TradingView-style Charting**: Advanced candlestick chart rendering, multi-timeframe navigation (1M, 5M, 15M, 1H, 4H, 1D), custom indicators (EMA, MACD, RSI, ATR, Order Blocks, Liquidity, SR Zones).
+- **TradingView-Style Chart View Reset (`KLineChartArea.jsx`)**:
+  - Keyboard shortcut `Alt+R` and a dedicated "Reset View" header button.
+  - Automatically resets zoom factor, offsets, and auto-scales vertical price ranges when switching between varied instruments (e.g. BTCUSD vs EURUSD vs XAUUSD).
 - **Expanded Drawing Engine (`KLineChartArea.jsx`, `FlyoutToolbar.jsx`)**:
   - Curated 24-color professional trading palette + native custom color picker (`<input type="color">`).
   - Pre-draw color selection from the left sidebar and auto-inheritance for subsequent drawings.
@@ -24,20 +27,31 @@
   - `MonteCarloTab`: Vectorized risk modeling, sequence permutations, bootstrap drawdown distributions.
   - `GoldOrderBlocksTab`: Dual-timeframe institutional SMC order block detection with nearest-zone filters.
   - `SupportResistanceTab`: Multi-timeframe institutional S&R zones with Doji/Hammer reversal & continuation validation.
-- **Signals & Pair Selector**:
-  - **`Haider-Gold-Scalper`**: Baseline algorithmic setup (68.4% WR, 5.3 trades/day, +219 pips/day).
-  - **`Haider-Scalper-Enhanced`**: High-accuracy algorithmic setup (90.8% WR, 4.7 trades/day, +416 pips/day, 3.85 PF) featuring 1.35x ATR anti-hunt buffer, >=18% rejection wick filter, rollover spread defense (21:00–22:30 UTC), and 2-tranche Auto-BE execution.
-  - **`ScalperPairSelectorModal.jsx`**: Select up to 10 active currency pairs / instruments for continuous background execution, with quick presets (Gold Only, Top 5 Majors, Full 10 Basket).
-  - **Independent Multi-Chart Navigation**: The user can open, switch, and view any chart tab (`BTCUSD`, `EURUSD`, etc.) indefinitely without background polling intervals forcefully resetting the screen to Gold.
+- **Multi-Instrument Signal Performance Table (`SignalPerformanceModal.jsx`)**:
+  - Calculates detailed win rates, profit factor, expected payoff, and trade counts dynamically across all 10 selected instruments in the active basket.
+  - Supports switching instruments via an interactive dropdown and quick-badge selectors.
+- **Per-Instrument Lot Size & Pair Selector (`ScalperPairSelectorModal.jsx`)**:
+  - Select up to 10 active currency pairs / instruments for continuous background execution.
+  - Table allowing traders to specify custom auto-trading lot sizes per instrument (e.g., 1.0 for Cent pairs, 0.02 for Standard pairs).
+  - Enforces strict validation on Gold (`<= 1.0`).
+  - **Persistent Storage**: Saved in backend/DB so basket selections and lot configurations survive application restarts.
+  - **Polling Race Condition Fix**: Includes an editing lock (`isEditing`) that prevents background 2–3s polling from wiping unchecked/checked selections while the user is actively configuring pairs.
+- **System Updates Modal (`UpdateModal.jsx`)**:
+  - Checks remote GitHub repository for upstream commits.
+  - Filters out untracked files so debris doesn't lock updates.
+  - Provides a 1-click **"Discard Local Changes & Force Update"** button when dirty files exist on the remote VM, executing `git reset --hard HEAD && git clean -fd && git pull origin main`.
 
 ### 2. Backend (`src/`)
 - **Flask Application (`src/app.py`)**: REST endpoints and WebSocket/event streaming for quotes, chart data, orders, alarms, and engine control.
+  - `/api/app/update-status`: Distinguishes tracked dirty files from untracked files (`??`).
+  - `/api/app/update`: Supports `{ force: true }` parameter for headless VM resets.
 - **Broker Symbol Resolution Engine (`src/symbol_utils.py`)**:
   - Shared, thread-safe module providing `clean_base_symbol()` and `resolve_broker_symbol(symbol, mt5_lock)`.
   - Automatically resolves broker suffix variations (`BTCUSD` / `BTCUSDc` $\rightarrow$ `BTCUSDm`, `XAUUSD` $\rightarrow$ `XAUUSDm`, etc.) dynamically across Cent, Trial, and Standard accounts.
 - **Autonomous Scalper Daemon (`src/scalper_bot.py`)**:
   - Dedicated server-side 24/5 background daemon operating completely independent of the browser.
   - Concurrently monitors 5M closed bars across up to 10 configured instruments.
+  - Reads custom lot sizes per symbol from configuration (`symbol_lots`).
   - Dynamically resolves broker symbols before data copying and order submission.
   - Executes institutional **2-Tranche scale-out orders** (Tranche 1 @ TP1, Tranche 2 Runner @ TP2) in under 50ms (< 3s SLA).
   - High-speed 1-second background tick monitor (`_autobe_loop`) that autonomously moves Tranche 2 SL to Breakeven when TP1 is hit.
@@ -71,57 +85,44 @@
 
 ---
 
-## 3. Remote VM Deployment Runbook
+## 3. Remote VM Deployment & Update Runbook
 
-To set up and run this codebase on a remote VM (Linux or Windows):
+### Updating an Existing VM Installation
+If an update on the remote VM reports uncommitted local changes:
 
-### Step 1: Clone Repository
 ```bash
-# Option A: Via SSH Deploy Key (Recommended)
-ssh-keygen -t ed25519 -C "trading-vm"
-cat ~/.ssh/id_ed25519.pub
-# (Add this public key under GitHub Repo -> Settings -> Deploy keys)
+# In the repository root:
+git reset --hard HEAD
+git clean -fd
+git pull origin main
+cd frontend && npm run build && cd ..
+```
+*Note: With commit `f782e60` onward, users can also simply click the "Discard Local Changes & Force Update" button inside the UI's Update Modal.*
+
+### Fresh Installation Setup
+```bash
+# 1. Clone repository
 git clone git@github.com:haider2804/mytradingview.git
 cd mytradingview
 
-# Option B: Via Personal Access Token (HTTPS)
-git clone https://<GITHUB_USER>:<PAT_TOKEN>@github.com/haider2804/mytradingview.git
-cd mytradingview
-```
-
-### Step 2: Python Environment Setup
-```bash
+# 2. Python Environment Setup (Python 3.10 - 3.14+)
 pip install -r requirements.txt
-```
-*(Python 3.10 through 3.14+ supported. Unused dependencies like `pandas-ta`/`numba` have been removed to ensure seamless compatibility with Python 3.14.)*
 
-### Step 3: Frontend Build
-```bash
+# 3. Frontend Build
 cd frontend
 npm install
 npm run build
 cd ..
-```
 
-### Step 4: Verification
-```bash
-# Run unit test suite (67 tests)
+# 4. Verify Tests (69 tests)
 python -m unittest discover tests
 
-# Build and verify frontend client
-cd frontend && npm run build && cd ..
-
-# Run parity check (17 test cases, 0 drift)
-python tools/parity_check.py
+# 5. Launch Workstation Server
+# Windows batch file:
+.\start.bat
+# Or Python direct:
+python src/app.py
 ```
-
-### Step 5: Launch the Workstation Server
-- **On Windows**:
-  Double-click `start.bat` or run `.\start.bat`.
-- **Direct Python Launch**:
-  ```bash
-  python src/app.py
-  ```
 
 ---
 
