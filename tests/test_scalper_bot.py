@@ -205,6 +205,39 @@ class TestScalperBot(unittest.TestCase):
             self.assertIn("instruments", data_b)
             self.assertIn("count", data_b)
 
+    def test_symbol_lot_sizes_configuration_and_api(self):
+        """Test per-instrument lot sizes configuration, Gold safety cap, and endpoints."""
+        # 1. Direct configure call: Gold lot capped at 1.0, Forex allows custom lot
+        status = self.bot.configure(symbol_lot_sizes={
+            "XAUUSDc": 2.50,  # Must be clamped strictly to 1.0!
+            "EURUSDc": 0.25,
+            "USDJPYc": 0.50
+        })
+        self.assertIn("symbol_lot_sizes", status)
+        self.assertEqual(status["symbol_lot_sizes"]["XAUUSDc"], 1.0)
+        self.assertEqual(status["symbol_lot_sizes"]["EURUSDc"], 0.25)
+        self.assertEqual(status["symbol_lot_sizes"]["USDJPYc"], 0.50)
+
+        # 2. Test API GET & POST /api/scalper/bot/lot_sizes
+        with app.test_client() as client:
+            get_res = client.get("/api/scalper/bot/lot_sizes")
+            self.assertEqual(get_res.status_code, 200)
+            get_data = json.loads(get_res.data)
+            self.assertIn("symbol_lot_sizes", get_data)
+            self.assertEqual(get_data["max_gold_lot"], 1.0)
+
+            post_res = client.post("/api/scalper/bot/lot_sizes", json={
+                "symbol_lot_sizes": {
+                    "GBPUSDc": 0.30,
+                    "XAUUSDc": 0.05
+                }
+            })
+            self.assertEqual(post_res.status_code, 200)
+            post_data = json.loads(post_res.data)
+            self.assertTrue(post_data["success"])
+            self.assertEqual(post_data["symbol_lot_sizes"]["GBPUSDc"], 0.30)
+            self.assertEqual(post_data["symbol_lot_sizes"]["XAUUSDc"], 0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

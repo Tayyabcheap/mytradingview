@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   LineChart, Settings, Camera, Search, Maximize, X, 
-  Bell, RotateCcw, ChevronDown, Download, Check, Zap, 
+  Bell, RotateCcw, ChevronDown, ChevronUp, Download, Check, Zap, 
   TrendingUp, TrendingDown, Layers, LayoutDashboard, BookOpen, 
-  CandlestickChart, Plus, DollarSign, BarChart2, Award, Sliders
+  CandlestickChart, Plus, Minus, DollarSign, BarChart2, Award, Sliders
 } from 'lucide-react';
 import TopTabBar from './components/TopTabBar';
 import DashboardTab from './components/DashboardTab';
@@ -399,15 +399,27 @@ function App() {
 
   // Autonomous Scalper Bot state synchronization with backend daemon (Multi-Symbol Concurrent Engine)
   const [scalperSymbols, setScalperSymbols] = useState(() => loadLS('scalperSymbols', ['XAUUSDc']));
+  const [symbolLotSizes, setSymbolLotSizes] = useState(() => {
+    const saved = loadLS('symbolLotSizes', {});
+    return saved && typeof saved === 'object' ? saved : {};
+  });
+  const [showLotTable, setShowLotTable] = useState(true);
   const [botStatus, setBotStatus] = useState(null);
   useEffect(() => {
-    // Initial fetch of active symbols configured on backend
+    // Initial fetch of active symbols & lot sizes configured on backend
     fetch('/api/scalper/bot/symbols')
       .then(r => r.json())
       .then(d => {
         if (d && Array.isArray(d.symbols) && d.symbols.length > 0) {
           setScalperSymbols(d.symbols);
           saveLS('scalperSymbols', d.symbols);
+        }
+        if (d && d.symbol_lot_sizes && typeof d.symbol_lot_sizes === 'object') {
+          setSymbolLotSizes(prev => {
+            const merged = { ...prev, ...d.symbol_lot_sizes };
+            saveLS('symbolLotSizes', merged);
+            return merged;
+          });
         }
       })
       .catch(() => {});
@@ -424,6 +436,13 @@ function App() {
             if (Array.isArray(d.symbols) && d.symbols.length > 0) {
               setScalperSymbols(d.symbols);
             }
+            if (d.symbol_lot_sizes && typeof d.symbol_lot_sizes === 'object' && Object.keys(d.symbol_lot_sizes).length > 0) {
+              setSymbolLotSizes(prev => {
+                const merged = { ...prev, ...d.symbol_lot_sizes };
+                saveLS('symbolLotSizes', merged);
+                return merged;
+              });
+            }
           }
         })
         .catch(() => {});
@@ -432,6 +451,45 @@ function App() {
     const iv = setInterval(pollBotStatus, 6000);
     return () => clearInterval(iv);
   }, []);
+
+  const handleUpdateSymbolLotSize = (sym, newLot) => {
+    const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
+    let val = Math.max(0.01, parseFloat(newLot) || 0.01);
+    if (isGold) {
+      val = Math.min(1.0, val);
+    } else {
+      val = Math.min(50.0, val);
+    }
+    val = parseFloat(val.toFixed(2));
+
+    const updated = { ...symbolLotSizes, [sym]: val };
+    setSymbolLotSizes(updated);
+    saveLS('symbolLotSizes', updated);
+
+    fetch('/api/scalper/bot/lot_sizes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol_lot_sizes: updated })
+    }).catch(() => {});
+  };
+
+  const handleApplyAllLots = (presetVal) => {
+    const updated = { ...symbolLotSizes };
+    scalperSymbols.forEach(s => {
+      const isGold = s.toUpperCase().includes('XAU') || s.toUpperCase().includes('GOLD');
+      let val = presetVal;
+      if (isGold) val = Math.min(1.0, val);
+      updated[s] = parseFloat(val.toFixed(2));
+    });
+    setSymbolLotSizes(updated);
+    saveLS('symbolLotSizes', updated);
+
+    fetch('/api/scalper/bot/lot_sizes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbol_lot_sizes: updated })
+    }).catch(() => {});
+  };
 
   const handleSaveScalperSymbols = async (newSymbols) => {
     try {
@@ -1159,8 +1217,11 @@ function App() {
           saveLS('autoTradedSig', autoTradedSigRef.current);
 
           const isGoldSym = symbol.toUpperCase().includes('XAU') || symbol.toUpperCase().includes('GOLD');
+          const chosenLot = (symbolLotSizes && symbolLotSizes[symbol] !== undefined)
+            ? symbolLotSizes[symbol]
+            : activeLotSize;
           // Enforce Gold safety constraint: strictly <= 1.0 lot
-          const safeLot = isGoldSym ? Math.min(1.0, activeLotSize) : activeLotSize;
+          const safeLot = isGoldSym ? Math.min(1.0, chosenLot) : chosenLot;
 
           const tradeComment = isEnhancedSig ? 'Haider-Scalper' : (isHaiderSig ? 'Haider-Gold' : (sig.strategy || 'MT5-Auto'));
 
@@ -1226,7 +1287,7 @@ function App() {
     const t0 = setTimeout(check, 3500);
     const iv = setInterval(check, 5000);
     return () => { clearTimeout(t0); clearInterval(iv); };
-  }, [signalsEnabled, symbol, timeframe, activeSignalStrategies, autoTradeSignals, activeLotSize]);
+  }, [signalsEnabled, symbol, timeframe, activeSignalStrategies, autoTradeSignals, activeLotSize, symbolLotSizes]);
 
   const handleFullscreen = () => {
     if (!document.fullscreenElement) {
@@ -1573,7 +1634,7 @@ function App() {
                   border: '1px solid #2a2e39',
                   borderRadius: 6,
                   boxShadow: '0 8px 28px rgba(0,0,0,0.75)',
-                  width: 270,
+                  width: 316,
                   zIndex: 9999,
                   padding: '6px 0',
                   userSelect: 'none'
@@ -1818,6 +1879,210 @@ function App() {
                     ))}
                   </div>
 
+                  {/* AUTO-TRADE LOT SIZES PER INSTRUMENT TABLE */}
+                  <div style={{
+                    padding: '8px 12px',
+                    background: 'rgba(255, 255, 255, 0.02)',
+                    borderBottom: '1px solid #2a2e39'
+                  }}>
+                    <div style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      marginBottom: 6
+                    }}>
+                      <div 
+                        onClick={() => setShowLotTable(prev => !prev)}
+                        style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
+                        title="Toggle lot sizes table"
+                      >
+                        <Layers size={13} color="#00f2fe" />
+                        <span style={{ fontSize: 11, fontWeight: 700, color: '#e6edf3' }}>
+                          Lot Size per Pair
+                        </span>
+                        {showLotTable ? <ChevronUp size={11} color="#8b949e" /> : <ChevronDown size={11} color="#8b949e" />}
+                      </div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <span style={{ fontSize: 9.5, color: '#8b949e', marginRight: 2 }}>All:</span>
+                        {[0.01, 0.05, 0.10].map(preset => (
+                          <button
+                            key={preset}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleApplyAllLots(preset);
+                            }}
+                            title={`Set all pairs to ${preset.toFixed(2)} lots`}
+                            style={{
+                              fontSize: 9.5,
+                              fontWeight: 700,
+                              padding: '1px 5px',
+                              borderRadius: 3,
+                              background: 'rgba(42, 46, 57, 0.8)',
+                              color: '#c9d1d9',
+                              border: '1px solid rgba(255, 255, 255, 0.12)',
+                              cursor: 'pointer',
+                              lineHeight: '13px'
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.borderColor = '#00f2fe'}
+                            onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)'}
+                          >
+                            {preset.toFixed(2)}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {showLotTable && (
+                      <div style={{
+                        maxHeight: 175,
+                        overflowY: 'auto',
+                        borderRadius: 4,
+                        border: '1px solid rgba(42, 46, 57, 0.8)',
+                        background: '#141720'
+                      }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                          <thead>
+                            <tr style={{ background: '#1c212d', color: '#8b949e', borderBottom: '1px solid #2a2e39', textAlign: 'left' }}>
+                              <th style={{ padding: '4px 8px', fontWeight: 600 }}>Pair</th>
+                              <th style={{ padding: '4px 6px', fontWeight: 600, textAlign: 'center' }}>Lot Size</th>
+                              <th style={{ padding: '4px 8px', fontWeight: 600, textAlign: 'right' }}>Type</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {scalperSymbols.map((sym, idx) => {
+                              const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
+                              const isCrypto = sym.toUpperCase().includes('BTC') || sym.toUpperCase().includes('ETH');
+                              const currentLot = (symbolLotSizes && symbolLotSizes[sym] !== undefined)
+                                ? symbolLotSizes[sym]
+                                : 0.10;
+                              return (
+                                <tr
+                                  key={sym}
+                                  style={{
+                                    borderBottom: idx === scalperSymbols.length - 1 ? 'none' : '1px solid rgba(42, 46, 57, 0.5)',
+                                    background: idx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.02)'
+                                  }}
+                                >
+                                  <td style={{ padding: '4px 8px' }}>
+                                    <span style={{
+                                      fontWeight: 700,
+                                      color: isGold ? '#fbbf24' : isCrypto ? '#f97316' : '#93c5fd'
+                                    }}>
+                                      {sym}
+                                    </span>
+                                    {isGold && (
+                                      <span style={{
+                                        fontSize: 8.5,
+                                        fontWeight: 800,
+                                        marginLeft: 4,
+                                        padding: '1px 3px',
+                                        borderRadius: 2,
+                                        background: 'rgba(234, 179, 8, 0.18)',
+                                        color: '#fbbf24',
+                                        border: '1px solid rgba(234, 179, 8, 0.35)'
+                                      }}>
+                                        Max 1.0
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td style={{ padding: '4px 6px', textAlign: 'center' }}>
+                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const nextVal = Math.max(0.01, +(currentLot - 0.01).toFixed(2));
+                                          handleUpdateSymbolLotSize(sym, nextVal);
+                                        }}
+                                        title="Decrease 0.01"
+                                        style={{
+                                          width: 18,
+                                          height: 18,
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          background: '#2a2e39',
+                                          border: 'none',
+                                          borderRadius: 3,
+                                          color: '#c9d1d9',
+                                          cursor: 'pointer',
+                                          fontSize: 12,
+                                          fontWeight: 800,
+                                          padding: 0
+                                        }}
+                                        onMouseEnter={e => e.currentTarget.style.background = '#363c4e'}
+                                        onMouseLeave={e => e.currentTarget.style.background = '#2a2e39'}
+                                      >
+                                        −
+                                      </button>
+
+                                      <input
+                                        type="number"
+                                        step="0.01"
+                                        min="0.01"
+                                        max={isGold ? 1.0 : 50.0}
+                                        value={currentLot}
+                                        onClick={e => e.stopPropagation()}
+                                        onChange={(e) => {
+                                          const val = parseFloat(e.target.value);
+                                          if (!isNaN(val)) {
+                                            handleUpdateSymbolLotSize(sym, val);
+                                          }
+                                        }}
+                                        style={{
+                                          width: 48,
+                                          textAlign: 'center',
+                                          background: '#0d1117',
+                                          border: '1px solid #30363d',
+                                          borderRadius: 3,
+                                          color: '#ffffff',
+                                          fontSize: 11,
+                                          fontWeight: 700,
+                                          padding: '2px 0'
+                                        }}
+                                      />
+
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          const maxL = isGold ? 1.0 : 50.0;
+                                          const nextVal = Math.min(maxL, +(currentLot + 0.01).toFixed(2));
+                                          handleUpdateSymbolLotSize(sym, nextVal);
+                                        }}
+                                        title="Increase 0.01"
+                                        style={{
+                                          width: 18,
+                                          height: 18,
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          justifyContent: 'center',
+                                          background: '#2a2e39',
+                                          border: 'none',
+                                          borderRadius: 3,
+                                          color: '#c9d1d9',
+                                          cursor: 'pointer',
+                                          fontSize: 12,
+                                          fontWeight: 800,
+                                          padding: 0
+                                        }}
+                                        onMouseEnter={e => e.currentTarget.style.background = '#363c4e'}
+                                        onMouseLeave={e => e.currentTarget.style.background = '#2a2e39'}
+                                      >
+                                        +
+                                      </button>
+                                    </div>
+                                  </td>
+                                  <td style={{ padding: '4px 8px', textAlign: 'right', fontSize: 10, color: '#8b949e' }}>
+                                    {isGold ? 'Gold' : isCrypto ? 'Crypto' : 'Forex'}
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+
                   {/* AUTO-TRADE TOGGLE */}
                   <div
                     onClick={() => {
@@ -1828,7 +2093,7 @@ function App() {
                       fetch('/api/scalper/bot/toggle', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: next, strategy: stratKey, lot_size: activeLotSize, symbols: scalperSymbols })
+                        body: JSON.stringify({ enabled: next, strategy: stratKey, lot_size: activeLotSize, symbols: scalperSymbols, symbol_lot_sizes: symbolLotSizes })
                       }).catch(() => {});
                       fetch('/api/settings', {
                         method: 'POST',

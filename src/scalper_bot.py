@@ -48,6 +48,7 @@ class ScalperBot:
         self.max_instruments = MAX_INSTRUMENTS
         self.timeframe_str = "5M"
         self.lot_size = 0.10
+        self.symbol_lot_sizes: Dict[str, float] = {}
         self.max_gold_lot = 1.0  # Mandatory safety cap: <= 1.0 lot on Gold
         
         # Strategy parameters (Haider-Scalper-Enhanced)
@@ -82,6 +83,16 @@ class ScalperBot:
                     self.enabled = bool(saved.get("enabled", False))
                     self.strategy = saved.get("strategy", "HAIDER_ENHANCED")
                     self.lot_size = float(saved.get("lot_size", 0.10))
+                    saved_lots = saved.get("symbol_lot_sizes")
+                    if isinstance(saved_lots, dict):
+                        for s, l in saved_lots.items():
+                            try:
+                                val = float(l)
+                                if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
+                                    val = min(self.max_gold_lot, val)
+                                self.symbol_lot_sizes[str(s).strip()] = round(max(0.01, val), 2)
+                            except Exception:
+                                pass
                     saved_syms = saved.get("symbols")
                     if isinstance(saved_syms, list) and len(saved_syms) > 0:
                         self.symbols = [str(s).strip() for s in saved_syms if s][:MAX_INSTRUMENTS]
@@ -137,8 +148,9 @@ class ScalperBot:
 
     def configure(self, enabled: Optional[bool] = None, strategy: Optional[str] = None,
                   lot_size: Optional[float] = None, symbol: Optional[str] = None,
-                  symbols: Optional[List[str]] = None) -> Dict[str, Any]:
-        """Update bot configuration, active pairs (up to 10), and persist."""
+                  symbols: Optional[List[str]] = None,
+                  symbol_lot_sizes: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """Update bot configuration, active pairs (up to 10), per-instrument lot sizes, and persist."""
         if enabled is not None:
             self.enabled = bool(enabled)
         if strategy in ("HAIDER_ENHANCED", "REAL_DIP"):
@@ -147,6 +159,15 @@ class ScalperBot:
             # Strictly cap Gold at 1.0
             val = max(0.01, min(self.max_gold_lot, float(lot_size)))
             self.lot_size = round(val, 2)
+        if symbol_lot_sizes is not None and isinstance(symbol_lot_sizes, dict):
+            for s, v in symbol_lot_sizes.items():
+                try:
+                    val = float(v)
+                    if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
+                        val = min(self.max_gold_lot, val)
+                    self.symbol_lot_sizes[str(s).strip()] = round(max(0.01, val), 2)
+                except (ValueError, TypeError):
+                    pass
         if symbols is not None and isinstance(symbols, list):
             cleaned = []
             for s in symbols:
@@ -166,6 +187,7 @@ class ScalperBot:
                     "enabled": self.enabled,
                     "strategy": self.strategy,
                     "lot_size": self.lot_size,
+                    "symbol_lot_sizes": self.symbol_lot_sizes,
                     "symbols": self.symbols,
                     "symbol": self.symbols[0] if self.symbols else "XAUUSDc"
                 })
@@ -218,6 +240,7 @@ class ScalperBot:
             "max_instruments": self.max_instruments,
             "timeframe": self.timeframe_str,
             "lot_size": self.lot_size,
+            "symbol_lot_sizes": self.symbol_lot_sizes,
             "max_gold_lot": self.max_gold_lot,
             "mt5_connected": mt5_connected,
             "terminal_algo_trading": algo_allowed,
@@ -435,7 +458,7 @@ class ScalperBot:
     def _execute_signal(self, symbol: str, signal_type: str, entry: float, sl: float, tp1: float, strategy_name: str):
         # Strict user risk constraint: Gold lot size <= 1.0
         is_gold = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
-        raw_lot = self.lot_size
+        raw_lot = self.symbol_lot_sizes.get(symbol, self.lot_size)
         total_lot = min(self.max_gold_lot, raw_lot) if is_gold else raw_lot
         total_lot = max(0.01, round(total_lot, 2))
 

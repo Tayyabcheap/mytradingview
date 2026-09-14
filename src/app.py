@@ -1616,14 +1616,21 @@ def scalper_bot_toggle():
     lot_size = data.get("lot_size")
     symbol = data.get("symbol")
     symbols = data.get("symbols")
+    symbol_lot_sizes = data.get("symbol_lot_sizes")
     
     # Auto-align broker symbols if passed
     if symbol:
         symbol = resolve_broker_symbol(symbol)
     if symbols and isinstance(symbols, list):
         symbols = [resolve_broker_symbol(s) for s in symbols if s]
+    if symbol_lot_sizes and isinstance(symbol_lot_sizes, dict):
+        aligned_lots = {}
+        for s, l in symbol_lot_sizes.items():
+            if s:
+                aligned_lots[resolve_broker_symbol(s)] = l
+        symbol_lot_sizes = aligned_lots
     
-    res = bot.configure(enabled=enabled, strategy=strategy, lot_size=lot_size, symbol=symbol, symbols=symbols)
+    res = bot.configure(enabled=enabled, strategy=strategy, lot_size=lot_size, symbol=symbol, symbols=symbols, symbol_lot_sizes=symbol_lot_sizes)
     return jsonify(res)
 
 
@@ -1641,7 +1648,34 @@ def scalper_bot_symbols():
     return jsonify({
         "symbols": bot.symbols,
         "max_instruments": bot.max_instruments,
-        "active_pairs_count": len(bot.symbols)
+        "active_pairs_count": len(bot.symbols),
+        "symbol_lot_sizes": bot.symbol_lot_sizes
+    })
+
+
+@app.route("/api/scalper/bot/lot_sizes", methods=["GET", "POST"])
+def scalper_bot_lot_sizes():
+    """Get or update per-instrument lot sizes for auto trading."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        raw_lots = data.get("symbol_lot_sizes") or data.get("lot_sizes") or {}
+        aligned_lots = {}
+        if isinstance(raw_lots, dict):
+            for s, l in raw_lots.items():
+                if s:
+                    aligned_lots[resolve_broker_symbol(s)] = l
+        res = bot.configure(symbol_lot_sizes=aligned_lots)
+        return jsonify({
+            "success": True,
+            "symbol_lot_sizes": bot.symbol_lot_sizes,
+            "status": res
+        })
+    return jsonify({
+        "symbol_lot_sizes": bot.symbol_lot_sizes,
+        "default_lot_size": bot.lot_size,
+        "max_gold_lot": bot.max_gold_lot
     })
 
 
