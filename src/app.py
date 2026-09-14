@@ -345,8 +345,8 @@ def send_order():
     
     sl = float(data.get("sl") or 0.0)
     tp = float(data.get("tp") or 0.0)
-    raw_comment = data.get("comment", "Haider-Scalper")
-    safe_comment = str(raw_comment)[:27] if raw_comment else "Haider-Scalper"
+    raw_comment = data.get("comment", "Haider-Enhanced")
+    safe_comment = str(raw_comment)[:27] if raw_comment else "Haider-Enhanced"
 
     if not symbol:
         return jsonify({"error": "Symbol is required"}), 400

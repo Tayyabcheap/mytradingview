@@ -486,16 +486,19 @@ class ScalperBot:
         tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.001, entry - t_dist * 2.2)
 
         # Tranche volume calculation
-        if total_lot >= 0.02 and self.strategy == "HAIDER_ENHANCED":
+        is_enhanced = (self.strategy == "HAIDER_ENHANCED")
+        base_label = "Haider-Enhanced" if is_enhanced else "Haider-Gold"
+
+        if total_lot >= 0.02 and is_enhanced:
             tranche_1_vol = round(total_lot * 0.5, 2)
             tranche_2_vol = round(total_lot - tranche_1_vol, 2)
             orders_to_place = [
-                {"vol": tranche_1_vol, "tp": tp1, "comment": "Haider-Scalper [TP1]", "is_runner": False},
-                {"vol": tranche_2_vol, "tp": tp2, "comment": "Haider-Scalper [Runner]", "is_runner": True, "auto_be_target": tp1}
+                {"vol": tranche_1_vol, "tp": tp1, "comment": f"{base_label} [TP1]", "is_runner": False},
+                {"vol": tranche_2_vol, "tp": tp2, "comment": f"{base_label} [Runner]", "is_runner": True, "auto_be_target": tp1}
             ]
         else:
             orders_to_place = [
-                {"vol": total_lot, "tp": tp1, "comment": "Haider-Scalper", "is_runner": False}
+                {"vol": total_lot, "tp": tp1, "comment": base_label, "is_runner": False}
             ]
 
         executed_orders = []
@@ -551,7 +554,7 @@ class ScalperBot:
                 "strategy": strategy_name,
                 "orders": executed_orders
             }
-            summary_msg = f"⚡ Autonomous MT5 Execution: Opened {len(executed_orders)} Tranche(s) for {signal_type} {symbol} (Total {total_lot} Lots, SL: {sl:.3f}, TP1: {tp1:.3f})"
+            summary_msg = f"Autonomous MT5 Execution: Opened {len(executed_orders)} Tranche(s) for {signal_type} {symbol} (Total {total_lot} Lots, SL: {sl:.3f}, TP1: {tp1:.3f})"
             print(f"[SCALPER_BOT] >>> {summary_msg}", flush=True)
 
             send_discord_alert(

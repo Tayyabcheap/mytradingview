@@ -238,6 +238,32 @@ class TestScalperBot(unittest.TestCase):
             self.assertEqual(post_data["symbol_lot_sizes"]["GBPUSDc"], 0.30)
             self.assertEqual(post_data["symbol_lot_sizes"]["XAUUSDc"], 0.05)
 
+    def test_order_comments_strategy_labeling_and_length(self):
+        """Ensure order comments clearly state Haider-Enhanced and stay strictly <= 27 characters."""
+        sent_orders = []
+        def mock_send(symbol, order_type_str, volume, sl, tp, comment):
+            sent_orders.append({"vol": volume, "comment": comment})
+            return {"order": 123456, "price": 2000.0}
+
+        self.bot._send_mt5_order = mock_send
+
+        # 1. Enhanced strategy with 2-tranche split
+        self.bot.strategy = "HAIDER_ENHANCED"
+        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Haider-Scalper-Enhanced")
+        self.assertEqual(len(sent_orders), 2)
+        self.assertEqual(sent_orders[0]["comment"], "Haider-Enhanced [TP1]")
+        self.assertEqual(sent_orders[1]["comment"], "Haider-Enhanced [Runner]")
+        for order in sent_orders:
+            self.assertLessEqual(len(order["comment"]), 27, f"Comment {order['comment']} exceeds 27 chars!")
+
+        # 2. Baseline REAL_DIP strategy
+        sent_orders.clear()
+        self.bot.strategy = "REAL_DIP"
+        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Haider-Gold-Scalper")
+        self.assertEqual(len(sent_orders), 1)
+        self.assertEqual(sent_orders[0]["comment"], "Haider-Gold")
+        self.assertLessEqual(len(sent_orders[0]["comment"]), 27)
+
 
 if __name__ == "__main__":
     unittest.main()

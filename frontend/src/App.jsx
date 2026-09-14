@@ -374,7 +374,7 @@ function App() {
   const beepCtxRef = useRef(null);
   const sigToastTimerRef = useRef(null);
   const notifiedSigRef = useRef(loadLS('notifiedSig', {}));
-  const autoTradedSigRef = useRef(loadLS('autoTradedSig', {}));
+  const lastBotTradeTimeRef = useRef(0);
   const [signalToast, setSignalToast] = useState(null);
   const [signalToastLot, setSignalToastLot] = useState('0.01');
   const [signalNotifications, setSignalNotifications] = useState(() => loadLS('signalNotifications', []));
@@ -451,6 +451,20 @@ function App() {
                 saveLS('symbolLotSizes', merged);
                 return merged;
               });
+            }
+            if (d.last_trade && d.last_trade.time) {
+              if (lastBotTradeTimeRef.current === 0) {
+                lastBotTradeTimeRef.current = d.last_trade.time;
+              } else if (d.last_trade.time > lastBotTradeTimeRef.current) {
+                lastBotTradeTimeRef.current = d.last_trade.time;
+                const lt = d.last_trade;
+                const numOrders = Array.isArray(lt.orders) ? lt.orders.length : 1;
+                const stratDisplay = lt.strategy === 'Haider-Scalper-Enhanced' ? 'Haider-Enhanced' : 'Haider-Gold';
+                setAlertToast(`⚡ Autonomous Execution: ${stratDisplay} opened ${numOrders} Tranche(s) on ${lt.symbol} (${lt.signal_type})`);
+                playBeep(1050, 0.22);
+                fetchAccountAndSymbols();
+                setTimeout(() => setAlertToast(null), 9000);
+              }
             }
           }
         })
@@ -1153,8 +1167,10 @@ function App() {
   const executeSignalTrade = async () => {
     if (!signalToast) return;
     const t = signalToast;
+    const isEnhanced = t.strategy === 'Haider-Scalper-Enhanced' || t.strategyId === 'HAIDER_ENHANCED';
+    const cmt = isEnhanced ? 'Haider-Enhanced' : (t.strategy ? String(t.strategy).replace('-Scalper', '').slice(0, 27) : 'Signal-Execute');
     const body = { symbol: t.symbol, type: t.type, volume: parseFloat(signalToastLot) || 0.01,
-      sl: +Number(t.sl).toFixed(2), tp: +Number(t.tp1).toFixed(2), comment: 'Signal-Execute' };
+      sl: +Number(t.sl).toFixed(2), tp: +Number(t.tp1).toFixed(2), comment: cmt };
     setSignalToast(null);
     if (sigToastTimerRef.current) clearTimeout(sigToastTimerRef.current);
     try {
@@ -1225,84 +1241,12 @@ function App() {
           if (sigToastTimerRef.current) clearTimeout(sigToastTimerRef.current);
           sigToastTimerRef.current = setTimeout(() => setSignalToast(null), 10000);
         }
-
-        // 2. Automatic MT5 Trade Execution when enabled
-        if (autoTradeSignals && autoTradedSigRef.current[key] !== ts) {
-          autoTradedSigRef.current[key] = ts;
-          saveLS('autoTradedSig', autoTradedSigRef.current);
-
-          const isGoldSym = symbol.toUpperCase().includes('XAU') || symbol.toUpperCase().includes('GOLD');
-          const chosenLot = (symbolLotSizes && symbolLotSizes[symbol] !== undefined)
-            ? symbolLotSizes[symbol]
-            : activeLotSize;
-          // Enforce Gold safety constraint: strictly <= 1.0 lot
-          const safeLot = isGoldSym ? Math.min(1.0, chosenLot) : chosenLot;
-
-          const tradeComment = isEnhancedSig ? 'Haider-Scalper' : (isHaiderSig ? 'Haider-Gold' : (sig.strategy || 'MT5-Auto'));
-
-          // 2-Tranche institutional order split
-          const orderPlans = [];
-          if (isEnhancedSig && safeLot >= 0.02) {
-            const tr1 = +(safeLot * 0.5).toFixed(2);
-            const tr2 = +(safeLot - tr1).toFixed(2);
-            orderPlans.push({
-              symbol,
-              type: sig.signalType,
-              volume: tr1,
-              sl: parseFloat(sig.slPrice.toFixed(3)),
-              tp: parseFloat(sig.tp1Price.toFixed(3)),
-              comment: `${tradeComment} [TP1]`
-            });
-            orderPlans.push({
-              symbol,
-              type: sig.signalType,
-              volume: tr2,
-              sl: parseFloat(sig.slPrice.toFixed(3)),
-              tp: parseFloat((sig.tp2Price || sig.tp1Price).toFixed(3)),
-              auto_be: true,
-              auto_be_tp1: true,
-              tp1: parseFloat(sig.tp1Price.toFixed(3)),
-              comment: `${tradeComment} [Runner]`
-            });
-          } else {
-            orderPlans.push({
-              symbol,
-              type: sig.signalType,
-              volume: safeLot,
-              sl: parseFloat(sig.slPrice.toFixed(3)),
-              tp: parseFloat(sig.tp1Price.toFixed(3)),
-              comment: tradeComment
-            });
-          }
-
-          for (const tradePayload of orderPlans) {
-            try {
-              const res = await fetch('/api/order/send', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(tradePayload)
-              });
-              const d = await res.json();
-              if (res.ok && !d.error) {
-                const successMsg = `⚡ ${tradePayload.comment}: Auto-Opened ${tradePayload.type} ${tradePayload.volume} Lots on ${symbol} @ ${(d.price || sig.entryPrice).toFixed(3)} (SL: ${tradePayload.sl.toFixed(3)}, TP: ${tradePayload.tp.toFixed(3)})`;
-                setAlertToast(successMsg);
-                playBeep(1050, 0.22);
-                fetchAccountAndSymbols();
-              } else {
-                setAlertToast(`⚠️ Auto-Trade Rejected: ${d.error || 'Check MT5 AlgoTrading status'}`);
-              }
-            } catch (err) {
-              setAlertToast(`⚠️ Auto-Trade Network Error: ${err.message}`);
-            }
-          }
-          setTimeout(() => setAlertToast(null), 9000);
-        }
       } catch (e) { /* ignore */ }
     };
     const t0 = setTimeout(check, 3500);
     const iv = setInterval(check, 5000);
     return () => { clearTimeout(t0); clearInterval(iv); };
-  }, [signalsEnabled, symbol, timeframe, activeSignalStrategies, autoTradeSignals, activeLotSize, symbolLotSizes]);
+  }, [signalsEnabled, symbol, timeframe, activeSignalStrategies]);
 
   const handleFullscreen = () => {
     if (!document.fullscreenElement) {
