@@ -2,7 +2,7 @@
 
 **Last Updated:** September 14, 2026  
 **Repository:** `https://github.com/haider2804/mytradingview.git`  
-**Branch:** `main` (clean, 69 unit tests passing, in sync, commit `f782e60`)
+**Branch:** `main` (clean, 72 unit tests passing, in sync, commit `3567cbb`)
 
 ---
 
@@ -40,10 +40,11 @@
   - Checks remote GitHub repository for upstream commits.
   - Filters out untracked files so debris doesn't lock updates.
   - Provides a 1-click **"Discard Local Changes & Force Update"** button when dirty files exist on the remote VM, executing `git reset --hard HEAD && git clean -fd && git pull origin main`.
+  - Resilient error handling that checks HTTP status before JSON parsing, preventing unexpected token crashes.
 
 ### 2. Backend (`src/`)
 - **Flask Application (`src/app.py`)**: REST endpoints and WebSocket/event streaming for quotes, chart data, orders, alarms, and engine control.
-  - `/api/app/update-status`: Distinguishes tracked dirty files from untracked files (`??`).
+  - `/api/app/update-status`: Proactively runs `git fetch` with upstream checking and distinguishes tracked dirty files from untracked files (`??`).
   - `/api/app/update`: Supports `{ force: true }` parameter for headless VM resets.
 - **Broker Symbol Resolution Engine (`src/symbol_utils.py`)**:
   - Shared, thread-safe module providing `clean_base_symbol()` and `resolve_broker_symbol(symbol, mt5_lock)`.
@@ -55,6 +56,8 @@
   - Dynamically resolves broker symbols before data copying and order submission.
   - Executes institutional **2-Tranche scale-out orders** (Tranche 1 @ TP1, Tranche 2 Runner @ TP2) in under 50ms (< 3s SLA). Order comments explicitly denote strategy within MT5's 27-character limit: `Haider-Enhanced [TP1]` (21 chars), `Haider-Enhanced [Runner]` (24 chars), or `Haider-Gold` (11 chars).
   - **Single Source of Execution**: Automated signal trading is strictly centralized to the Python Autonomous Daemon; legacy frontend client-side order dispatching is retired to permanently prevent duplicate orders.
+  - **In-Flight Duplicate Shield (`_has_open_position`)**: Checks both in-memory registry and MT5 (Magic `999333`) before order dispatch; prevents opening stacked positions on pairs with active trades.
+  - **Crash/Restart Recovery Adoption**: Reconnects to and adopts existing Magic `999333` positions in MT5 on server boot, continuing Auto-BE monitoring seamlessly.
   - High-speed 1-second background tick monitor (`_autobe_loop`) that autonomously moves Tranche 2 SL to Breakeven when TP1 is hit.
   - Strictly enforces Gold volume cap $\le 1.0$ lot and demo account protection.
   - Endpoints: `GET /api/scalper/bot/status`, `POST /api/scalper/bot/toggle`, `GET/POST /api/scalper/bot/symbols`.
