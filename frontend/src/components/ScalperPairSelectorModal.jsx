@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { X, Search, Check, Layers, ShieldAlert, Sparkles, Sliders, CheckCircle2 } from 'lucide-react';
 
 const COMMON_INSTRUMENT_CATEGORIES = {
@@ -46,16 +46,20 @@ export default function ScalperPairSelectorModal({
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
+  const wasOpenRef = useRef(false);
 
+  // ONLY initialize selected when modal transitions from closed to open.
+  // Never re-initialize while user is actively checking/unchecking pairs!
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && !wasOpenRef.current) {
       setSelected(
         Array.isArray(activeSymbols) && activeSymbols.length > 0
           ? activeSymbols.slice(0, MAX_INSTRUMENTS)
           : ["XAUUSDc"]
       );
     }
-  }, [isOpen, activeSymbols]);
+    wasOpenRef.current = !!isOpen;
+  }, [isOpen]);
 
   if (!isOpen) return null;
 

@@ -29,6 +29,11 @@ from real_dip_bt import wilder_atr, wilder_rsi
 from notifications import send_discord_alert
 from symbol_utils import resolve_broker_symbol, clean_base_symbol
 
+try:
+    import store as app_store
+except ImportError:
+    app_store = None
+
 logger = logging.getLogger("scalper_bot")
 logger.setLevel(logging.INFO)
 
@@ -38,7 +43,7 @@ DEFAULT_SYMBOLS = ["XAUUSDc"]
 
 class ScalperBot:
     def __init__(self, store=None, mt5_lock: Optional[threading.RLock] = None):
-        self.store = store
+        self.store = store or app_store
         self.mt5_lock = mt5_lock or threading.RLock()
         
         # Configuration
@@ -75,31 +80,42 @@ class ScalperBot:
         # Per-symbol state tracking: symbol -> state dict
         self.symbol_states: Dict[str, Dict[str, Any]] = {}
 
-        # Load persisted settings if store available
-        if self.store:
-            try:
-                saved = self.store.get("settings", "scalper_bot", {})
-                if isinstance(saved, dict):
-                    self.enabled = bool(saved.get("enabled", False))
-                    self.strategy = saved.get("strategy", "HAIDER_ENHANCED")
-                    self.lot_size = float(saved.get("lot_size", 0.10))
-                    saved_lots = saved.get("symbol_lot_sizes")
-                    if isinstance(saved_lots, dict):
-                        for s, l in saved_lots.items():
-                            try:
-                                val = float(l)
-                                if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
-                                    val = min(self.max_gold_lot, val)
-                                self.symbol_lot_sizes[str(s).strip()] = round(max(0.01, val), 2)
-                            except Exception:
-                                pass
-                    saved_syms = saved.get("symbols")
-                    if isinstance(saved_syms, list) and len(saved_syms) > 0:
-                        self.symbols = [str(s).strip() for s in saved_syms if s][:MAX_INSTRUMENTS]
-                    elif saved.get("symbol"):
-                        self.symbols = [str(saved.get("symbol")).strip()]
-            except Exception as e:
-                logger.warning(f"Failed to load bot settings: {e}")
+        # Load persisted settings from database
+        self.load_settings()
+
+    def load_settings(self):
+        """Load persisted settings from store (JSON DB)."""
+        if not self.store:
+            return
+        try:
+            saved = self.store.get("settings", "scalper_bot", {})
+            if not isinstance(saved, dict):
+                saved = {}
+            if "enabled" in saved:
+                self.enabled = bool(saved.get("enabled", False))
+            if "strategy" in saved and saved["strategy"] in ("HAIDER_ENHANCED", "REAL_DIP"):
+                self.strategy = saved["strategy"]
+            if "lot_size" in saved:
+                self.lot_size = float(saved.get("lot_size", 0.10))
+
+            saved_lots = saved.get("symbol_lot_sizes") or self.store.get("settings", "symbol_lot_sizes")
+            if isinstance(saved_lots, dict):
+                for s, l in saved_lots.items():
+                    try:
+                        val = float(l)
+                        if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
+                            val = min(self.max_gold_lot, val)
+                        self.symbol_lot_sizes[str(s).strip()] = round(max(0.01, val), 2)
+                    except Exception:
+                        pass
+
+            saved_syms = saved.get("symbols") or self.store.get("settings", "scalper_symbols")
+            if isinstance(saved_syms, list) and len(saved_syms) > 0:
+                self.symbols = [str(s).strip() for s in saved_syms if s][:MAX_INSTRUMENTS]
+            elif saved.get("symbol"):
+                self.symbols = [str(saved.get("symbol")).strip()]
+        except Exception as e:
+            logger.warning(f"Failed to load bot settings: {e}")
 
         # Ensure at least 1 symbol
         if not self.symbols:
@@ -183,16 +199,19 @@ class ScalperBot:
 
         if self.store:
             try:
-                self.store.put("settings", "scalper_bot", {
+                bot_data = {
                     "enabled": self.enabled,
                     "strategy": self.strategy,
                     "lot_size": self.lot_size,
                     "symbol_lot_sizes": self.symbol_lot_sizes,
                     "symbols": self.symbols,
                     "symbol": self.symbols[0] if self.symbols else "XAUUSDc"
-                })
-            except Exception:
-                pass
+                }
+                self.store.put("settings", "scalper_bot", bot_data)
+                self.store.put("settings", "scalper_symbols", self.symbols)
+                self.store.put("settings", "symbol_lot_sizes", self.symbol_lot_sizes)
+            except Exception as e:
+                logger.warning(f"Failed to persist bot settings: {e}")
         return self.status()
 
     def status(self) -> Dict[str, Any]:
@@ -718,4 +737,7 @@ def get_scalper_bot(store=None, mt5_lock=None) -> ScalperBot:
     global scalper_bot
     if scalper_bot is None:
         scalper_bot = ScalperBot(store=store, mt5_lock=mt5_lock)
+    elif store is not None and (scalper_bot.store is None or scalper_bot.store is not store):
+        scalper_bot.store = store
+        scalper_bot.load_settings()
     return scalper_bot

@@ -1644,6 +1644,8 @@ def scalper_bot_symbols():
         raw_symbols = data.get("symbols", [])
         resolved = [resolve_broker_symbol(s) for s in raw_symbols if s]
         res = bot.configure(symbols=resolved)
+        if store:
+            store.put("settings", "scalper_symbols", bot.symbols)
         return jsonify(res)
     return jsonify({
         "symbols": bot.symbols,
@@ -1667,6 +1669,8 @@ def scalper_bot_lot_sizes():
                 if s:
                     aligned_lots[resolve_broker_symbol(s)] = l
         res = bot.configure(symbol_lot_sizes=aligned_lots)
+        if store:
+            store.put("settings", "symbol_lot_sizes", bot.symbol_lot_sizes)
         return jsonify({
             "success": True,
             "symbol_lot_sizes": bot.symbol_lot_sizes,

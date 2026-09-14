@@ -280,6 +280,8 @@ function App() {
   const [showNotificationModal, setShowNotificationModal] = useState(false);
   const [showSignalPerformanceModal, setShowSignalPerformanceModal] = useState(false);
   const [showPairSelectorModal, setShowPairSelectorModal] = useState(false);
+  const showPairSelectorModalRef = useRef(false);
+  showPairSelectorModalRef.current = showPairSelectorModal;
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [showIntelligenceModal, setShowIntelligenceModal] = useState(false);
   const [appVersion, setAppVersion] = useState("v2.5.0");
@@ -434,7 +436,14 @@ function App() {
               setAutoTradeSignals(d.enabled);
             }
             if (Array.isArray(d.symbols) && d.symbols.length > 0) {
-              setScalperSymbols(d.symbols);
+              if (!showPairSelectorModalRef.current) {
+                setScalperSymbols(prev => {
+                  const same = prev.length === d.symbols.length && prev.every((s, i) => s === d.symbols[i]);
+                  if (same) return prev;
+                  saveLS('scalperSymbols', d.symbols);
+                  return d.symbols;
+                });
+              }
             }
             if (d.symbol_lot_sizes && typeof d.symbol_lot_sizes === 'object' && Object.keys(d.symbol_lot_sizes).length > 0) {
               setSymbolLotSizes(prev => {
@@ -504,6 +513,12 @@ function App() {
         saveLS('scalperSymbols', data.symbols);
         setBotStatus(data);
       }
+      // Backup persistence to DB settings endpoint
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scalper_symbols: newSymbols })
+      }).catch(() => {});
     } catch (err) {
       console.error('Failed to update scalper symbols:', err);
     }
