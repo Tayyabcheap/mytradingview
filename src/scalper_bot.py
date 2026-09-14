@@ -353,6 +353,26 @@ class ScalperBot:
 
             self._stop_event.wait(1.0)
 
+    def _has_open_position(self, symbol: str) -> bool:
+        """Check if bot already has an active open position for this symbol to prevent duplicate entries."""
+        # 1. Check in-memory active orders
+        for trade in self.active_bot_orders.values():
+            if trade.get("symbol") == symbol:
+                return True
+
+        # 2. Check directly in MT5 for any position with ScalperBot magic number (999333)
+        if MT5_AVAILABLE:
+            try:
+                with self.mt5_lock:
+                    positions = mt5.positions_get(symbol=symbol)
+                    if positions:
+                        for p in positions:
+                            if getattr(p, "magic", None) == 999333:
+                                return True
+            except Exception:
+                pass
+        return False
+
     # ─────────────────────────────────────────────────────────────────────────
     # Closed Bar Setup Evaluator for a Specific Symbol
     # ─────────────────────────────────────────────────────────────────────────
@@ -361,6 +381,11 @@ class ScalperBot:
             config_sym = broker_sym
         n = len(closed_rates)
         if n < 20:
+            return
+
+        # Safeguard: prevent opening duplicate positions if a bot trade is already active on this symbol
+        if self._has_open_position(broker_sym):
+            sym_state["scan_status"] = f"POSITION_ACTIVE ({broker_sym})"
             return
 
         highs = [float(r["high"]) for r in closed_rates]
@@ -671,7 +696,7 @@ class ScalperBot:
         """Continuous high-frequency tick monitor for Auto-BE on Tranche 2 runners across all symbols."""
         while not self._stop_event.is_set():
             try:
-                if not self.active_bot_orders or not MT5_AVAILABLE:
+                if not MT5_AVAILABLE:
                     self._stop_event.wait(1.0)
                     continue
 
@@ -683,50 +708,73 @@ class ScalperBot:
                     self._stop_event.wait(1.0)
                     continue
 
-                    open_tickets = {p.ticket: p for p in positions}
+                open_tickets = {p.ticket: p for p in positions}
 
-                    # Clean up closed tickets
-                    closed_tickets = [t for t in self.active_bot_orders if t not in open_tickets]
-                    for ct in closed_tickets:
-                        self.active_bot_orders.pop(ct, None)
+                # Clean up closed tickets
+                closed_tickets = [t for t in self.active_bot_orders if t not in open_tickets]
+                for ct in closed_tickets:
+                    self.active_bot_orders.pop(ct, None)
 
-                    for ticket, trade in list(self.active_bot_orders.items()):
-                        if trade.get("be_done") or not trade.get("auto_be_target"):
-                            continue
+                # Reconcile / adopt any untracked ScalperBot orders (e.g. after daemon restart)
+                for p in positions:
+                    if getattr(p, "magic", None) == 999333 and p.ticket not in self.active_bot_orders:
+                        cmt = getattr(p, "comment", "") or ""
+                        is_runner = "[Runner]" in cmt or "Runner" in cmt
+                        # Derive Auto-BE target for runner: 50% retracement of impulse
+                        target_be = (float(p.price_open) + (abs(float(p.tp) - float(p.price_open)) / 2.2)) if is_runner and p.tp else None
+                        self.active_bot_orders[p.ticket] = {
+                            "ticket": p.ticket,
+                            "symbol": p.symbol,
+                            "type": "BUY" if p.type == 0 else "SELL",
+                            "volume": float(p.volume),
+                            "entry_price": float(p.price_open),
+                            "sl": float(p.sl),
+                            "tp": float(p.tp),
+                            "is_runner": is_runner,
+                            "auto_be_target": target_be,
+                            "be_done": False,
+                            "opened_at": int(getattr(p, "time", time.time())),
+                            "comment": cmt
+                        }
 
-                        pos = open_tickets.get(ticket)
-                        if not pos:
-                            continue
+                for ticket, trade in list(self.active_bot_orders.items()):
+                    if trade.get("be_done") or not trade.get("auto_be_target"):
+                        continue
 
-                        target_tp1 = trade["auto_be_target"]
-                        entry_px = float(pos.price_open)
-                        curr_sl = float(pos.sl)
-                        is_buy = (pos.type == 0)
+                    pos = open_tickets.get(ticket)
+                    if not pos:
+                        continue
 
-                        should_be = False
-                        if is_buy and pos.price_current >= target_tp1 and (curr_sl < entry_px or curr_sl == 0.0):
-                            should_be = True
-                        elif not is_buy and pos.price_current <= target_tp1 and (curr_sl > entry_px or curr_sl == 0.0):
-                            should_be = True
+                    target_tp1 = trade["auto_be_target"]
+                    entry_px = float(pos.price_open)
+                    curr_sl = float(pos.sl)
+                    is_buy = (pos.type == 0)
 
-                        if should_be:
-                            digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
-                            req = {
-                                "action": mt5.TRADE_ACTION_SLTP,
-                                "position": ticket,
-                                "symbol": pos.symbol,
-                                "sl": round(entry_px, digits),
-                                "tp": float(pos.tp),
-                            }
+                    should_be = False
+                    if is_buy and pos.price_current >= target_tp1 and (curr_sl < entry_px or curr_sl == 0.0):
+                        should_be = True
+                    elif not is_buy and pos.price_current <= target_tp1 and (curr_sl > entry_px or curr_sl == 0.0):
+                        should_be = True
+
+                    if should_be:
+                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
+                        req = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": ticket,
+                            "symbol": pos.symbol,
+                            "sl": round(entry_px, digits),
+                            "tp": float(pos.tp),
+                        }
+                        with self.mt5_lock:
                             res = mt5.order_send(req)
-                            if res and res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, 'TRADE_RETCODE_PLACED', 10008)):
-                                trade["be_done"] = True
-                                print(f"[SCALPER_BOT:AUTO-BE] >>> Moved SL for #{ticket} ({pos.symbol}) to Breakeven @ {entry_px:.3f}!", flush=True)
-                                send_discord_alert(
-                                    title=f"🛡️ Auto-Breakeven Activated: #{ticket} ({pos.symbol})",
-                                    description=f"Tranche 2 Runner hit TP1 target `{target_tp1:.3f}` on **{pos.symbol}**. Stop Loss automatically moved to Breakeven (`{entry_px:.3f}`). Trade is now 100% risk-free!",
-                                    color=0x089981
-                                )
+                        if res and res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, 'TRADE_RETCODE_PLACED', 10008)):
+                            trade["be_done"] = True
+                            print(f"[SCALPER_BOT:AUTO-BE] >>> Moved SL for #{ticket} ({pos.symbol}) to Breakeven @ {entry_px:.3f}!", flush=True)
+                            send_discord_alert(
+                                title=f"🛡️ Auto-Breakeven Activated: #{ticket} ({pos.symbol})",
+                                description=f"Tranche 2 Runner hit TP1 target `{target_tp1:.3f}` on **{pos.symbol}**. Stop Loss automatically moved to Breakeven (`{entry_px:.3f}`). Trade is now 100% risk-free!",
+                                color=0x089981
+                            )
             except Exception as e:
                 logger.error(f"Error in autobe loop: {e}")
 

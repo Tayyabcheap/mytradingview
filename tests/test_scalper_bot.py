@@ -153,6 +153,7 @@ class TestScalperBot(unittest.TestCase):
                 "symbol": symbol, "type": signal_type, "entry": entry, "sl": sl, "tp1": tp1, "strat": strategy_name
             })
         self.bot._execute_signal = mock_execute
+        self.bot._has_open_position = lambda sym: False
 
         t_start = time.perf_counter()
         self.bot._process_closed_bar_for_symbol("XAUUSDc", sym_state, bars, current_bar)
@@ -263,6 +264,27 @@ class TestScalperBot(unittest.TestCase):
         self.assertEqual(len(sent_orders), 1)
         self.assertEqual(sent_orders[0]["comment"], "Haider-Gold")
         self.assertLessEqual(len(sent_orders[0]["comment"]), 27)
+
+    def test_has_open_position_prevents_duplicate_entries(self):
+        """Verify that _has_open_position detects active trades and prevents duplicate entries on the same symbol."""
+        self.bot.active_bot_orders.clear()
+        self.assertFalse(self.bot._has_open_position("TESTUSD"))
+
+        # Add active order in memory
+        self.bot.active_bot_orders[999001] = {
+            "ticket": 999001,
+            "symbol": "TESTUSD",
+            "type": "BUY",
+            "volume": 0.05
+        }
+        self.assertTrue(self.bot._has_open_position("TESTUSD"))
+        self.assertFalse(self.bot._has_open_position("EURUSDc"))
+
+        # Verify _process_closed_bar_for_symbol aborts if position already active
+        sym_state = self.bot._get_symbol_state("TESTUSD")
+        sym_state["scan_status"] = "PENDING"
+        self.bot._process_closed_bar_for_symbol("TESTUSD", sym_state, [{"open": 1, "high": 2, "low": 0.5, "close": 1.5, "time": 100}] * 30, {"open": 1.5})
+        self.assertEqual(sym_state["scan_status"], "POSITION_ACTIVE (TESTUSD)")
 
 
 if __name__ == "__main__":
