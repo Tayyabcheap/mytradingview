@@ -80,22 +80,51 @@ def _blocked_cross_origin():
 
 mt5_lock = threading.RLock()
 _initialized = False
+_last_init_attempt = 0.0
+_INIT_RETRY_COOLDOWN = 3.0  # seconds between MT5 connection retries
 
 def init_mt5():
-    global _initialized
-    if not MT5_IMPORTED: return False
+    global _initialized, _last_init_attempt
+    if not MT5_IMPORTED:
+        return False
     with mt5_lock:
-        info = mt5.terminal_info()
-        if not _initialized or info is None or not info.connected:
+        try:
+            info = mt5.terminal_info()
+            if _initialized and info is not None and info.connected:
+                return True
+        except Exception:
+            pass
+
+        now = time.time()
+        if now - _last_init_attempt < _INIT_RETRY_COOLDOWN:
+            return False
+        _last_init_attempt = now
+
+        try:
             if not mt5.initialize():
                 _initialized = False
                 return False
             _initialized = True
-        return True
+            return True
+        except Exception:
+            _initialized = False
+            return False
 
 @app.before_request
 def before_req():
+    # Never block static frontend asset serving or root page on MT5 initialization
+    if not request.path.startswith("/api/"):
+        return
     init_mt5()
+
+@app.route("/api/health", methods=["GET"])
+def api_health():
+    t_info = mt5.terminal_info() if MT5_IMPORTED else None
+    return jsonify({
+        "status": "ok",
+        "mt5_connected": bool(_initialized and t_info and t_info.connected),
+        "time": time.time()
+    })
 
 # Map TradingView string timeframes to MT5 constants
 TF_MAP = {

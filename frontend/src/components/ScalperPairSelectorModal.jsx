@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { X, Search, Check, Layers, ShieldAlert, Sparkles, Sliders, CheckCircle2 } from 'lucide-react';
 
 const COMMON_INSTRUMENT_CATEGORIES = {
@@ -46,6 +46,16 @@ export default function ScalperPairSelectorModal({
   });
   const [searchQuery, setSearchQuery] = useState("");
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setSelected(
+        Array.isArray(activeSymbols) && activeSymbols.length > 0
+          ? activeSymbols.slice(0, MAX_INSTRUMENTS)
+          : ["XAUUSDc"]
+      );
+    }
+  }, [isOpen, activeSymbols]);
 
   if (!isOpen) return null;
 

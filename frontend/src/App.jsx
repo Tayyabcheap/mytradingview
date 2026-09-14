@@ -444,6 +444,7 @@ function App() {
       if (data && data.symbols) {
         setScalperSymbols(data.symbols);
         saveLS('scalperSymbols', data.symbols);
+        setBotStatus(data);
       }
     } catch (err) {
       console.error('Failed to update scalper symbols:', err);
@@ -1722,16 +1723,39 @@ function App() {
                         <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>Continuous multi-symbol calculation</div>
                       </div>
                     </div>
-                    <div style={{
-                      fontSize: 10,
-                      fontWeight: 800,
-                      padding: '2px 7px',
-                      borderRadius: 3,
-                      background: 'rgba(0, 242, 254, 0.18)',
-                      color: '#00f2fe',
-                      border: '1px solid rgba(0, 242, 254, 0.4)'
-                    }}>
-                      CHOOSE
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      {scalperSymbols.length > 1 && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleSaveScalperSymbols(['XAUUSDc']);
+                          }}
+                          title="Instantly switch to Gold Only"
+                          style={{
+                            fontSize: 9.5,
+                            fontWeight: 700,
+                            padding: '2px 7px',
+                            borderRadius: 3,
+                            background: 'rgba(234, 179, 8, 0.18)',
+                            color: '#fbbf24',
+                            border: '1px solid rgba(234, 179, 8, 0.4)',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          Gold Only
+                        </button>
+                      )}
+                      <div style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        padding: '2px 7px',
+                        borderRadius: 3,
+                        background: 'rgba(0, 242, 254, 0.18)',
+                        color: '#00f2fe',
+                        border: '1px solid rgba(0, 242, 254, 0.4)'
+                      }}>
+                        CHOOSE
+                      </div>
                     </div>
                   </div>
 
@@ -1752,6 +1776,9 @@ function App() {
                           fontWeight: 700,
                           padding: '1px 6px',
                           borderRadius: 3,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 4,
                           background: sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD')
                             ? 'rgba(234, 179, 8, 0.2)'
                             : 'rgba(59, 130, 246, 0.18)',
@@ -1766,6 +1793,27 @@ function App() {
                         }}
                       >
                         {sym}
+                        {scalperSymbols.length > 1 && (
+                          <span
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const nextSyms = scalperSymbols.filter(s => s !== sym);
+                              handleSaveScalperSymbols(nextSyms.length ? nextSyms : ['XAUUSDc']);
+                            }}
+                            title={`Remove ${sym}`}
+                            style={{
+                              cursor: 'pointer',
+                              fontWeight: 900,
+                              fontSize: 11,
+                              marginLeft: 2,
+                              opacity: 0.7
+                            }}
+                            onMouseEnter={e => e.currentTarget.style.opacity = 1}
+                            onMouseLeave={e => e.currentTarget.style.opacity = 0.7}
+                          >
+                            ×
+                          </span>
+                        )}
                       </span>
                     ))}
                   </div>
@@ -1843,15 +1891,15 @@ function App() {
                       {botStatus && botStatus.terminal_algo_trading === false && (
                         <div style={{
                           marginTop: 6,
-                          padding: '5px 8px',
+                          padding: '6px 8px',
                           background: 'rgba(242, 54, 69, 0.15)',
                           border: '1px solid rgba(242, 54, 69, 0.4)',
                           borderRadius: 4,
                           color: '#f87171',
                           fontSize: 10.5,
-                          lineHeight: 1.3
+                          lineHeight: 1.35
                         }}>
-                          ⚠️ MT5 AlgoTrading button is OFF in desktop terminal. Click the <strong>Algo Trading</strong> button in MT5 (must turn green) to allow execution.
+                          ⚠️ MT5 AlgoTrading is <strong>OFF</strong>. Click the <strong>Algo Trading</strong> toolbar button in MT5 (or press <strong>Ctrl+E</strong>). It turns into a <strong>red stop square (■)</strong> when active. Also verify <em>Allow Algo Trading</em> is checked in Tools → Options (Ctrl+O) → Expert Advisors.
                         </div>
                       )}
                     </div>

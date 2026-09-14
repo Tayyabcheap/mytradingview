@@ -52,7 +52,7 @@ echo [run] Starting server on port 5000 ...
 start "TWR-Server" /min cmd /c ""%PY_CMD%" src\app.py > backend.log 2>&1"
 
 REM --- 5. Wait until it answers, then open the browser ---
-powershell -NoProfile -Command "for($i=0;$i -lt 40;$i++){try{Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5000/ -TimeoutSec 1 | Out-Null; exit 0}catch{Start-Sleep -Milliseconds 500}}; exit 1"
+powershell -NoProfile -Command "for($i=0;$i -lt 30;$i++){try{Invoke-WebRequest -UseBasicParsing http://127.0.0.1:5000/ -TimeoutSec 5 | Out-Null; exit 0}catch{Start-Sleep -Milliseconds 500}}; exit 1"
 if errorlevel 1 (
   echo ==================================================
   echo [ERROR] Server failed to respond on http://127.0.0.1:5000
@@ -72,5 +72,5 @@ echo ==================================================
 echo   Open at http://127.0.0.1:5000
 echo   Run STOP.bat to shut everything down.
 echo ==================================================
-timeout /t 4 /nobreak >nul
+powershell -NoProfile -Command "Start-Sleep -Seconds 3"
 exit /b 0

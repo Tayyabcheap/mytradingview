@@ -113,6 +113,9 @@ class TestScalperBot(unittest.TestCase):
         self.assertIn("symbols", post_data)
         self.assertEqual(len(post_data["symbols"]), 3)
 
+        # Restore default Gold-only symbols to avoid polluting persistent store
+        client.post("/api/scalper/bot/symbols", json={"symbols": ["XAUUSDc"]})
+
     def test_enhanced_calculations_and_immediate_execution_latency(self):
         """Verify math calculations and ensure execution completes in under 50ms (< 3s requirement)."""
         import time

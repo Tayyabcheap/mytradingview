@@ -247,21 +247,22 @@ class ScalperBot:
 
                 with self.mt5_lock:
                     t_info = mt5.terminal_info()
-                    if not t_info or not t_info.connected:
-                        self.status_message = "MT5 Disconnected"
-                        self._stop_event.wait(3.0)
-                        continue
+                    a_info = mt5.account_info() if t_info and t_info.connected else None
 
-                    if not t_info.trade_allowed:
-                        self.status_message = "AlgoTrading is OFF in MT5 desktop (Click green button)"
-                        self._stop_event.wait(2.0)
-                        continue
+                if not t_info or not t_info.connected:
+                    self.status_message = "MT5 Disconnected"
+                    self._stop_event.wait(3.0)
+                    continue
 
-                    a_info = mt5.account_info()
-                    if a_info and not a_info.trade_allowed:
-                        self.status_message = "Trading disabled on this MT5 account"
-                        self._stop_event.wait(5.0)
-                        continue
+                if not t_info.trade_allowed:
+                    self.status_message = "AlgoTrading is OFF in MT5 desktop (Click Algo Trading or press Ctrl+E)"
+                    self._stop_event.wait(2.0)
+                    continue
+
+                if a_info and not a_info.trade_allowed:
+                    self.status_message = "Trading disabled on this MT5 account"
+                    self._stop_event.wait(5.0)
+                    continue
 
                 # Iterate through all configured instruments
                 active_syms = list(self.symbols)
@@ -631,10 +632,11 @@ class ScalperBot:
 
                 with self.mt5_lock:
                     positions = mt5.positions_get()
-                    if not positions:
-                        self.active_bot_orders.clear()
-                        self._stop_event.wait(1.0)
-                        continue
+
+                if not positions:
+                    self.active_bot_orders.clear()
+                    self._stop_event.wait(1.0)
+                    continue
 
                     open_tickets = {p.ticket: p for p in positions}
 

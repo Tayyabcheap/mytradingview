@@ -14,5 +14,5 @@ REM Fallback for older Windows without Get-NetTCPConnection.
 for /f "tokens=5" %%T in ('netstat -a -n -o ^| findstr ":5000" ^| findstr LISTENING') do taskkill /F /PID %%T 1>nul 2>nul
 
 echo Done.
-timeout /t 3 /nobreak >nul
+powershell -NoProfile -Command "Start-Sleep -Seconds 2"
 exit /b 0
