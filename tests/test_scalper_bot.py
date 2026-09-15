@@ -332,6 +332,23 @@ class TestScalperBot(unittest.TestCase):
         self.bot._process_closed_bar_for_symbol("TESTUSD", sym_state, [{"open": 1, "high": 2, "low": 0.5, "close": 1.5, "time": 100}] * 30, {"open": 1.5})
         self.assertEqual(sym_state["scan_status"], "POSITION_ACTIVE (TESTUSD)")
 
+    def test_multi_timeframe_and_strategy_parameter_separation(self):
+        """Test multi-timeframe mapping in TF_TIMEFRAME_MAP and distinct parameters."""
+        from scalper_bot import TF_TIMEFRAME_MAP
+        for tf in ("1M", "5M", "15M", "30M", "1H"):
+            self.assertIn(tf, TF_TIMEFRAME_MAP)
+            self.assertIsNotNone(TF_TIMEFRAME_MAP[tf])
+
+        # Verify strategy configs
+        self.bot.configure_strategy(
+            "TAYYAB_ENHANCED",
+            enabled=True,
+            symbols=["BTCUSDm", "XAUUSDm"],
+            symbol_timeframes={"BTCUSDm": ["1M", "5M"], "XAUUSDm": ["5M", "15M"]}
+        )
+        self.assertIn("TAYYAB_ENHANCED", self.bot.strategy_configs)
+        self.assertEqual(self.bot.strategy_configs["TAYYAB_ENHANCED"]["symbol_timeframes"]["BTCUSDm"], ["1M", "5M"])
+
 
 class TestNeuralSentinel(unittest.TestCase):
     def setUp(self):
@@ -576,5 +593,6 @@ class TestNeuralSentinel(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
 
 

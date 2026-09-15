@@ -49,12 +49,26 @@ CHAMPION_SYMBOL_CONFIGS: Dict[str, Dict[str, Any]] = {
     "USDJPY": {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.18, "trail_runner": True, "impulse_mult": 0.48, "min_wick": 0.20, "sweep_lookback": 5},
 }
 
+TF_TIMEFRAME_MAP: Dict[str, Any] = {
+    "1M": getattr(mt5, "TIMEFRAME_M1", 1) if MT5_AVAILABLE else 1,
+    "M1": getattr(mt5, "TIMEFRAME_M1", 1) if MT5_AVAILABLE else 1,
+    "5M": getattr(mt5, "TIMEFRAME_M5", 5) if MT5_AVAILABLE else 5,
+    "M5": getattr(mt5, "TIMEFRAME_M5", 5) if MT5_AVAILABLE else 5,
+    "15M": getattr(mt5, "TIMEFRAME_M15", 15) if MT5_AVAILABLE else 15,
+    "M15": getattr(mt5, "TIMEFRAME_M15", 15) if MT5_AVAILABLE else 15,
+    "30M": getattr(mt5, "TIMEFRAME_M30", 30) if MT5_AVAILABLE else 30,
+    "M30": getattr(mt5, "TIMEFRAME_M30", 30) if MT5_AVAILABLE else 30,
+    "1H": getattr(mt5, "TIMEFRAME_H1", 16385) if MT5_AVAILABLE else 16385,
+    "H1": getattr(mt5, "TIMEFRAME_H1", 16385) if MT5_AVAILABLE else 16385,
+}
+
 def get_champion_config(symbol: str) -> Dict[str, Any]:
     base = clean_base_symbol(symbol).upper()
     for key, cfg in CHAMPION_SYMBOL_CONFIGS.items():
         if key in base:
             return cfg
     return {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.18, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4}
+
 
 
 class ScalperBot:
@@ -555,47 +569,60 @@ class ScalperBot:
                     self._stop_event.wait(5.0)
                     continue
 
-                # Build active execution items: (strategy_key, symbol, lot_size)
+                # Build active execution items: (strategy_key, symbol, lot_size, timeframe)
                 active_plans = []
                 if tayyab_on:
                     for s in tayyab_cfg.get("symbols", []):
                         lot = tayyab_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
-                        active_plans.append(("TAYYAB_ENHANCED", s, lot))
+                        raw_tfs = tayyab_cfg.get("symbol_timeframes", {}).get(s, ["5M"])
+                        if not raw_tfs or not isinstance(raw_tfs, list):
+                            raw_tfs = ["5M"]
+                        for tf in raw_tfs:
+                            active_plans.append(("TAYYAB_ENHANCED", s, lot, str(tf).strip().upper()))
                 if haider_on:
                     for s in haider_cfg.get("symbols", []):
                         lot = haider_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
-                        active_plans.append(("HAIDER_ENHANCED", s, lot))
+                        active_plans.append(("HAIDER_ENHANCED", s, lot, "5M"))
                 if champ_on:
                     for s in champ_cfg.get("symbols", []):
                         lot = champ_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
-                        active_plans.append(("CHAMPION_SCALPER", s, lot))
+                        active_plans.append(("CHAMPION_SCALPER", s, lot, "5M"))
 
                 # Fallback to legacy single-strategy loop if master enabled but no specific configs enabled
                 if not active_plans and self.enabled:
                     for s in self.symbols:
-                        active_plans.append((self.strategy, s, self.get_lot_for_symbol(s)))
+                        active_plans.append((self.strategy, s, self.get_lot_for_symbol(s), "5M"))
 
-                for strat_key, config_sym, custom_lot in active_plans:
+                for plan in active_plans:
+                    if len(plan) == 4:
+                        strat_key, config_sym, custom_lot, tf_str = plan
+                    else:
+                        strat_key, config_sym, custom_lot = plan
+                        tf_str = "5M"
+
                     if self._stop_event.is_set():
                         break
 
-                    sym_state_key = f"{strat_key}:{config_sym}"
+                    sym_state_key = f"{strat_key}:{config_sym}:{tf_str}" if tf_str != "5M" else f"{strat_key}:{config_sym}"
                     sym_state = self._get_symbol_state(sym_state_key)
                     broker_sym = resolve_broker_symbol(config_sym, self.mt5_lock)
                     sym_state["broker_symbol"] = broker_sym
+                    sym_state["timeframe"] = tf_str
+
+                    tf_const = TF_TIMEFRAME_MAP.get(tf_str, getattr(mt5, "TIMEFRAME_M5", 5) if MT5_AVAILABLE else 5)
 
                     with self.mt5_lock:
                         if not mt5.symbol_select(broker_sym, True):
                             sym_state["scan_status"] = f"SYMBOL_NOT_FOUND ({broker_sym})"
                             continue
-                        rates = mt5.copy_rates_from_pos(broker_sym, mt5.TIMEFRAME_M5, 0, 100)
+                        rates = mt5.copy_rates_from_pos(broker_sym, tf_const, 0, 100)
 
                     if rates is None or len(rates) < 40:
                         sym_state["scan_status"] = "WAITING_FOR_DATA"
                         continue
 
                     sym_state["last_scanned_at"] = int(time.time())
-                    sym_state["scan_status"] = f"SCANNING_OK ({broker_sym})"
+                    sym_state["scan_status"] = f"SCANNING_OK ({broker_sym} {tf_str})"
 
                     # Bar -1 is currently forming live bar. Bar -2 is the most recently CLOSED bar.
                     closed_bar = rates[-2]
@@ -605,10 +632,10 @@ class ScalperBot:
                     if sym_state["last_bar_time"] == 0:
                         # Initial sync on startup: record current bar timestamp to prevent firing stale historical bars
                         sym_state["last_bar_time"] = closed_bar_time
-                        sym_state["scan_status"] = f"SYNCED_AWAITING_BAR_CLOSE ({broker_sym})"
+                        sym_state["scan_status"] = f"SYNCED_AWAITING_BAR_CLOSE ({broker_sym} {tf_str})"
                         continue
 
-                    # Check if a new candle closed for this specific instrument
+                    # Check if a new candle closed for this specific instrument & timeframe
                     if closed_bar_time > sym_state["last_bar_time"]:
                         sym_state["last_bar_time"] = closed_bar_time
                         self._process_closed_bar_for_symbol(
@@ -621,10 +648,19 @@ class ScalperBot:
                             custom_lot=custom_lot
                         )
 
+                    # Also mirror to general symbol state for status() per_symbol telemetry
+                    base_state = self._get_symbol_state(config_sym)
+                    base_state["broker_symbol"] = broker_sym
+                    base_state["last_bar_time"] = sym_state["last_bar_time"]
+                    base_state["scan_status"] = sym_state["scan_status"]
+                    base_state["setup_state"] = sym_state["setup_state"]
+                    base_state["last_signal"] = sym_state["last_signal"]
+
                 active_strats = []
+                if tayyab_on: active_strats.append(f"Tayyab({len(tayyab_cfg.get('symbols', []))})")
                 if haider_on: active_strats.append(f"Haider({len(haider_cfg.get('symbols', []))})")
                 if champ_on: active_strats.append(f"Champion({len(champ_cfg.get('symbols', []))})")
-                self.status_message = f"ACTIVE: Monitoring {' + '.join(active_strats) if active_strats else len(active_plans)} Pairs on 5M"
+                self.status_message = f"ACTIVE: Monitoring {' + '.join(active_strats) if active_strats else len(active_plans)} Pairs"
 
             except Exception as e:
                 logger.error(f"Error in multi-instrument worker loop: {e}", exc_info=True)
@@ -707,10 +743,22 @@ class ScalperBot:
         upper_wick = (h - max(o, c)) / crange
 
         if active_strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER"):
-            sym_cfg = get_champion_config(broker_sym)
-            sweep_req = sym_cfg.get("sweep_lookback", 4)
-            req_impulse = sym_cfg.get("impulse_mult", 0.45)
-            req_wick = sym_cfg.get("min_wick", 0.18)
+            if active_strat == "TAYYAB_ENHANCED":
+                sweep_req = 4
+                req_impulse = 0.45
+                req_wick = 0.18
+                sl_buffer_mult = 0.18
+                tp1_atr_mult = 0.25
+                tp2_atr_mult = 3.20
+                strat_name = "Tayyab-Scalper-Enhanced"
+            else:
+                sweep_req = 8
+                req_impulse = 0.65
+                req_wick = 0.22
+                sl_buffer_mult = 0.25
+                tp1_atr_mult = 0.22
+                tp2_atr_mult = 2.00
+                strat_name = "Champion-Scalper"
 
             # 1. Microstructure Liquidity Sweep
             sweep_n = min(sweep_req, n - 1)
@@ -750,11 +798,6 @@ class ScalperBot:
                 is_buy = False
             if is_sell and not trend_bear and curr_rsi <= 74.0:
                 is_sell = False
-
-            strat_name = "Tayyab-Scalper-Enhanced" if active_strat == "TAYYAB_ENHANCED" else "Champion-Scalper"
-            sl_buffer_mult = sym_cfg["sl_mult"]
-            tp1_atr_mult = sym_cfg["tp1_mult"]
-            tp2_atr_mult = sym_cfg["tp2_mult"]
 
         elif active_strat == "HAIDER_ENHANCED":
             is_buy = (c < o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi < self.rsi_buy_level) and (lower_wick >= self.min_wick_ratio)
@@ -901,11 +944,14 @@ class ScalperBot:
         strat = "TAYYAB_ENHANCED" if ("Tayyab" in strategy_name or strategy_name == "TAYYAB_ENHANCED") else ("CHAMPION_SCALPER" if ("Champion" in strategy_name or strategy_name == "CHAMPION_SCALPER") else ("HAIDER_ENHANCED" if "Enhanced" in strategy_name or strategy_name == "HAIDER_ENHANCED" else self.strategy))
         direction = 1 if signal_type == "BUY" else -1
         t_dist = abs(tp1 - entry)
-        if strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER"):
-            sym_cfg = get_champion_config(symbol)
-            ratio = (sym_cfg["tp2_mult"] / sym_cfg["tp1_mult"]) if sym_cfg.get("tp1_mult") else 8.0
+        if strat == "TAYYAB_ENHANCED":
+            ratio = 3.20 / 0.25  # 12.8x
             tp2 = (entry + t_dist * ratio) if direction == 1 else max(0.001, entry - t_dist * ratio)
-            trail_active = sym_cfg.get("trail_runner", False)
+            trail_active = True
+        elif strat == "CHAMPION_SCALPER":
+            ratio = 2.00 / 0.22  # ~9.09x
+            tp2 = (entry + t_dist * ratio) if direction == 1 else max(0.001, entry - t_dist * ratio)
+            trail_active = True
         else:
             tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.001, entry - t_dist * 2.2)
             trail_active = False
