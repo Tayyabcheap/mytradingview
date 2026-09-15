@@ -514,6 +514,42 @@ class TestNeuralSentinel(unittest.TestCase):
         self.assertTrue(haider_data["haider_enhanced"]["enabled"])
         self.assertEqual(haider_data["haider_enhanced"]["symbol_lot_sizes"]["XAUUSDc"], 0.05)
 
+        # 4. Configure Tayyab Scalper with isolated pairs, lots, and multi-timeframes
+        post_tayyab = {
+            "strategy": "TAYYAB_ENHANCED",
+            "enabled": True,
+            "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm"],
+            "symbol_lot_sizes": {
+                "BTCUSDm": 1.0,
+                "XAUUSDm": 3.0,  # Must be clamped to <= 1.0
+                "GBPUSDm": 0.15
+            },
+            "symbol_timeframes": {
+                "BTCUSDm": ["1M", "5M"],
+                "XAUUSDm": ["5M", "15M", "30M"],
+                "GBPUSDm": ["15M", "1H"]
+            }
+        }
+        tayyab_res = self.client.post("/api/scalper/bot/strategy-config", json=post_tayyab)
+        self.assertEqual(tayyab_res.status_code, 200)
+        tayyab_data = json.loads(tayyab_res.data)
+        self.assertTrue(tayyab_data["enabled"])
+        self.assertIn("TAYYAB_ENHANCED", tayyab_data)
+        t_cfg = tayyab_data["TAYYAB_ENHANCED"]
+        self.assertTrue(t_cfg["enabled"])
+        # Invariant: Gold capped at 1.0
+        gold_t_key = next((k for k in t_cfg["symbol_lot_sizes"] if "XAU" in k), None)
+        self.assertIsNotNone(gold_t_key)
+        self.assertLessEqual(t_cfg["symbol_lot_sizes"][gold_t_key], 1.0)
+        # Verify multi-timeframes stored
+        self.assertIn("symbol_timeframes", t_cfg)
+        btc_tf_key = next((k for k in t_cfg["symbol_timeframes"] if "BTCUSD" in k), None)
+        self.assertIsNotNone(btc_tf_key)
+        self.assertEqual(t_cfg["symbol_timeframes"][btc_tf_key], ["1M", "5M"])
+        xau_tf_key = next((k for k in t_cfg["symbol_timeframes"] if "XAU" in k), None)
+        self.assertIsNotNone(xau_tf_key)
+        self.assertEqual(t_cfg["symbol_timeframes"][xau_tf_key], ["5M", "15M", "30M"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1806,15 +1806,16 @@ def scalper_bot_toggle():
 
 @app.route("/api/scalper/bot/strategy-config", methods=["GET", "POST"])
 def scalper_bot_strategy_config():
-    """Get or update configuration (enabled, instruments, lot sizes) for a specific scalper strategy."""
+    """Get or update configuration (enabled, instruments, lot sizes, timeframes) for a specific scalper strategy."""
     from scalper_bot import get_scalper_bot
     bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
     if request.method == "POST":
         data = request.get_json(force=True) or {}
-        strategy = data.get("strategy") or "HAIDER_ENHANCED"
+        strategy = data.get("strategy") or "TAYYAB_ENHANCED"
         enabled = data.get("enabled")
         raw_symbols = data.get("symbols")
         raw_lot_sizes = data.get("symbol_lot_sizes") or data.get("lot_sizes")
+        raw_timeframes = data.get("symbol_timeframes") or data.get("timeframes")
 
         symbols = None
         if raw_symbols is not None and isinstance(raw_symbols, list):
@@ -1838,11 +1839,27 @@ def scalper_bot_strategy_config():
                     if broker_sym:
                         aligned_lots[broker_sym] = val
 
+        aligned_timeframes = None
+        if raw_timeframes is not None and isinstance(raw_timeframes, dict):
+            aligned_timeframes = {}
+            for s, tfs in raw_timeframes.items():
+                if s and isinstance(tfs, list):
+                    clean_tfs = [str(tf).strip().upper() for tf in tfs if tf]
+                    s_str = str(s).strip()
+                    aligned_timeframes[s_str] = clean_tfs
+                    base_sym = clean_base_symbol(s_str)
+                    if base_sym:
+                        aligned_timeframes[base_sym] = clean_tfs
+                    broker_sym = resolve_broker_symbol(s_str)
+                    if broker_sym:
+                        aligned_timeframes[broker_sym] = clean_tfs
+
         bot.configure_strategy(
             strategy_key=strategy,
             enabled=enabled,
             symbols=symbols,
-            symbol_lot_sizes=aligned_lots
+            symbol_lot_sizes=aligned_lots,
+            symbol_timeframes=aligned_timeframes
         )
         if store:
             store.put("settings", "strategy_configs", bot.strategy_configs)
@@ -1851,12 +1868,14 @@ def scalper_bot_strategy_config():
         res = bot.status()
         res["success"] = True
         res["strategy"] = strategy
+        res["TAYYAB_ENHANCED"] = bot.strategy_configs.get("TAYYAB_ENHANCED", {})
         res["HAIDER_ENHANCED"] = bot.strategy_configs.get("HAIDER_ENHANCED", {})
         res["CHAMPION_SCALPER"] = bot.strategy_configs.get("CHAMPION_SCALPER", {})
         return jsonify(res)
 
     res = bot.status()
     res["strategy_configs"] = bot.strategy_configs
+    res["TAYYAB_ENHANCED"] = bot.strategy_configs.get("TAYYAB_ENHANCED", {})
     res["HAIDER_ENHANCED"] = bot.strategy_configs.get("HAIDER_ENHANCED", {})
     res["CHAMPION_SCALPER"] = bot.strategy_configs.get("CHAMPION_SCALPER", {})
     return jsonify(res)

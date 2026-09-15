@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Sliders, Zap, Settings, Layers, Target, Cpu, Trophy } from 'lucide-react';
+import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Sliders, Zap, Settings, Layers, Target, Cpu, Trophy, Flame } from 'lucide-react';
 
 export default function TopTabBar({
   tabs = [],
@@ -32,6 +32,7 @@ export default function TopTabBar({
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flex: 1, minWidth: 0, overflowX: 'auto' }}>
         {tabs.map(tab => {
           const isActive = tab.id === activeTabId;
+          const isTayyab = tab.type === 'tayyab_scalper';
           let Icon = CandlestickChart;
           if (tab.type === 'dashboard') Icon = LayoutDashboard;
           else if (tab.type === 'journal') Icon = BookOpen;
@@ -40,6 +41,9 @@ export default function TopTabBar({
           else if (tab.type === 'support_resistance') Icon = Target;
           else if (tab.type === 'neural_sentinel') Icon = Cpu;
           else if (tab.type === 'champion_scalper') Icon = Trophy;
+          else if (tab.type === 'tayyab_scalper') Icon = Flame;
+
+          const brandColor = isTayyab ? '#a855f7' : (tab.type === 'champion_scalper' ? '#10b981' : 'var(--brand, #2962ff)');
 
           return (
             <div
@@ -60,9 +64,9 @@ export default function TopTabBar({
                 fontSize: 12.5,
                 fontWeight: isActive ? 600 : 500,
                 color: isActive ? '#ffffff' : '#8b949e',
-                background: isActive ? '#1e222d' : 'transparent',
+                background: isActive ? (isTayyab ? 'rgba(168, 85, 247, 0.12)' : '#1e222d') : 'transparent',
                 borderRadius: '6px 6px 0 0',
-                borderTop: isActive ? '2px solid var(--brand, #2962ff)' : '2px solid transparent',
+                borderTop: isActive ? `2px solid ${brandColor}` : '2px solid transparent',
                 borderLeft: isActive ? '1px solid #2a2e39' : '1px solid transparent',
                 borderRight: isActive ? '1px solid #2a2e39' : '1px solid transparent',
                 cursor: 'pointer',
@@ -71,8 +75,8 @@ export default function TopTabBar({
                 position: 'relative'
               }}
             >
-              <Icon size={14} color={isActive ? 'var(--brand, #2962ff)' : '#8b949e'} />
-              <span>{tab.title}</span>
+              <Icon size={14} color={isActive ? brandColor : '#8b949e'} />
+              <span style={{ color: isActive && isTayyab ? '#e9d5ff' : undefined }}>{tab.title}</span>
 
               {/* Close Tab Button (for custom added tabs) */}
               {tab.closable && (

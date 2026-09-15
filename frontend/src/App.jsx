@@ -4,7 +4,7 @@ import {
   Bell, RotateCcw, ChevronDown, ChevronUp, Download, Check, Zap, 
   TrendingUp, TrendingDown, Layers, LayoutDashboard, BookOpen, 
   CandlestickChart, Plus, Minus, DollarSign, BarChart2, Award, Sliders,
-  Trophy, Cpu, ArrowRight
+  Trophy, Cpu, ArrowRight, Flame
 } from 'lucide-react';
 import TopTabBar from './components/TopTabBar';
 import DashboardTab from './components/DashboardTab';
@@ -17,6 +17,7 @@ import GoldOrderBlocksTab from './components/GoldOrderBlocksTab';
 import SupportResistanceTab from './components/SupportResistanceTab';
 import NeuralSentinelTab from './components/NeuralSentinelTab';
 import ChampionScalperTab from './components/ChampionScalperTab';
+import TayyabScalperTab from './components/TayyabScalperTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
 import SignalPerformanceModal from './components/SignalPerformanceModal';
@@ -300,6 +301,7 @@ const INITIAL_WORKSPACE_TABS = [
   { id: 'chart-main', title: 'Chart: XAUUSDc', type: 'chart', symbol: 'XAUUSDc', timeframe: '1H', closable: false },
   { id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false },
   { id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false },
+  { id: 'tayyab_scalper', title: 'Tayyab Scalper', type: 'tayyab_scalper', closable: false },
   { id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false },
   { id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: false },
   { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false },
@@ -315,6 +317,9 @@ function App() {
     }
     if (!loaded.some(t => t.id === 'champion_scalper')) {
       loaded.push({ id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false });
+    }
+    if (!loaded.some(t => t.id === 'tayyab_scalper')) {
+      loaded.push({ id: 'tayyab_scalper', title: 'Tayyab Scalper', type: 'tayyab_scalper', closable: false });
     }
     if (!loaded.some(t => t.id === 'monte_carlo')) {
       loaded.push({ id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false });
@@ -2029,6 +2034,35 @@ function App() {
                       </div>
                       <ArrowRight size={13} color="#10b981" />
                     </div>
+
+                    <div
+                      onClick={() => {
+                        setActiveTabId('tayyab_scalper');
+                        setShowSignalsMenu(false);
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: 'rgba(168, 85, 247, 0.1)',
+                        border: '1px solid rgba(168, 85, 247, 0.3)',
+                        borderRadius: 5,
+                        fontSize: 12,
+                        color: '#c084fc',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        fontWeight: 600,
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(168, 85, 247, 0.2)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(168, 85, 247, 0.1)'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Flame size={14} color="#c084fc" />
+                        <span>Tayyab Scalper (Pairs, Lots & TF)</span>
+                      </div>
+                      <ArrowRight size={13} color="#c084fc" />
+                    </div>
                   </div>
 
                   {/* AUTO-TRADE TOGGLE */}
@@ -2549,6 +2583,17 @@ function App() {
       {activeTab.type === 'champion_scalper' && (
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <ChampionScalperTab
+            accountInfo={accountInfo}
+            symbols={symbols}
+            onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
+          />
+        </div>
+      )}
+
+      {/* 9. TAB 9: TAYYAB SCALPER VIEW */}
+      {activeTab.type === 'tayyab_scalper' && (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <TayyabScalperTab
             accountInfo={accountInfo}
             symbols={symbols}
             onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}

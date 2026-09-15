@@ -85,6 +85,13 @@ class ScalperBot:
                     "GBPUSDm": 0.10,
                     "GBPJPYm": 0.10,
                     "USDJPYm": 0.10
+                },
+                "symbol_timeframes": {
+                    "BTCUSDm": ["1M", "5M"],
+                    "XAUUSDm": ["5M", "15M"],
+                    "GBPUSDm": ["5M", "15M"],
+                    "GBPJPYm": ["5M", "15M"],
+                    "USDJPYm": ["5M", "15M"]
                 }
             },
             "HAIDER_ENHANCED": {
@@ -301,8 +308,9 @@ class ScalperBot:
 
     def configure_strategy(self, strategy_key: str, enabled: Optional[bool] = None,
                            symbols: Optional[List[str]] = None,
-                           symbol_lot_sizes: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
-        """Configure an isolated strategy (HAIDER_ENHANCED or CHAMPION_SCALPER) with its own symbols and lot sizes."""
+                           symbol_lot_sizes: Optional[Dict[str, float]] = None,
+                           symbol_timeframes: Optional[Dict[str, List[str]]] = None) -> Dict[str, Any]:
+        """Configure an isolated strategy (TAYYAB_ENHANCED, CHAMPION_SCALPER, or HAIDER_ENHANCED) with its own symbols, lot sizes, and timeframes."""
         strat_key = strategy_key.upper().replace("-", "_")
         if strat_key not in self.strategy_configs:
             self.strategy_configs[strat_key] = {
@@ -341,6 +349,18 @@ class ScalperBot:
                         cfg["symbol_lot_sizes"][base_s] = clamped
                 except (ValueError, TypeError):
                     pass
+
+        if symbol_timeframes is not None and isinstance(symbol_timeframes, dict):
+            if "symbol_timeframes" not in cfg:
+                cfg["symbol_timeframes"] = {}
+            for s, tfs in symbol_timeframes.items():
+                if isinstance(tfs, list):
+                    clean_tfs = [str(tf).strip().upper() for tf in tfs if tf]
+                    clean_s = str(s).strip()
+                    cfg["symbol_timeframes"][clean_s] = clean_tfs
+                    base_s = clean_base_symbol(clean_s)
+                    if base_s:
+                        cfg["symbol_timeframes"][base_s] = clean_tfs
 
         # Collect union of all strategy symbols to keep self.symbols and worker loop synchronized
         all_strat_syms = []
