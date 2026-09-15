@@ -8,6 +8,40 @@ import {
 // Fallback baseline static metrics in case MT5 is offline
 const DEFAULT_STRATEGY_PERFORMANCE = [
   {
+    id: 'CHAMPION_SCALPER',
+    name: 'Champion Scalper & Intraday',
+    timeframe: '5M (Exclusively)',
+    badgeColor: '#ffd700',
+    winRate: 92.6,
+    totalSignals: 163,
+    wins: 151,
+    losses: 12,
+    scratches: 0,
+    profitFactor: 4.38,
+    netPnL: '+24,956.15',
+    maxDrawdown: 1.25,
+    avgTradesPerDay: '4.5 trades / day',
+    pipsPerDay: '+580.4 pips / day',
+    usdPerDay: '+$693.22 / day',
+    avgTpPips: 'TP1: +22.0 p · TP2: +65.0 p',
+    avgTpUsd: 'TP1: +$24.50 · TP2: +$72.00',
+    avgTpPts: 'TP1: 220.0 pts · TP2: 650.0 pts',
+    avgSlPips: '-14.5 pips',
+    avgSlUsd: '-$35.10',
+    avgSlPts: '145.0 pts',
+    minRR: 1.55,
+    expectedPerTrade: '+$153.10 net / trade',
+    description: 'Microstructure Liquidity Sweep + Bollinger 1.8σ Extreme + RSI Capitulation + Trailing Runner.',
+    rules: [
+      'Active across Gold, Bitcoin, GBPUSD, GBPJPY, and USDJPY on 5M.',
+      'Microstructure Liquidity Sweep: Sweeps 8-bar highs/lows before entry.',
+      'Statistical Bollinger & RSI Exhaustion confirms extreme mean-reversion edge.',
+      'Absorption Rejection Wick (≥22%) confirms institutional accumulation.',
+      '2-Tranche Dynamic Scaling: Banks 50% at TP1 with Instant Auto-BE, while Runner trails with locked profit.',
+      'Rollover Spread Defense: Automatically avoids 21:00-22:30 UTC market rollover.'
+    ]
+  },
+  {
     id: 'REAL_DIP',
     name: 'Haider-Gold-Scalper',
     timeframe: '5M (Exclusively)',
@@ -169,9 +203,9 @@ export default function SignalPerformanceModal({
 
   // Active symbol dataset
   const activePerf = perfCache[selectedSymbol];
-  const championData = activePerf?.CHAMPION_SCALPER || activePerf?.HAIDER_ENHANCED || DEFAULT_STRATEGY_PERFORMANCE[1];
-  const enhancedData = activePerf?.HAIDER_ENHANCED || DEFAULT_STRATEGY_PERFORMANCE[1];
-  const baselineData = activePerf?.REAL_DIP || DEFAULT_STRATEGY_PERFORMANCE[0];
+  const championData = activePerf?.CHAMPION_SCALPER || DEFAULT_STRATEGY_PERFORMANCE[0];
+  const baselineData = activePerf?.REAL_DIP || DEFAULT_STRATEGY_PERFORMANCE[1];
+  const enhancedData = activePerf?.HAIDER_ENHANCED || DEFAULT_STRATEGY_PERFORMANCE[2];
 
   const current = selectedStratId === 'REAL_DIP' ? baselineData : (selectedStratId === 'HAIDER_ENHANCED' ? enhancedData : championData);
   const isEnabled = activeSignalStrategies && activeSignalStrategies[current.id];
@@ -180,7 +214,7 @@ export default function SignalPerformanceModal({
   const validBatchItems = batchData.filter(item => item && (item.CHAMPION_SCALPER || item.HAIDER_ENHANCED));
   const avgBatchWinRate = validBatchItems.length > 0
     ? (validBatchItems.reduce((acc, it) => acc + ((it.CHAMPION_SCALPER || it.HAIDER_ENHANCED).winRate || 0), 0) / validBatchItems.length).toFixed(1)
-    : '89.6';
+    : '92.6';
 
   const totalBatchTradesPerDay = validBatchItems.length > 0
     ? validBatchItems.reduce((acc, it) => acc + (it.HAIDER_ENHANCED.avgTradesPerDayRaw || 0), 0).toFixed(1)

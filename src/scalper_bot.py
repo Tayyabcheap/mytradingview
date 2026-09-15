@@ -38,7 +38,22 @@ logger = logging.getLogger("scalper_bot")
 logger.setLevel(logging.INFO)
 
 MAX_INSTRUMENTS = 10
-DEFAULT_SYMBOLS = ["XAUUSDm", "BTCUSDm", "GBPUSDm", "USDJPYm", "EURUSDm"]
+DEFAULT_SYMBOLS = ["XAUUSDm", "BTCUSDm", "GBPUSDm", "GBPJPYm", "USDJPYm"]
+
+CHAMPION_SYMBOL_CONFIGS: Dict[str, Dict[str, Any]] = {
+    "XAUUSD": {"tp1_mult": 0.25, "tp2_mult": 1.80, "sl_mult": 0.25, "trail_runner": False},
+    "BTCUSD": {"tp1_mult": 0.22, "tp2_mult": 2.50, "sl_mult": 0.20, "trail_runner": True},
+    "GBPUSD": {"tp1_mult": 0.25, "tp2_mult": 2.20, "sl_mult": 0.20, "trail_runner": True},
+    "GBPJPY": {"tp1_mult": 0.22, "tp2_mult": 2.00, "sl_mult": 0.22, "trail_runner": True},
+    "USDJPY": {"tp1_mult": 0.25, "tp2_mult": 2.50, "sl_mult": 0.25, "trail_runner": False},
+}
+
+def get_champion_config(symbol: str) -> Dict[str, Any]:
+    base = clean_base_symbol(symbol).upper()
+    for key, cfg in CHAMPION_SYMBOL_CONFIGS.items():
+        if key in base:
+            return cfg
+    return {"tp1_mult": 0.22, "tp2_mult": 2.00, "sl_mult": 0.25, "trail_runner": True}
 
 
 class ScalperBot:
@@ -513,9 +528,10 @@ class ScalperBot:
                 is_sell = False
 
             strat_name = "Champion-Scalper"
-            sl_buffer_mult = 0.25
-            tp1_atr_mult = 0.20
-            tp2_atr_mult = 1.60
+            sym_cfg = get_champion_config(broker_sym)
+            sl_buffer_mult = sym_cfg["sl_mult"]
+            tp1_atr_mult = sym_cfg["tp1_mult"]
+            tp2_atr_mult = sym_cfg["tp2_mult"]
 
         elif self.strategy == "HAIDER_ENHANCED":
             is_buy = (c < o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi < self.rsi_buy_level) and (lower_wick >= self.min_wick_ratio)
@@ -616,9 +632,13 @@ class ScalperBot:
         direction = 1 if signal_type == "BUY" else -1
         t_dist = abs(tp1 - entry)
         if self.strategy == "CHAMPION_SCALPER":
-            tp2 = (entry + t_dist * 8.0) if direction == 1 else max(0.001, entry - t_dist * 8.0)
+            sym_cfg = get_champion_config(symbol)
+            ratio = (sym_cfg["tp2_mult"] / sym_cfg["tp1_mult"]) if sym_cfg.get("tp1_mult") else 8.0
+            tp2 = (entry + t_dist * ratio) if direction == 1 else max(0.001, entry - t_dist * ratio)
+            trail_active = sym_cfg.get("trail_runner", False)
         else:
             tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.001, entry - t_dist * 2.2)
+            trail_active = False
 
         # Tranche volume calculation
         is_multi_tranche = (self.strategy in ("CHAMPION_SCALPER", "HAIDER_ENHANCED"))
@@ -634,7 +654,7 @@ class ScalperBot:
             tranche_2_vol = round(total_lot - tranche_1_vol, 2)
             orders_to_place = [
                 {"vol": tranche_1_vol, "tp": tp1, "comment": f"{base_label} [TP1]", "is_runner": False},
-                {"vol": tranche_2_vol, "tp": tp2, "comment": f"{base_label} [Runner]", "is_runner": True, "auto_be_target": tp1}
+                {"vol": tranche_2_vol, "tp": tp2, "comment": f"{base_label} [Runner]", "is_runner": True, "auto_be_target": tp1, "trail_runner": trail_active}
             ]
         else:
             orders_to_place = [
@@ -663,6 +683,7 @@ class ScalperBot:
                     "tp": round(plan["tp"], 3 if is_gold else 5),
                     "is_runner": plan.get("is_runner", False),
                     "auto_be_target": plan.get("auto_be_target"),
+                    "trail_runner": plan.get("trail_runner", False),
                     "be_done": False,
                     "opened_at": int(time.time()),
                     "comment": plan["comment"]
@@ -853,7 +874,7 @@ class ScalperBot:
                         }
 
                 for ticket, trade in list(self.active_bot_orders.items()):
-                    if trade.get("be_done") or not trade.get("auto_be_target"):
+                    if not trade.get("auto_be_target"):
                         continue
 
                     pos = open_tickets.get(ticket)
@@ -865,6 +886,35 @@ class ScalperBot:
                     curr_sl = float(pos.sl)
                     is_buy = (pos.type == 0)
 
+                    # 1. Dynamic Trailing Runner after Auto-BE
+                    if trade.get("be_done"):
+                        if trade.get("trail_runner"):
+                            t_dist = abs(target_tp1 - entry_px)
+                            if t_dist > 0:
+                                target_trail = None
+                                if is_buy:
+                                    if pos.price_current >= entry_px + t_dist * 4.5:
+                                        target_trail = entry_px + t_dist * 2.5
+                                    elif pos.price_current >= entry_px + t_dist * 2.5:
+                                        target_trail = entry_px + t_dist * 1.0
+                                    if target_trail and target_trail > curr_sl:
+                                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
+                                        req = {"action": mt5.TRADE_ACTION_SLTP, "position": ticket, "symbol": pos.symbol, "sl": round(target_trail, digits), "tp": float(pos.tp)}
+                                        with self.mt5_lock:
+                                            mt5.order_send(req)
+                                else:
+                                    if pos.price_current <= entry_px - t_dist * 4.5:
+                                        target_trail = entry_px - t_dist * 2.5
+                                    elif pos.price_current <= entry_px - t_dist * 2.5:
+                                        target_trail = entry_px - t_dist * 1.0
+                                    if target_trail and (curr_sl == 0.0 or target_trail < curr_sl):
+                                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
+                                        req = {"action": mt5.TRADE_ACTION_SLTP, "position": ticket, "symbol": pos.symbol, "sl": round(target_trail, digits), "tp": float(pos.tp)}
+                                        with self.mt5_lock:
+                                            mt5.order_send(req)
+                        continue
+
+                    # 2. Initial Auto-BE to entry price when TP1 reached
                     should_be = False
                     if is_buy and pos.price_current >= target_tp1 and (curr_sl < entry_px or curr_sl == 0.0):
                         should_be = True

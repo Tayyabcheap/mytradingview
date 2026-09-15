@@ -1343,7 +1343,7 @@ def get_scalper_performance_batch():
         bars_n = int(payload.get("bars", 3000))
         lot_size = float(payload.get("lot_size", 0.10))
     else:
-        raw_syms = request.args.get("symbols", "XAUUSDc,EURUSDc,USDJPYc")
+        raw_syms = request.args.get("symbols", "XAUUSDm,BTCUSDm,GBPUSDm,GBPJPYm,USDJPYm")
         syms = [s.strip() for s in raw_syms.split(",") if s.strip()]
         bars_n = int(request.args.get("bars", 3000))
         lot_size = float(request.args.get("lot_size", 0.10))

@@ -38,8 +38,9 @@ def backtest(
     tick_value: float = 0.10,
     sweep_lookback: int = 8,
     use_trend_filter: bool = True,
-    tp1_atr_mult: float = 0.20,
-    tp2_atr_mult: float = 1.60
+    tp1_atr_mult: float = 0.22,
+    tp2_atr_mult: float = 2.00,
+    trail_runner: bool = True
 ) -> Dict[str, Any]:
     n = len(bars)
     if n < max(atr_len, rsi_len) + 20:
@@ -113,6 +114,13 @@ def backtest(
                     tr['sl_price'] = tr['entry_price']  # Auto-BE
                     tr['banked_half'] = (tr['tp_price'] - tr['entry_price']) * (lot_size * 0.5) * (tick_value / mintick)
 
+                # Dynamic Trailing Runner (Locks in +0.20x ATR, then +0.50x ATR as price expands)
+                if trail_runner and tr.get('tp1_hit', False):
+                    if h >= tr['entry_price'] + curr_atr * 0.60:
+                        tr['sl_price'] = max(tr['sl_price'], tr['entry_price'] + curr_atr * 0.20)
+                    if h >= tr['entry_price'] + curr_atr * 1.00:
+                        tr['sl_price'] = max(tr['sl_price'], tr['entry_price'] + curr_atr * 0.50)
+
                 # Check SL hit
                 if l <= tr['sl_price']:
                     tr['exit_idx'] = i
@@ -120,8 +128,9 @@ def backtest(
                     tr['exit_price'] = tr['sl_price']
                     if tr.get('tp1_hit', False):
                         tr['exit_reason'] = "TP1 + BE HIT"
-                        tr['pnl'] = tr['banked_half']
-                        tr['points'] = abs(tr['tp_price'] - tr['entry_price']) * 0.5 / mintick
+                        runner_pnl = max(0.0, (tr['sl_price'] - tr['entry_price'])) * (lot_size * 0.5) * (tick_value / mintick)
+                        tr['pnl'] = tr['banked_half'] + runner_pnl
+                        tr['points'] = (abs(tr['tp_price'] - tr['entry_price']) * 0.5 + max(0.0, tr['sl_price'] - tr['entry_price']) * 0.5) / mintick
                         win_points.append(tr['points'])
                     else:
                         tr['exit_reason'] = "SL HIT"
@@ -153,14 +162,22 @@ def backtest(
                     tr['sl_price'] = tr['entry_price']
                     tr['banked_half'] = (tr['entry_price'] - tr['tp_price']) * (lot_size * 0.5) * (tick_value / mintick)
 
+                # Dynamic Trailing Runner (Locks in +0.20x ATR, then +0.50x ATR as price expands)
+                if trail_runner and tr.get('tp1_hit', False):
+                    if l <= tr['entry_price'] - curr_atr * 0.60:
+                        tr['sl_price'] = min(tr['sl_price'], tr['entry_price'] - curr_atr * 0.20)
+                    if l <= tr['entry_price'] - curr_atr * 1.00:
+                        tr['sl_price'] = min(tr['sl_price'], tr['entry_price'] - curr_atr * 0.50)
+
                 if h >= tr['sl_price']:
                     tr['exit_idx'] = i
                     tr['exit_time'] = t
                     tr['exit_price'] = tr['sl_price']
                     if tr.get('tp1_hit', False):
                         tr['exit_reason'] = "TP1 + BE HIT"
-                        tr['pnl'] = tr['banked_half']
-                        tr['points'] = abs(tr['entry_price'] - tr['tp_price']) * 0.5 / mintick
+                        runner_pnl = max(0.0, (tr['entry_price'] - tr['sl_price'])) * (lot_size * 0.5) * (tick_value / mintick)
+                        tr['pnl'] = tr['banked_half'] + runner_pnl
+                        tr['points'] = (abs(tr['entry_price'] - tr['tp_price']) * 0.5 + max(0.0, tr['entry_price'] - tr['sl_price']) * 0.5) / mintick
                         win_points.append(tr['points'])
                     else:
                         tr['exit_reason'] = "SL HIT"

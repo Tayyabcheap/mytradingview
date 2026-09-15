@@ -307,8 +307,8 @@ class TestScalperBot(unittest.TestCase):
         self.assertIn("BTCUSDm", self.bot.symbols)
         self.assertIn("XAUUSDm", self.bot.symbols)
         self.assertIn("GBPUSDm", self.bot.symbols)
+        self.assertIn("GBPJPYm", self.bot.symbols)
         self.assertIn("USDJPYm", self.bot.symbols)
-        self.assertIn("EURUSDm", self.bot.symbols)
 
     def test_has_open_position_prevents_duplicate_entries(self):
         """Verify that _has_open_position detects active trades and prevents duplicate entries on the same symbol."""
