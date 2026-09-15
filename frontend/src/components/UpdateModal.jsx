@@ -48,13 +48,14 @@ export default function UpdateModal({ isOpen, onClose, appVersion = "v2.5.0" }) 
   }, [isOpen]);
 
   const applyUpdate = async (force = false) => {
+    const isForce = force === true;
     setUpdating(true);
     setError(null);
     try {
       const res = await fetch('/api/app/update', { 
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ force })
+        body: JSON.stringify({ force: isForce })
       });
       const data = await res.json();
       if (!res.ok || data.error) {
@@ -392,7 +393,7 @@ export default function UpdateModal({ isOpen, onClose, appVersion = "v2.5.0" }) 
 
           {hasUpdates && !updateResult && (
             <button
-              onClick={applyUpdate}
+              onClick={() => applyUpdate(false)}
               disabled={updating}
               style={{
                 background: '#089981',
