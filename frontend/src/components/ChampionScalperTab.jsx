@@ -106,18 +106,23 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
   const fetchBotConfig = async () => {
     try {
       const res = await fetch('/api/scalper/bot/strategy-config');
+      let backendCfg = null;
       if (res.ok) {
         const data = await res.json();
-        const cfg = data.CHAMPION_SCALPER || data.champion_scalper || (data.strategy_configs && data.strategy_configs.CHAMPION_SCALPER);
-        if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
-          setStrategyConfig(cfg);
-          try { localStorage.setItem('champion_strategy_config', JSON.stringify(cfg)); } catch (e) {}
-        }
+        backendCfg = data.CHAMPION_SCALPER || data.champion_scalper || (data.strategy_configs && data.strategy_configs.CHAMPION_SCALPER);
       }
       const bRes = await fetch('/api/scalper/bot/status');
+      let bData = null;
       if (bRes.ok) {
-        const bData = await bRes.json();
+        bData = await bRes.json();
         setBotStatus(bData);
+      }
+      if (backendCfg && Array.isArray(backendCfg.symbols) && backendCfg.symbols.length > 0) {
+        const isMasterBotOn = Boolean(bData?.enabled && (bData?.strategy === 'CHAMPION_SCALPER' || bData?.champion_scalper?.enabled));
+        const effectiveEnabled = backendCfg.enabled || isMasterBotOn;
+        const mergedCfg = { ...backendCfg, enabled: effectiveEnabled };
+        setStrategyConfig(mergedCfg);
+        try { localStorage.setItem('champion_strategy_config', JSON.stringify(mergedCfg)); } catch (e) {}
       }
       setLastUpdated(new Date());
     } catch (e) {
@@ -156,6 +161,10 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
           try { localStorage.setItem('champion_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
       }
+      const bRes = await fetch('/api/scalper/bot/status');
+      if (bRes.ok) {
+        setBotStatus(await bRes.json());
+      }
     } catch (e) {
       console.error('Error updating Champion config:', e);
     } finally {
@@ -164,7 +173,8 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
   };
 
   const handleToggleAutoTrade = () => {
-    const updated = { ...strategyConfig, enabled: !strategyConfig.enabled };
+    const isCurrentlyActive = Boolean(strategyConfig.enabled || botStatus?.enabled);
+    const updated = { ...strategyConfig, enabled: !isCurrentlyActive };
     saveConfig(updated);
   };
 
@@ -222,6 +232,8 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
     o.magic === 999333
   );
 
+  const isAutonomousActive = Boolean(strategyConfig.enabled || botStatus?.enabled || (botStatus?.is_running && botStatus?.strategy === 'CHAMPION_SCALPER'));
+
   return (
     <div style={{
       height: '100%',
@@ -247,8 +259,8 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
         padding: '16px 22px',
         background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.12) 0%, rgba(13, 17, 23, 0.98) 100%)',
         borderRadius: 12,
-        border: strategyConfig.enabled ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(48, 54, 61, 0.7)',
-        boxShadow: strategyConfig.enabled ? '0 0 25px rgba(16, 185, 129, 0.18)' : '0 4px 20px rgba(0, 0, 0, 0.3)',
+        border: isAutonomousActive ? '1px solid rgba(16, 185, 129, 0.5)' : '1px solid rgba(48, 54, 61, 0.7)',
+        boxShadow: isAutonomousActive ? '0 0 25px rgba(16, 185, 129, 0.18)' : '0 4px 20px rgba(0, 0, 0, 0.3)',
         backdropFilter: 'blur(12px)',
         position: 'relative',
         flexShrink: 0
@@ -260,11 +272,11 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
           left: 0,
           right: 0,
           height: 3,
-          background: strategyConfig.enabled 
+          background: isAutonomousActive 
             ? 'linear-gradient(90deg, #10b981, #00f2fe, #8b5cf6, #10b981)' 
             : 'linear-gradient(90deg, #30363d, #484f58, #30363d)',
           backgroundSize: '200% 100%',
-          animation: strategyConfig.enabled ? 'radarSweep 3s linear infinite' : 'none'
+          animation: isAutonomousActive ? 'radarSweep 3s linear infinite' : 'none'
         }} />
 
         {/* Left: Branding & Core Metrics */}
@@ -273,14 +285,14 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
             width: 46,
             height: 46,
             borderRadius: 10,
-            background: strategyConfig.enabled ? 'rgba(16, 185, 129, 0.2)' : 'rgba(110, 118, 129, 0.12)',
-            border: strategyConfig.enabled ? '1px solid #10b981' : '1px solid #30363d',
+            background: isAutonomousActive ? 'rgba(16, 185, 129, 0.2)' : 'rgba(110, 118, 129, 0.12)',
+            border: isAutonomousActive ? '1px solid #10b981' : '1px solid #30363d',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: strategyConfig.enabled ? '0 0 16px rgba(16, 185, 129, 0.35)' : 'none'
+            boxShadow: isAutonomousActive ? '0 0 16px rgba(16, 185, 129, 0.35)' : 'none'
           }}>
-            <Trophy size={26} color={strategyConfig.enabled ? '#10b981' : '#8b949e'} />
+            <Trophy size={26} color={isAutonomousActive ? '#10b981' : '#8b949e'} />
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -290,23 +302,23 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
               <span style={{
                 fontSize: 10.5,
                 fontWeight: 700,
-                padding: '2px 8px',
+                padding: '3px 9px',
                 borderRadius: 20,
-                background: strategyConfig.enabled ? 'rgba(16, 185, 129, 0.18)' : 'rgba(110, 118, 129, 0.15)',
-                color: strategyConfig.enabled ? '#10b981' : '#8b949e',
-                border: strategyConfig.enabled ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(110, 118, 129, 0.3)',
+                background: isAutonomousActive ? 'rgba(16, 185, 129, 0.18)' : 'rgba(110, 118, 129, 0.15)',
+                color: isAutonomousActive ? '#10b981' : '#8b949e',
+                border: isAutonomousActive ? '1px solid rgba(16, 185, 129, 0.4)' : '1px solid rgba(110, 118, 129, 0.3)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 5
+                gap: 6
               }}>
                 <span style={{
                   width: 6,
                   height: 6,
                   borderRadius: '50%',
-                  background: strategyConfig.enabled ? '#10b981' : '#8b949e',
-                  boxShadow: strategyConfig.enabled ? '0 0 8px #10b981' : 'none'
+                  background: isAutonomousActive ? '#10b981' : '#8b949e',
+                  boxShadow: isAutonomousActive ? '0 0 8px #10b981' : 'none'
                 }} />
-                {strategyConfig.enabled ? 'AUTONOMOUS ACTIVE' : 'STANDBY // DORMANT'}
+                {isAutonomousActive ? 'AUTONOMOUS ACTIVE' : 'STANDBY // DORMANT'}
               </span>
             </div>
             <p style={{ margin: '3px 0 0', fontSize: 12, color: '#8b949e' }}>
@@ -411,13 +423,13 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
               width: 34,
               height: 34,
               borderRadius: 8,
-              background: strategyConfig.enabled ? 'rgba(16, 185, 129, 0.2)' : 'rgba(110, 118, 129, 0.12)',
-              border: strategyConfig.enabled ? '1px solid #10b981' : '1px solid #30363d',
+              background: isAutonomousActive ? 'rgba(16, 185, 129, 0.2)' : 'rgba(110, 118, 129, 0.12)',
+              border: isAutonomousActive ? '1px solid #10b981' : '1px solid #30363d',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Sliders size={18} color={strategyConfig.enabled ? '#10b981' : '#8b949e'} />
+              <Sliders size={18} color={isAutonomousActive ? '#10b981' : '#8b949e'} />
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -452,9 +464,9 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
             <button
               onClick={handleToggleAutoTrade}
               style={{
-                background: strategyConfig.enabled ? 'rgba(16, 185, 129, 0.2)' : 'rgba(48, 54, 61, 0.3)',
-                border: strategyConfig.enabled ? '1px solid #10b981' : '1px solid #30363d',
-                color: strategyConfig.enabled ? '#10b981' : '#8b949e',
+                background: isAutonomousActive ? 'rgba(16, 185, 129, 0.2)' : 'rgba(48, 54, 61, 0.3)',
+                border: isAutonomousActive ? '1px solid #10b981' : '1px solid #30363d',
+                color: isAutonomousActive ? '#10b981' : '#8b949e',
                 padding: '8px 16px',
                 borderRadius: 8,
                 fontSize: 12.5,
@@ -463,12 +475,12 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                boxShadow: strategyConfig.enabled ? '0 0 14px rgba(16, 185, 129, 0.3)' : 'none',
+                boxShadow: isAutonomousActive ? '0 0 14px rgba(16, 185, 129, 0.3)' : 'none',
                 transition: 'all 0.15s ease'
               }}
             >
-              <Zap size={14} fill={strategyConfig.enabled ? '#10b981' : 'none'} />
-              <span>Auto-Trade Champion Scalper: <strong>{strategyConfig.enabled ? 'ON' : 'OFF'}</strong></span>
+              <Zap size={14} fill={isAutonomousActive ? '#10b981' : 'none'} />
+              <span>Auto-Trade Champion Scalper: <strong>{isAutonomousActive ? 'ON' : 'OFF'}</strong></span>
             </button>
           </div>
         </div>

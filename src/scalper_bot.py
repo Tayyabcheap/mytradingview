@@ -234,6 +234,23 @@ class ScalperBot:
         """Update bot configuration, active pairs (up to 10), per-instrument lot sizes, and persist."""
         if enabled is not None:
             self.enabled = bool(enabled)
+            # Synchronize with strategy_configs so both master and tab-level views stay consistent
+            strat_key = (strategy or self.strategy or "HAIDER_ENHANCED").upper().replace("-", "_")
+            if strat_key in self.strategy_configs:
+                self.strategy_configs[strat_key]["enabled"] = self.enabled
+            if self.enabled:
+                # If enabling and no strategy is explicitly marked enabled, default to HAIDER_ENHANCED
+                if not any(c.get("enabled", False) for c in self.strategy_configs.values()):
+                    if "HAIDER_ENHANCED" in self.strategy_configs:
+                        self.strategy_configs["HAIDER_ENHANCED"]["enabled"] = True
+                if not self.is_running:
+                    self.start()
+            else:
+                # If disabling master, disable all strategies and stop
+                for c in self.strategy_configs.values():
+                    c["enabled"] = False
+                if self.is_running:
+                    self.stop()
         if strategy in ("CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
             self.strategy = strategy
         if lot_size is not None:
@@ -284,6 +301,7 @@ class ScalperBot:
                 self.store.put("settings", "scalper_bot", bot_data)
                 self.store.put("settings", "scalper_symbols", self.symbols)
                 self.store.put("settings", "symbol_lot_sizes", self.symbol_lot_sizes)
+                self.store.put("settings", "strategy_configs", self.strategy_configs)
             except Exception as e:
                 logger.warning(f"Failed to persist bot settings: {e}")
         return self.status()
@@ -348,6 +366,8 @@ class ScalperBot:
                 self.start()
         else:
             self.enabled = False
+            if self.is_running:
+                self.stop()
 
         # Persist
         if self.store:
