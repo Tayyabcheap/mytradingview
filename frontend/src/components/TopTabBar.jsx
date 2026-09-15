@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Sliders, Zap, Settings, Layers, Target, Cpu } from 'lucide-react';
+import { LayoutDashboard, CandlestickChart, BookOpen, Plus, X, Activity, Bell, Sliders, Zap, Settings, Layers, Target, Cpu, Trophy } from 'lucide-react';
 
 export default function TopTabBar({
   tabs = [],
@@ -39,6 +39,7 @@ export default function TopTabBar({
           else if (tab.type === 'order_blocks') Icon = Layers;
           else if (tab.type === 'support_resistance') Icon = Target;
           else if (tab.type === 'neural_sentinel') Icon = Cpu;
+          else if (tab.type === 'champion_scalper') Icon = Trophy;
 
           return (
             <div

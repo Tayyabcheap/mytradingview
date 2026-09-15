@@ -3,7 +3,8 @@ import {
   LineChart, Settings, Camera, Search, Maximize, X, 
   Bell, RotateCcw, ChevronDown, ChevronUp, Download, Check, Zap, 
   TrendingUp, TrendingDown, Layers, LayoutDashboard, BookOpen, 
-  CandlestickChart, Plus, Minus, DollarSign, BarChart2, Award, Sliders
+  CandlestickChart, Plus, Minus, DollarSign, BarChart2, Award, Sliders,
+  Trophy, Cpu, ArrowRight
 } from 'lucide-react';
 import TopTabBar from './components/TopTabBar';
 import DashboardTab from './components/DashboardTab';
@@ -15,6 +16,7 @@ import MonteCarloTab from './components/MonteCarloTab';
 import GoldOrderBlocksTab from './components/GoldOrderBlocksTab';
 import SupportResistanceTab from './components/SupportResistanceTab';
 import NeuralSentinelTab from './components/NeuralSentinelTab';
+import ChampionScalperTab from './components/ChampionScalperTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
 import SignalPerformanceModal from './components/SignalPerformanceModal';
@@ -297,6 +299,7 @@ const INITIAL_WORKSPACE_TABS = [
   { id: 'dashboard', title: 'Dashboard', type: 'dashboard', closable: false },
   { id: 'chart-main', title: 'Chart: XAUUSDc', type: 'chart', symbol: 'XAUUSDc', timeframe: '1H', closable: false },
   { id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false },
+  { id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false },
   { id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false },
   { id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: false },
   { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false },
@@ -309,6 +312,9 @@ function App() {
     const loaded = loadLS('workspaceTabs', INITIAL_WORKSPACE_TABS);
     if (!loaded.some(t => t.id === 'neural_sentinel')) {
       loaded.push({ id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false });
+    }
+    if (!loaded.some(t => t.id === 'champion_scalper')) {
+      loaded.push({ id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false });
     }
     if (!loaded.some(t => t.id === 'monte_carlo')) {
       loaded.push({ id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false });
@@ -2026,186 +2032,81 @@ function App() {
                   </div>
 
                   {/* AUTO-TRADE LOT SIZES PER INSTRUMENT TABLE */}
+                  {/* DIRECT NAVIGATION TO RELEVANT STRATEGY TABS FOR INSTRUMENTS & LOTS */}
                   <div style={{
                     padding: '8px 12px',
                     background: 'rgba(255, 255, 255, 0.02)',
-                    borderBottom: '1px solid #2a2e39'
+                    borderBottom: '1px solid #2a2e39',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 6
                   }}>
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      marginBottom: 6
-                    }}>
-                      <div 
-                        onClick={() => setShowLotTable(prev => !prev)}
-                        style={{ display: 'flex', alignItems: 'center', gap: 5, cursor: 'pointer' }}
-                        title="Toggle lot sizes table"
-                      >
-                        <Layers size={13} color="#00f2fe" />
-                        <span style={{ fontSize: 11, fontWeight: 700, color: '#e6edf3' }}>
-                          Lot Size per Pair
-                        </span>
-                        {showLotTable ? <ChevronUp size={11} color="#8b949e" /> : <ChevronDown size={11} color="#8b949e" />}
-                      </div>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
-                        <span style={{ fontSize: 9.5, color: '#8b949e', marginRight: 2 }}>All:</span>
-                        {[0.01, 0.05, 0.10].map(preset => (
-                          <button
-                            key={preset}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleApplyAllLots(preset);
-                            }}
-                            title={`Set all pairs to ${preset.toFixed(2)} lots`}
-                            style={{
-                              fontSize: 9.5,
-                              fontWeight: 700,
-                              padding: '1px 5px',
-                              borderRadius: 3,
-                              background: 'rgba(42, 46, 57, 0.8)',
-                              color: '#c9d1d9',
-                              border: '1px solid rgba(255, 255, 255, 0.12)',
-                              cursor: 'pointer',
-                              lineHeight: '13px'
-                            }}
-                            onMouseEnter={e => e.currentTarget.style.borderColor = '#00f2fe'}
-                            onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)'}
-                          >
-                            {preset.toFixed(2)}
-                          </button>
-                        ))}
-                      </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <span style={{ fontSize: 10.5, fontWeight: 700, color: '#8b949e', textTransform: 'uppercase' }}>
+                        Strategy Instruments & Lot Sizes
+                      </span>
+                      <span style={{ fontSize: 9.5, color: '#00f2fe', fontWeight: 600 }}>
+                        Per-Strategy Tabs
+                      </span>
                     </div>
 
-                    {showLotTable && (
-                      <div style={{
-                        maxHeight: 175,
-                        overflowY: 'auto',
-                        borderRadius: 4,
-                        border: '1px solid rgba(42, 46, 57, 0.8)',
-                        background: '#141720'
-                      }}>
-                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
-                          <thead>
-                            <tr style={{ background: '#1c212d', color: '#8b949e', borderBottom: '1px solid #2a2e39', textAlign: 'left' }}>
-                              <th style={{ padding: '4px 8px', fontWeight: 600 }}>Pair</th>
-                              <th style={{ padding: '4px 6px', fontWeight: 600, textAlign: 'center' }}>Lot Size</th>
-                              <th style={{ padding: '4px 8px', fontWeight: 600, textAlign: 'right' }}>Type</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {scalperSymbols.map((sym, idx) => {
-                              const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
-                              const isCrypto = sym.toUpperCase().includes('BTC') || sym.toUpperCase().includes('ETH');
-                              const currentLot = getSymbolLot(sym);
-                              return (
-                                <tr
-                                  key={sym}
-                                  style={{
-                                    borderBottom: idx === scalperSymbols.length - 1 ? 'none' : '1px solid rgba(42, 46, 57, 0.5)',
-                                    background: idx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.02)'
-                                  }}
-                                >
-                                  <td style={{ padding: '4px 8px' }}>
-                                    <span style={{
-                                      fontWeight: 700,
-                                      color: isGold ? '#fbbf24' : isCrypto ? '#f97316' : '#93c5fd'
-                                    }}>
-                                      {sym}
-                                    </span>
-                                    {isGold && (
-                                      <span style={{
-                                        fontSize: 8.5,
-                                        fontWeight: 800,
-                                        marginLeft: 4,
-                                        padding: '1px 3px',
-                                        borderRadius: 2,
-                                        background: 'rgba(234, 179, 8, 0.18)',
-                                        color: '#fbbf24',
-                                        border: '1px solid rgba(234, 179, 8, 0.35)'
-                                      }}>
-                                        Max 1.0
-                                      </span>
-                                    )}
-                                  </td>
-                                  <td style={{ padding: '4px 6px', textAlign: 'center' }}>
-                                    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          const nextVal = Math.max(0.01, +(currentLot - 0.01).toFixed(2));
-                                          handleUpdateSymbolLotSize(sym, nextVal);
-                                        }}
-                                        title="Decrease 0.01"
-                                        style={{
-                                          width: 18,
-                                          height: 18,
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          background: '#2a2e39',
-                                          border: 'none',
-                                          borderRadius: 3,
-                                          color: '#c9d1d9',
-                                          cursor: 'pointer',
-                                          fontSize: 12,
-                                          fontWeight: 800,
-                                          padding: 0
-                                        }}
-                                        onMouseEnter={e => e.currentTarget.style.background = '#363c4e'}
-                                        onMouseLeave={e => e.currentTarget.style.background = '#2a2e39'}
-                                      >
-                                        −
-                                      </button>
-
-                                      <LotSizeInputCell
-                                        symbol={sym}
-                                        isGold={isGold}
-                                        value={currentLot}
-                                        onCommit={handleUpdateSymbolLotSize}
-                                      />
-
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          const maxL = isGold ? 1.0 : 50.0;
-                                          const nextVal = Math.min(maxL, +(currentLot + 0.01).toFixed(2));
-                                          handleUpdateSymbolLotSize(sym, nextVal);
-                                        }}
-                                        title="Increase 0.01"
-                                        style={{
-                                          width: 18,
-                                          height: 18,
-                                          display: 'flex',
-                                          alignItems: 'center',
-                                          justifyContent: 'center',
-                                          background: '#2a2e39',
-                                          border: 'none',
-                                          borderRadius: 3,
-                                          color: '#c9d1d9',
-                                          cursor: 'pointer',
-                                          fontSize: 12,
-                                          fontWeight: 800,
-                                          padding: 0
-                                        }}
-                                        onMouseEnter={e => e.currentTarget.style.background = '#363c4e'}
-                                        onMouseLeave={e => e.currentTarget.style.background = '#2a2e39'}
-                                      >
-                                        +
-                                      </button>
-                                    </div>
-                                  </td>
-                                  <td style={{ padding: '4px 8px', textAlign: 'right', fontSize: 10, color: '#8b949e' }}>
-                                    {isGold ? 'Gold' : isCrypto ? 'Crypto' : 'Forex'}
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
+                    <div
+                      onClick={() => {
+                        setActiveTabId('neural_sentinel');
+                        setShowSignalsMenu(false);
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: 'rgba(0, 240, 255, 0.08)',
+                        border: '1px solid rgba(0, 240, 255, 0.25)',
+                        borderRadius: 5,
+                        fontSize: 12,
+                        color: '#00f0ff',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        fontWeight: 600,
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(0, 240, 255, 0.16)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(0, 240, 255, 0.08)'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Cpu size={14} color="#00f0ff" />
+                        <span>Haider Scalper Neural (Pairs & Lots)</span>
                       </div>
-                    )}
+                      <ArrowRight size={13} color="#00f0ff" />
+                    </div>
+
+                    <div
+                      onClick={() => {
+                        setActiveTabId('champion_scalper');
+                        setShowSignalsMenu(false);
+                      }}
+                      style={{
+                        padding: '6px 10px',
+                        background: 'rgba(16, 185, 129, 0.08)',
+                        border: '1px solid rgba(16, 185, 129, 0.25)',
+                        borderRadius: 5,
+                        fontSize: 12,
+                        color: '#10b981',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        fontWeight: 600,
+                        transition: 'all 0.15s ease'
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.16)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'rgba(16, 185, 129, 0.08)'}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <Trophy size={14} color="#10b981" />
+                        <span>Champion Scalper (Pairs & Lots)</span>
+                      </div>
+                      <ArrowRight size={13} color="#10b981" />
+                    </div>
                   </div>
 
                   {/* AUTO-TRADE TOGGLE */}
@@ -2715,6 +2616,16 @@ function App() {
       {activeTab.type === 'neural_sentinel' && (
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <NeuralSentinelTab
+            accountInfo={accountInfo}
+            onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
+          />
+        </div>
+      )}
+
+      {/* 8. TAB 8: CHAMPION SCALPER VIEW */}
+      {activeTab.type === 'champion_scalper' && (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <ChampionScalperTab
             accountInfo={accountInfo}
             onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
           />

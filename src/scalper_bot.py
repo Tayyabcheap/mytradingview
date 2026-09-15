@@ -66,13 +66,33 @@ class ScalperBot:
         
         # Configuration
         self.enabled = False
-        self.strategy = "CHAMPION_SCALPER"  # "CHAMPION_SCALPER", "HAIDER_ENHANCED", or "REAL_DIP"
+        self.strategy = "HAIDER_ENHANCED"  # default strategy
         self.symbols = list(DEFAULT_SYMBOLS)
         self.max_instruments = MAX_INSTRUMENTS
         self.timeframe_str = "5M"
         self.lot_size = 0.10
         self.symbol_lot_sizes: Dict[str, float] = {}
         self.max_gold_lot = 1.0  # Mandatory safety cap: <= 1.0 lot on Gold
+
+        # Isolated Per-Strategy Configurations (instruments & lot sizes)
+        self.strategy_configs: Dict[str, Dict[str, Any]] = {
+            "HAIDER_ENHANCED": {
+                "enabled": False,
+                "symbols": ["XAUUSDm"],
+                "symbol_lot_sizes": {"XAUUSDm": 0.10}
+            },
+            "CHAMPION_SCALPER": {
+                "enabled": False,
+                "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm", "GBPJPYm", "USDJPYm"],
+                "symbol_lot_sizes": {
+                    "BTCUSDm": 1.0,
+                    "XAUUSDm": 0.10,
+                    "GBPUSDm": 0.10,
+                    "GBPJPYm": 0.10,
+                    "USDJPYm": 0.10
+                }
+            }
+        }
         
         # Strategy parameters (Haider-Scalper-Enhanced)
         self.atr_len = 14
@@ -115,6 +135,21 @@ class ScalperBot:
                 self.strategy = saved["strategy"]
             if "lot_size" in saved:
                 self.lot_size = float(saved.get("lot_size", 0.10))
+
+            # Merge per-strategy configurations
+            saved_strat_configs = self.store.get("settings", "strategy_configs")
+            if isinstance(saved_strat_configs, dict):
+                for k in ("HAIDER_ENHANCED", "CHAMPION_SCALPER"):
+                    if k in saved_strat_configs and isinstance(saved_strat_configs[k], dict):
+                        self.strategy_configs[k].update(saved_strat_configs[k])
+                        for sym, l in list(self.strategy_configs[k].get("symbol_lot_sizes", {}).items()):
+                            try:
+                                val = float(l)
+                                if "XAU" in str(sym).upper() or "GOLD" in str(sym).upper():
+                                    val = min(self.max_gold_lot, val)
+                                self.strategy_configs[k]["symbol_lot_sizes"][sym] = round(max(0.01, val), 2)
+                            except Exception:
+                                pass
 
             # Merge from both "settings.symbol_lot_sizes" and "settings.scalper_bot.symbol_lot_sizes"
             standalone_lots = self.store.get("settings", "symbol_lot_sizes") or {}
@@ -253,6 +288,67 @@ class ScalperBot:
                 logger.warning(f"Failed to persist bot settings: {e}")
         return self.status()
 
+    def configure_strategy(self, strategy_key: str, enabled: Optional[bool] = None,
+                           symbols: Optional[List[str]] = None,
+                           symbol_lot_sizes: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+        """Configure an isolated strategy (HAIDER_ENHANCED or CHAMPION_SCALPER) with its own symbols and lot sizes."""
+        strat_key = strategy_key.upper().replace("-", "_")
+        if strat_key not in self.strategy_configs:
+            self.strategy_configs[strat_key] = {
+                "enabled": False,
+                "symbols": ["XAUUSDm"],
+                "symbol_lot_sizes": {"XAUUSDm": 0.10}
+            }
+
+        cfg = self.strategy_configs[strat_key]
+
+        if enabled is not None:
+            cfg["enabled"] = bool(enabled)
+
+        if symbols is not None and isinstance(symbols, list):
+            cleaned = []
+            for s in symbols:
+                s_str = str(s).strip()
+                if s_str and s_str not in cleaned:
+                    cleaned.append(s_str)
+            if cleaned:
+                cfg["symbols"] = cleaned[:MAX_INSTRUMENTS]
+
+        if symbol_lot_sizes is not None and isinstance(symbol_lot_sizes, dict):
+            if "symbol_lot_sizes" not in cfg:
+                cfg["symbol_lot_sizes"] = {}
+            for s, v in symbol_lot_sizes.items():
+                try:
+                    val = float(v)
+                    if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
+                        val = min(self.max_gold_lot, val)
+                    clamped = round(max(0.01, val), 2)
+                    clean_s = str(s).strip()
+                    cfg["symbol_lot_sizes"][clean_s] = clamped
+                    base_s = clean_base_symbol(clean_s)
+                    if base_s:
+                        cfg["symbol_lot_sizes"][base_s] = clamped
+                except (ValueError, TypeError):
+                    pass
+
+        # Update master self.enabled to True if any strategy is enabled
+        any_enabled = any(c.get("enabled", False) for c in self.strategy_configs.values())
+        if any_enabled:
+            self.enabled = True
+            if not self.is_running:
+                self.start()
+        else:
+            self.enabled = False
+
+        # Persist
+        if self.store:
+            try:
+                self.store.put("settings", "strategy_configs", self.strategy_configs)
+            except Exception as e:
+                logger.warning(f"Failed to persist strategy_configs: {e}")
+
+        return self.status()
+
     def status(self) -> Dict[str, Any]:
         """Return comprehensive telemetry of the bot for the UI and APIs."""
         algo_allowed = False
@@ -299,6 +395,9 @@ class ScalperBot:
             "timeframe": self.timeframe_str,
             "lot_size": self.lot_size,
             "symbol_lot_sizes": self.symbol_lot_sizes,
+            "strategy_configs": self.strategy_configs,
+            "haider_enhanced": self.strategy_configs.get("HAIDER_ENHANCED", {}),
+            "champion_scalper": self.strategy_configs.get("CHAMPION_SCALPER", {}),
             "max_gold_lot": self.max_gold_lot,
             "mt5_connected": mt5_connected,
             "terminal_algo_trading": algo_allowed,
@@ -336,12 +435,18 @@ class ScalperBot:
         return max(0.01, round(float(val), 2))
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Background Worker Loop: Iterates over all active instruments
+    # Background Worker Loop: Iterates over all active instruments per strategy
     # ─────────────────────────────────────────────────────────────────────────
     def _worker_loop(self):
         while not self._stop_event.is_set():
             try:
-                if not self.enabled:
+                # Check active status of strategies
+                haider_cfg = self.strategy_configs.get("HAIDER_ENHANCED", {})
+                champ_cfg = self.strategy_configs.get("CHAMPION_SCALPER", {})
+                haider_on = haider_cfg.get("enabled", False)
+                champ_on = champ_cfg.get("enabled", False)
+
+                if not self.enabled and not haider_on and not champ_on:
                     self.status_message = "STANDBY (Disabled by User)"
                     self._stop_event.wait(3.0)
                     continue
@@ -370,13 +475,28 @@ class ScalperBot:
                     self._stop_event.wait(5.0)
                     continue
 
-                # Iterate through all configured instruments
-                active_syms = list(self.symbols)
-                for config_sym in active_syms:
-                    if self._stop_event.is_set() or not self.enabled:
+                # Build active execution items: (strategy_key, symbol, lot_size)
+                active_plans = []
+                if haider_on:
+                    for s in haider_cfg.get("symbols", []):
+                        lot = haider_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
+                        active_plans.append(("HAIDER_ENHANCED", s, lot))
+                if champ_on:
+                    for s in champ_cfg.get("symbols", []):
+                        lot = champ_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
+                        active_plans.append(("CHAMPION_SCALPER", s, lot))
+
+                # Fallback to legacy single-strategy loop if master enabled but no specific configs enabled
+                if not active_plans and self.enabled:
+                    for s in self.symbols:
+                        active_plans.append((self.strategy, s, self.get_lot_for_symbol(s)))
+
+                for strat_key, config_sym, custom_lot in active_plans:
+                    if self._stop_event.is_set():
                         break
 
-                    sym_state = self._get_symbol_state(config_sym)
+                    sym_state_key = f"{strat_key}:{config_sym}"
+                    sym_state = self._get_symbol_state(sym_state_key)
                     broker_sym = resolve_broker_symbol(config_sym, self.mt5_lock)
                     sym_state["broker_symbol"] = broker_sym
 
@@ -407,9 +527,20 @@ class ScalperBot:
                     # Check if a new candle closed for this specific instrument
                     if closed_bar_time > sym_state["last_bar_time"]:
                         sym_state["last_bar_time"] = closed_bar_time
-                        self._process_closed_bar_for_symbol(broker_sym, sym_state, rates[:-1], current_bar, config_sym=config_sym)
+                        self._process_closed_bar_for_symbol(
+                            broker_sym,
+                            sym_state,
+                            rates[:-1],
+                            current_bar,
+                            config_sym=config_sym,
+                            strategy_name=strat_key,
+                            custom_lot=custom_lot
+                        )
 
-                self.status_message = f"ACTIVE: Monitoring {len(active_syms)} Pairs simultaneously on 5M"
+                active_strats = []
+                if haider_on: active_strats.append(f"Haider({len(haider_cfg.get('symbols', []))})")
+                if champ_on: active_strats.append(f"Champion({len(champ_cfg.get('symbols', []))})")
+                self.status_message = f"ACTIVE: Monitoring {' + '.join(active_strats) if active_strats else len(active_plans)} Pairs on 5M"
 
             except Exception as e:
                 logger.error(f"Error in multi-instrument worker loop: {e}", exc_info=True)
@@ -438,11 +569,14 @@ class ScalperBot:
         return False
 
     # ─────────────────────────────────────────────────────────────────────────
-    # Closed Bar Setup Evaluator for a Specific Symbol
+    # Closed Bar Setup Evaluator for a Specific Symbol & Strategy
     # ─────────────────────────────────────────────────────────────────────────
-    def _process_closed_bar_for_symbol(self, broker_sym: str, sym_state: Dict[str, Any], closed_rates, current_bar, config_sym: Optional[str] = None):
+    def _process_closed_bar_for_symbol(self, broker_sym: str, sym_state: Dict[str, Any], closed_rates, current_bar,
+                                       config_sym: Optional[str] = None, strategy_name: Optional[str] = None,
+                                       custom_lot: Optional[float] = None):
         if config_sym is None:
             config_sym = broker_sym
+        active_strat = strategy_name if strategy_name else self.strategy
         n = len(closed_rates)
         if n < 20:
             return
@@ -488,7 +622,7 @@ class ScalperBot:
         lower_wick = (min(o, c) - l) / crange
         upper_wick = (h - max(o, c)) / crange
 
-        if self.strategy == "CHAMPION_SCALPER":
+        if active_strat == "CHAMPION_SCALPER":
             # 1. Microstructure Liquidity Sweep (8-bar lookback)
             sweep_n = min(8, n - 1)
             prev_highs = highs[-1 - sweep_n:-1]
@@ -534,7 +668,7 @@ class ScalperBot:
             tp1_atr_mult = sym_cfg["tp1_mult"]
             tp2_atr_mult = sym_cfg["tp2_mult"]
 
-        elif self.strategy == "HAIDER_ENHANCED":
+        elif active_strat == "HAIDER_ENHANCED":
             is_buy = (c < o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi < self.rsi_buy_level) and (lower_wick >= self.min_wick_ratio)
             is_sell = (c > o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi > self.rsi_sell_level) and (upper_wick >= self.min_wick_ratio)
             sl_buffer_mult = self.sl_buffer  # 1.35x ATR
@@ -552,7 +686,7 @@ class ScalperBot:
 
         if is_sell:
             entry = float(current_bar["open"])
-            if self.strategy == "CHAMPION_SCALPER":
+            if active_strat == "CHAMPION_SCALPER":
                 tp1 = entry - (curr_atr * tp1_atr_mult)
                 sl = h + (curr_atr * sl_buffer_mult)
             else:
@@ -571,23 +705,44 @@ class ScalperBot:
                 "config_symbol": config_sym,
                 "type": "SELL",
                 "time": t,
-                "strategy": self.strategy,
+                "strategy": active_strat,
                 "sl": sl,
                 "tp1": tp1
             }
-            print(f"[SCALPER_BOT] >>> SELL Signal on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
-            self._execute_signal(
-                symbol=broker_sym,
-                signal_type="SELL",
-                entry=entry,
-                sl=sl,
-                tp1=tp1,
-                strategy_name=strat_name
-            )
+            print(f"[SCALPER_BOT] >>> SELL Signal ({active_strat}) on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
+            if custom_lot is not None:
+                try:
+                    self._execute_signal(
+                        symbol=broker_sym,
+                        signal_type="SELL",
+                        entry=entry,
+                        sl=sl,
+                        tp1=tp1,
+                        strategy_name=strat_name,
+                        custom_lot=custom_lot
+                    )
+                except TypeError:
+                    self._execute_signal(
+                        symbol=broker_sym,
+                        signal_type="SELL",
+                        entry=entry,
+                        sl=sl,
+                        tp1=tp1,
+                        strategy_name=strat_name
+                    )
+            else:
+                self._execute_signal(
+                    symbol=broker_sym,
+                    signal_type="SELL",
+                    entry=entry,
+                    sl=sl,
+                    tp1=tp1,
+                    strategy_name=strat_name
+                )
 
         elif is_buy:
             entry = float(current_bar["open"])
-            if self.strategy == "CHAMPION_SCALPER":
+            if active_strat == "CHAMPION_SCALPER":
                 tp1 = entry + (curr_atr * tp1_atr_mult)
                 sl = l - (curr_atr * sl_buffer_mult)
             else:
@@ -606,33 +761,59 @@ class ScalperBot:
                 "config_symbol": config_sym,
                 "type": "BUY",
                 "time": t,
-                "strategy": self.strategy,
+                "strategy": active_strat,
                 "sl": sl,
                 "tp1": tp1
             }
-            print(f"[SCALPER_BOT] >>> BUY Signal on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
-            self._execute_signal(
-                symbol=broker_sym,
-                signal_type="BUY",
-                entry=entry,
-                sl=sl,
-                tp1=tp1,
-                strategy_name=strat_name
-            )
+            print(f"[SCALPER_BOT] >>> BUY Signal ({active_strat}) on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
+            if custom_lot is not None:
+                try:
+                    self._execute_signal(
+                        symbol=broker_sym,
+                        signal_type="BUY",
+                        entry=entry,
+                        sl=sl,
+                        tp1=tp1,
+                        strategy_name=strat_name,
+                        custom_lot=custom_lot
+                    )
+                except TypeError:
+                    self._execute_signal(
+                        symbol=broker_sym,
+                        signal_type="BUY",
+                        entry=entry,
+                        sl=sl,
+                        tp1=tp1,
+                        strategy_name=strat_name
+                    )
+            else:
+                self._execute_signal(
+                    symbol=broker_sym,
+                    signal_type="BUY",
+                    entry=entry,
+                    sl=sl,
+                    tp1=tp1,
+                    strategy_name=strat_name
+                )
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2-Tranche Institutional Execution with Auto-BE Registration
     # ─────────────────────────────────────────────────────────────────────────
-    def _execute_signal(self, symbol: str, signal_type: str, entry: float, sl: float, tp1: float, strategy_name: str):
+    def _execute_signal(self, symbol: str, signal_type: str, entry: float, sl: float, tp1: float, strategy_name: str,
+                        custom_lot: Optional[float] = None, **kwargs):
         # Strict user risk constraint: Gold lot size <= 1.0
         is_gold = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
-        raw_lot = self.get_lot_for_symbol(symbol)
+        if custom_lot is not None:
+            raw_lot = float(custom_lot)
+        else:
+            raw_lot = self.get_lot_for_symbol(symbol)
         total_lot = min(self.max_gold_lot, raw_lot) if is_gold else raw_lot
         total_lot = max(0.01, round(total_lot, 2))
 
+        strat = "CHAMPION_SCALPER" if ("Champion" in strategy_name or strategy_name == "CHAMPION_SCALPER") else ("HAIDER_ENHANCED" if "Enhanced" in strategy_name or strategy_name == "HAIDER_ENHANCED" else self.strategy)
         direction = 1 if signal_type == "BUY" else -1
         t_dist = abs(tp1 - entry)
-        if self.strategy == "CHAMPION_SCALPER":
+        if strat == "CHAMPION_SCALPER":
             sym_cfg = get_champion_config(symbol)
             ratio = (sym_cfg["tp2_mult"] / sym_cfg["tp1_mult"]) if sym_cfg.get("tp1_mult") else 8.0
             tp2 = (entry + t_dist * ratio) if direction == 1 else max(0.001, entry - t_dist * ratio)
@@ -642,10 +823,10 @@ class ScalperBot:
             trail_active = False
 
         # Tranche volume calculation
-        is_multi_tranche = (self.strategy in ("CHAMPION_SCALPER", "HAIDER_ENHANCED"))
-        if self.strategy == "CHAMPION_SCALPER":
+        is_multi_tranche = (strat in ("CHAMPION_SCALPER", "HAIDER_ENHANCED"))
+        if strat == "CHAMPION_SCALPER":
             base_label = "Champion-Scalp"
-        elif self.strategy == "HAIDER_ENHANCED":
+        elif strat == "HAIDER_ENHANCED":
             base_label = "Haider-Enhanced"
         else:
             base_label = "Haider-Gold"

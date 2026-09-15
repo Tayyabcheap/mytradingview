@@ -1675,6 +1675,51 @@ def scalper_bot_toggle():
     return jsonify(res)
 
 
+@app.route("/api/scalper/bot/strategy-config", methods=["GET", "POST"])
+def scalper_bot_strategy_config():
+    """Get or update configuration (enabled, instruments, lot sizes) for a specific scalper strategy."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        strategy = data.get("strategy") or "HAIDER_ENHANCED"
+        enabled = data.get("enabled")
+        raw_symbols = data.get("symbols")
+        raw_lot_sizes = data.get("symbol_lot_sizes") or data.get("lot_sizes")
+
+        symbols = None
+        if raw_symbols is not None and isinstance(raw_symbols, list):
+            symbols = [resolve_broker_symbol(s) for s in raw_symbols if s]
+
+        aligned_lots = None
+        if raw_lot_sizes is not None and isinstance(raw_lot_sizes, dict):
+            aligned_lots = {}
+            for s, l in raw_lot_sizes.items():
+                if s:
+                    try:
+                        val = float(l)
+                    except (ValueError, TypeError):
+                        continue
+                    s_str = str(s).strip()
+                    aligned_lots[s_str] = val
+                    base_sym = clean_base_symbol(s_str)
+                    if base_sym:
+                        aligned_lots[base_sym] = val
+                    broker_sym = resolve_broker_symbol(s_str)
+                    if broker_sym:
+                        aligned_lots[broker_sym] = val
+
+        res = bot.configure_strategy(
+            strategy_key=strategy,
+            enabled=enabled,
+            symbols=symbols,
+            symbol_lot_sizes=aligned_lots
+        )
+        return jsonify(res)
+
+    return jsonify(bot.strategy_configs)
+
+
 @app.route("/api/scalper/bot/symbols", methods=["GET", "POST"])
 def scalper_bot_symbols():
     """Get or update active currency pairs / instruments for autonomous execution (up to 10)."""

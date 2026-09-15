@@ -461,6 +461,53 @@ class TestNeuralSentinel(unittest.TestCase):
         data3 = json.loads(res3.data)
         self.assertFalse(data3["neurons_active"])
 
+    def test_isolated_strategy_configurations_and_api(self):
+        """Test per-strategy isolated configuration, Gold <= 1.0 safety cap, and strategy-config API."""
+        # 1. GET strategy configs
+        res = self.client.get("/api/scalper/bot/strategy-config")
+        self.assertEqual(res.status_code, 200)
+        configs = json.loads(res.data)
+        self.assertIn("HAIDER_ENHANCED", configs)
+        self.assertIn("CHAMPION_SCALPER", configs)
+
+        # 2. Configure Champion Scalper with isolated pairs & lots
+        post_champ = {
+            "strategy": "CHAMPION_SCALPER",
+            "enabled": True,
+            "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm"],
+            "symbol_lot_sizes": {
+                "BTCUSDm": 0.50,
+                "XAUUSDm": 2.50,  # Should be clamped to 1.0
+                "GBPUSDm": 0.20
+            }
+        }
+        champ_res = self.client.post("/api/scalper/bot/strategy-config", json=post_champ)
+        self.assertEqual(champ_res.status_code, 200)
+        champ_data = json.loads(champ_res.data)
+        self.assertTrue(champ_data["enabled"])
+        champ_cfg = champ_data["champion_scalper"]
+        self.assertTrue(champ_cfg["enabled"])
+        self.assertIn("BTCUSDm", champ_cfg["symbols"])
+        # Safety invariant: Gold strictly capped at 1.0
+        self.assertLessEqual(champ_cfg["symbol_lot_sizes"]["XAUUSDm"], 1.0)
+        self.assertEqual(champ_cfg["symbol_lot_sizes"]["XAUUSDm"], 1.0)
+        self.assertEqual(champ_cfg["symbol_lot_sizes"]["BTCUSDm"], 0.50)
+
+        # 3. Configure Haider Scalper Enhanced with isolated Gold setup
+        post_haider = {
+            "strategy": "HAIDER_ENHANCED",
+            "enabled": True,
+            "symbols": ["XAUUSDc"],
+            "symbol_lot_sizes": {
+                "XAUUSDc": 0.05
+            }
+        }
+        haider_res = self.client.post("/api/scalper/bot/strategy-config", json=post_haider)
+        self.assertEqual(haider_res.status_code, 200)
+        haider_data = json.loads(haider_res.data)
+        self.assertTrue(haider_data["haider_enhanced"]["enabled"])
+        self.assertEqual(haider_data["haider_enhanced"]["symbol_lot_sizes"]["XAUUSDc"], 0.05)
+
 
 if __name__ == "__main__":
     unittest.main()

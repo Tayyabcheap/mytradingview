@@ -2,7 +2,8 @@ import React, { useState, useEffect, useRef } from 'react';
 import { 
   Zap, Activity, Shield, TrendingUp, AlertTriangle, CheckCircle2, 
   RefreshCw, Play, Square, ArrowUpRight, ArrowDownRight, Award,
-  Cpu, Crosshair, ChevronRight, Lock, Eye, Sparkles, Layers
+  Cpu, Crosshair, ChevronRight, Lock, Eye, Sparkles, Layers,
+  Sliders, Plus, Trash2, Check, ShieldCheck, DollarSign
 } from 'lucide-react';
 
 export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToChart }) {
@@ -13,6 +14,95 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
   const [actionLoading, setActionLoading] = useState(false);
   const [selectedTicket, setSelectedTicket] = useState(null);
   const pollIntervalRef = useRef(null);
+
+  // Strategy Configuration & Instruments State
+  const [strategyConfig, setStrategyConfig] = useState({
+    enabled: false,
+    symbols: ['XAUUSDm'],
+    symbol_lot_sizes: { 'XAUUSDm': 0.10 }
+  });
+  const [savingConfig, setSavingConfig] = useState(false);
+  const [newSymbolInput, setNewSymbolInput] = useState('');
+  const [botStatus, setBotStatus] = useState(null);
+
+  const fetchBotConfig = async () => {
+    try {
+      const res = await fetch('/api/scalper/bot/strategy-config');
+      if (res.ok) {
+        const data = await res.json();
+        if (data && data.HAIDER_ENHANCED) {
+          setStrategyConfig(data.HAIDER_ENHANCED);
+        }
+      }
+      const bRes = await fetch('/api/scalper/bot/status');
+      if (bRes.ok) {
+        setBotStatus(await bRes.json());
+      }
+    } catch (e) {
+      console.error('Error fetching strategy config:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchBotConfig();
+    const interval = setInterval(fetchBotConfig, 4000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const saveConfig = async (newCfg) => {
+    setStrategyConfig(newCfg);
+    setSavingConfig(true);
+    try {
+      await fetch('/api/scalper/bot/strategy-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          strategy: 'HAIDER_ENHANCED',
+          enabled: newCfg.enabled,
+          symbols: newCfg.symbols,
+          symbol_lot_sizes: newCfg.symbol_lot_sizes
+        })
+      });
+      fetchBotConfig();
+    } catch (e) {
+      console.error('Error updating config:', e);
+    } finally {
+      setSavingConfig(false);
+    }
+  };
+
+  const handleToggleAutoTrade = () => {
+    const updated = { ...strategyConfig, enabled: !strategyConfig.enabled };
+    saveConfig(updated);
+  };
+
+  const handleUpdateLot = (sym, newLot) => {
+    const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
+    let clamped = Math.max(0.01, +(newLot).toFixed(2));
+    if (isGold) clamped = Math.min(1.0, clamped);
+    const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [sym]: clamped };
+    const updated = { ...strategyConfig, symbol_lot_sizes: updatedLots };
+    saveConfig(updated);
+  };
+
+  const handleAddSymbol = (symToAdd) => {
+    const sym = (symToAdd || newSymbolInput).trim().toUpperCase();
+    if (!sym) return;
+    if (!strategyConfig.symbols?.includes(sym)) {
+      const isGold = sym.includes('XAU') || sym.includes('GOLD');
+      const updatedSymbols = [...(strategyConfig.symbols || []), sym];
+      const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [sym]: isGold ? 0.10 : 0.10 };
+      saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+    }
+    setNewSymbolInput('');
+  };
+
+  const handleRemoveSymbol = (symToRemove) => {
+    const updatedSymbols = (strategyConfig.symbols || []).filter(s => s !== symToRemove);
+    const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}) };
+    delete updatedLots[symToRemove];
+    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+  };
 
   // Poll Neural Sentinel Telemetry
   const fetchTelemetry = async () => {
@@ -110,9 +200,9 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
       color: '#e6edf3',
       fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif',
       overflowY: 'auto',
-      padding: '16px 24px',
+      padding: '24px 28px 48px',
       boxSizing: 'border-box',
-      gap: 18
+      gap: 20
     }}>
       {/* ─────────────────────────────────────────────────────────────
           1. HEADER BAR & STATUS RADAR
@@ -123,14 +213,14 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
         justifyContent: 'space-between',
         flexWrap: 'wrap',
         gap: 16,
-        padding: '14px 20px',
-        background: 'linear-gradient(135deg, rgba(22, 27, 34, 0.85) 0%, rgba(13, 17, 23, 0.95) 100%)',
+        padding: '16px 22px',
+        background: 'linear-gradient(135deg, rgba(22, 27, 34, 0.92) 0%, rgba(13, 17, 23, 0.98) 100%)',
         borderRadius: 12,
-        border: isLive ? '1px solid rgba(0, 240, 255, 0.35)' : '1px solid rgba(48, 54, 61, 0.6)',
-        boxShadow: isLive ? '0 0 25px rgba(0, 240, 255, 0.12)' : 'none',
+        border: isLive ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid rgba(48, 54, 61, 0.7)',
+        boxShadow: isLive ? '0 0 25px rgba(0, 240, 255, 0.15)' : '0 4px 20px rgba(0, 0, 0, 0.3)',
         backdropFilter: 'blur(12px)',
         position: 'relative',
-        overflow: 'hidden'
+        flexShrink: 0
       }}>
         {/* Animated accent gradient strip */}
         <div style={{
@@ -255,6 +345,326 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
           >
             <RefreshCw size={13} className={loading ? 'animate-spin' : ''} />
           </button>
+        </div>
+      </div>
+
+      {/* ─────────────────────────────────────────────────────────────
+          1.5. HAIDER-SCALPER ISOLATED INSTRUMENTS & LOT SIZING MANAGER
+      ───────────────────────────────────────────────────────────── */}
+      <div style={{
+        background: 'linear-gradient(180deg, rgba(22, 27, 34, 0.95) 0%, rgba(13, 17, 23, 0.95) 100%)',
+        borderRadius: 12,
+        border: strategyConfig.enabled ? '1px solid rgba(8, 153, 129, 0.45)' : '1px solid rgba(48, 54, 61, 0.7)',
+        padding: '18px 22px',
+        boxShadow: strategyConfig.enabled ? '0 0 20px rgba(8, 153, 129, 0.12)' : 'none',
+        display: 'flex',
+        flexDirection: 'column',
+        gap: 14
+      }}>
+        {/* Top bar: Strategy Title & Master Auto-Trade Toggle */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{
+              width: 34,
+              height: 34,
+              borderRadius: 8,
+              background: strategyConfig.enabled ? 'rgba(8, 153, 129, 0.2)' : 'rgba(110, 118, 129, 0.12)',
+              border: strategyConfig.enabled ? '1px solid #089981' : '1px solid #30363d',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center'
+            }}>
+              <Sliders size={18} color={strategyConfig.enabled ? '#089981' : '#8b949e'} />
+            </div>
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 15, fontWeight: 700, color: '#ffffff' }}>
+                  Haider-Scalper Instruments & Lot Allocation
+                </span>
+                <span style={{
+                  fontSize: 10,
+                  fontWeight: 800,
+                  padding: '2px 7px',
+                  borderRadius: 4,
+                  background: 'rgba(0, 240, 255, 0.12)',
+                  color: '#00f0ff',
+                  border: '1px solid rgba(0, 240, 255, 0.3)'
+                }}>
+                  ISOLATED STRATEGY
+                </span>
+              </div>
+              <p style={{ margin: '2px 0 0', fontSize: 11.5, color: '#8b949e' }}>
+                Trades <strong>ONLY</strong> on the instruments configured below with their respective lot sizes. Does not interfere with other strategies.
+              </p>
+            </div>
+          </div>
+
+          {/* Auto-Trade Switch */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            {savingConfig && (
+              <span style={{ fontSize: 11, color: '#00f0ff', display: 'flex', alignItems: 'center', gap: 4 }}>
+                <RefreshCw size={11} className="animate-spin" /> Saving...
+              </span>
+            )}
+            <button
+              onClick={handleToggleAutoTrade}
+              style={{
+                background: strategyConfig.enabled ? 'rgba(8, 153, 129, 0.2)' : 'rgba(48, 54, 61, 0.3)',
+                border: strategyConfig.enabled ? '1px solid #089981' : '1px solid #30363d',
+                color: strategyConfig.enabled ? '#00ff88' : '#8b949e',
+                padding: '8px 16px',
+                borderRadius: 8,
+                fontSize: 12.5,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 8,
+                boxShadow: strategyConfig.enabled ? '0 0 14px rgba(8, 153, 129, 0.3)' : 'none',
+                transition: 'all 0.15s ease'
+              }}
+            >
+              <Zap size={14} fill={strategyConfig.enabled ? '#00ff88' : 'none'} />
+              <span>Auto-Trade Haider Scalper: <strong>{strategyConfig.enabled ? 'ON' : 'OFF'}</strong></span>
+            </button>
+          </div>
+        </div>
+
+        {/* Instruments Table & Lot Size Steppers */}
+        <div style={{
+          background: '#0d1117',
+          borderRadius: 8,
+          border: '1px solid #21262d',
+          overflow: 'hidden'
+        }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+            <thead>
+              <tr style={{ background: '#161b22', color: '#8b949e', borderBottom: '1px solid #21262d', textAlign: 'left' }}>
+                <th style={{ padding: '10px 14px', fontWeight: 600 }}>Active Instrument</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600 }}>Asset Class</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'center' }}>Lot Sizing & Steppers</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600 }}>Safety Rule</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(strategyConfig.symbols || []).map((sym, idx) => {
+                const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
+                const lot = strategyConfig.symbol_lot_sizes?.[sym] || 0.10;
+                return (
+                  <tr key={sym} style={{
+                    borderBottom: idx === strategyConfig.symbols.length - 1 ? 'none' : '1px solid rgba(48, 54, 61, 0.4)',
+                    background: idx % 2 === 0 ? 'transparent' : 'rgba(255, 255, 255, 0.015)'
+                  }}>
+                    <td style={{ padding: '10px 14px' }}>
+                      <span
+                        onClick={() => onSelectSymbolAndGoToChart && onSelectSymbolAndGoToChart(sym)}
+                        style={{
+                          fontWeight: 700,
+                          color: isGold ? '#fbbf24' : '#58a6ff',
+                          cursor: 'pointer',
+                          textDecoration: 'underline',
+                          textDecorationColor: 'rgba(255,255,255,0.2)'
+                        }}
+                        title="View on Chart"
+                      >
+                        {sym}
+                      </span>
+                    </td>
+                    <td style={{ padding: '10px 14px', color: isGold ? '#fbbf24' : '#8b949e', fontSize: 11.5 }}>
+                      {isGold ? 'Gold Commodity' : 'Forex Major'}
+                    </td>
+                    <td style={{ padding: '10px 14px', textAlign: 'center' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                        <button
+                          onClick={() => handleUpdateLot(sym, lot - 0.01)}
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: 4,
+                            background: '#21262d',
+                            border: '1px solid #30363d',
+                            color: '#c9d1d9',
+                            cursor: 'pointer',
+                            fontSize: 14,
+                            fontWeight: 800,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                        >
+                          −
+                        </button>
+                        <input
+                          type="number"
+                          step="0.01"
+                          min="0.01"
+                          max={isGold ? 1.0 : 50.0}
+                          value={lot}
+                          onChange={(e) => handleUpdateLot(sym, parseFloat(e.target.value) || 0.01)}
+                          style={{
+                            width: 60,
+                            textAlign: 'center',
+                            background: '#161b22',
+                            border: '1px solid #30363d',
+                            borderRadius: 4,
+                            color: '#ffffff',
+                            fontWeight: 700,
+                            fontSize: 12.5,
+                            padding: '3px 4px'
+                          }}
+                        />
+                        <button
+                          onClick={() => handleUpdateLot(sym, lot + 0.01)}
+                          style={{
+                            width: 24,
+                            height: 24,
+                            borderRadius: 4,
+                            background: '#21262d',
+                            border: '1px solid #30363d',
+                            color: '#c9d1d9',
+                            cursor: 'pointer',
+                            fontSize: 14,
+                            fontWeight: 800,
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center'
+                          }}
+                        >
+                          +
+                        </button>
+                        {/* Quick preset lot buttons */}
+                        <div style={{ display: 'flex', gap: 3, marginLeft: 6 }}>
+                          {[0.01, 0.05, 0.10, 0.50, 1.00].map(p => (
+                            <button
+                              key={p}
+                              onClick={() => handleUpdateLot(sym, p)}
+                              style={{
+                                background: lot === p ? 'rgba(0, 240, 255, 0.2)' : 'rgba(48, 54, 61, 0.4)',
+                                border: lot === p ? '1px solid #00f0ff' : '1px solid #30363d',
+                                color: lot === p ? '#00f0ff' : '#8b949e',
+                                padding: '2px 5px',
+                                borderRadius: 3,
+                                fontSize: 10,
+                                fontWeight: 700,
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {p.toFixed(2)}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </td>
+                    <td style={{ padding: '10px 14px' }}>
+                      {isGold ? (
+                        <span style={{
+                          fontSize: 10.5,
+                          fontWeight: 700,
+                          padding: '2px 7px',
+                          borderRadius: 4,
+                          background: 'rgba(234, 179, 8, 0.12)',
+                          color: '#fbbf24',
+                          border: '1px solid rgba(234, 179, 8, 0.3)'
+                        }}>
+                          Strict Hard Cap: ≤ 1.0 Lot
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: '#8b949e' }}>Standard Risk</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                      <button
+                        onClick={() => handleRemoveSymbol(sym)}
+                        style={{
+                          background: 'none',
+                          border: 'none',
+                          color: '#8b949e',
+                          cursor: 'pointer',
+                          padding: 4
+                        }}
+                        title="Remove pair"
+                        onMouseEnter={e => e.currentTarget.style.color = '#f23645'}
+                        onMouseLeave={e => e.currentTarget.style.color = '#8b949e'}
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+              {(!strategyConfig.symbols || strategyConfig.symbols.length === 0) && (
+                <tr>
+                  <td colSpan={5} style={{ padding: '16px', textAlign: 'center', color: '#8b949e' }}>
+                    No instruments selected for Haider Scalper. Add one below.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Add Instrument Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, paddingTop: 4 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: '#8b949e' }}>Quick Add:</span>
+            {['XAUUSDm', 'XAUUSDc', 'XAUUSD', 'EURUSDm'].map(qs => (
+              <button
+                key={qs}
+                onClick={() => handleAddSymbol(qs)}
+                disabled={strategyConfig.symbols?.includes(qs)}
+                style={{
+                  background: strategyConfig.symbols?.includes(qs) ? 'rgba(48, 54, 61, 0.2)' : 'rgba(255, 255, 255, 0.05)',
+                  border: '1px solid #30363d',
+                  color: strategyConfig.symbols?.includes(qs) ? '#484f58' : '#c9d1d9',
+                  padding: '3px 8px',
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: strategyConfig.symbols?.includes(qs) ? 'default' : 'pointer'
+                }}
+              >
+                + {qs}
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <input
+              type="text"
+              placeholder="Custom broker symbol..."
+              value={newSymbolInput}
+              onChange={e => setNewSymbolInput(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleAddSymbol()}
+              style={{
+                background: '#161b22',
+                border: '1px solid #30363d',
+                borderRadius: 4,
+                color: '#ffffff',
+                padding: '4px 8px',
+                fontSize: 11.5,
+                width: 150
+              }}
+            />
+            <button
+              onClick={() => handleAddSymbol()}
+              style={{
+                background: 'rgba(0, 240, 255, 0.12)',
+                border: '1px solid #00f0ff',
+                color: '#00f0ff',
+                padding: '4px 10px',
+                borderRadius: 4,
+                fontSize: 11.5,
+                fontWeight: 700,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4
+              }}
+            >
+              <Plus size={12} /> Add
+            </button>
+          </div>
         </div>
       </div>
 
