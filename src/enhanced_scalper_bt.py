@@ -30,7 +30,7 @@ def backtest(
     rsi_buy_level: float = 30.0,
     rsi_sell_level: float = 70.0,
     target_level: float = 80.0,
-    sl_buffer: float = 0.20,
+    sl_buffer: float = 0.18,
     min_wick_ratio: float = 0.18,
     skip_rollover: bool = True,
     mintick: float = 0.001,
@@ -39,7 +39,7 @@ def backtest(
     sweep_lookback: int = 4,
     use_trend_filter: bool = True,
     tp1_atr_mult: float = 0.25,
-    tp2_atr_mult: float = 3.00,
+    tp2_atr_mult: float = 3.20,
     trail_runner: bool = True
 ) -> Dict[str, Any]:
     n = len(bars)

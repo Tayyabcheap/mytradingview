@@ -42,11 +42,11 @@ MAX_INSTRUMENTS = 10
 DEFAULT_SYMBOLS = ["XAUUSDm", "BTCUSDm", "GBPUSDm", "GBPJPYm", "USDJPYm"]
 
 CHAMPION_SYMBOL_CONFIGS: Dict[str, Dict[str, Any]] = {
-    "XAUUSD": {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4},
-    "BTCUSD": {"tp1_mult": 0.22, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4},
-    "GBPUSD": {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4},
-    "GBPJPY": {"tp1_mult": 0.22, "tp2_mult": 2.80, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.55, "min_wick": 0.22, "sweep_lookback": 6},
-    "USDJPY": {"tp1_mult": 0.25, "tp2_mult": 2.80, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.50, "min_wick": 0.20, "sweep_lookback": 5},
+    "XAUUSD": {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.18, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4},
+    "BTCUSD": {"tp1_mult": 0.22, "tp2_mult": 3.50, "sl_mult": 0.18, "trail_runner": True, "impulse_mult": 0.42, "min_wick": 0.18, "sweep_lookback": 4},
+    "GBPUSD": {"tp1_mult": 0.25, "tp2_mult": 3.50, "sl_mult": 0.18, "trail_runner": True, "impulse_mult": 0.42, "min_wick": 0.18, "sweep_lookback": 4},
+    "GBPJPY": {"tp1_mult": 0.22, "tp2_mult": 2.80, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.55, "min_wick": 0.22, "sweep_lookback": 5},
+    "USDJPY": {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.18, "trail_runner": True, "impulse_mult": 0.48, "min_wick": 0.20, "sweep_lookback": 5},
 }
 
 def get_champion_config(symbol: str) -> Dict[str, Any]:
@@ -54,7 +54,7 @@ def get_champion_config(symbol: str) -> Dict[str, Any]:
     for key, cfg in CHAMPION_SYMBOL_CONFIGS.items():
         if key in base:
             return cfg
-    return {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4}
+    return {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.18, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4}
 
 
 class ScalperBot:
