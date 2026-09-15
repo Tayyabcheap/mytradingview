@@ -28,6 +28,7 @@ except ImportError:
 from real_dip_bt import wilder_atr, wilder_rsi
 from notifications import send_discord_alert
 from symbol_utils import resolve_broker_symbol, clean_base_symbol
+from neural_sentinel import neural_sentinel
 
 try:
     import store as app_store
@@ -652,9 +653,10 @@ class ScalperBot:
         if total_lot >= 0.02 and is_multi_tranche:
             tranche_1_vol = round(total_lot * 0.5, 2)
             tranche_2_vol = round(total_lot - tranche_1_vol, 2)
+            extended_tp = (entry + t_dist * 12.0) if direction == 1 else max(0.001, entry - t_dist * 12.0)
             orders_to_place = [
                 {"vol": tranche_1_vol, "tp": tp1, "comment": f"{base_label} [TP1]", "is_runner": False},
-                {"vol": tranche_2_vol, "tp": tp2, "comment": f"{base_label} [Runner]", "is_runner": True, "auto_be_target": tp1, "trail_runner": trail_active}
+                {"vol": tranche_2_vol, "tp": extended_tp, "comment": f"{base_label} [Runner]", "is_runner": True, "auto_be_target": tp1, "tp2_milestone": tp2, "trail_runner": trail_active}
             ]
         else:
             orders_to_place = [
@@ -683,6 +685,7 @@ class ScalperBot:
                     "tp": round(plan["tp"], 3 if is_gold else 5),
                     "is_runner": plan.get("is_runner", False),
                     "auto_be_target": plan.get("auto_be_target"),
+                    "tp2_milestone": plan.get("tp2_milestone", tp2),
                     "trail_runner": plan.get("trail_runner", False),
                     "be_done": False,
                     "opened_at": int(time.time()),
@@ -690,6 +693,20 @@ class ScalperBot:
                 }
                 self.active_bot_orders[ticket] = trade_info
                 executed_orders.append(trade_info)
+
+                # Register open runner with Neural Sentinel for live multi-neuron follow-up
+                if plan.get("is_runner"):
+                    neural_sentinel.register_trade(
+                        ticket=ticket,
+                        symbol=symbol,
+                        direction=direction,
+                        entry_price=trade_info["entry_price"],
+                        initial_sl=trade_info["sl"],
+                        tp1=trade_info["auto_be_target"],
+                        tp2=plan.get("tp2_milestone", tp2),
+                        volume=plan["vol"],
+                        atr=t_dist / 0.22 if t_dist > 0 else 1.0
+                    )
 
                 # Sync into AUTO_BE_TRACKER for app-wide consistency
                 if plan.get("is_runner") and plan.get("auto_be_target"):
@@ -850,6 +867,7 @@ class ScalperBot:
                 closed_tickets = [t for t in self.active_bot_orders if t not in open_tickets]
                 for ct in closed_tickets:
                     self.active_bot_orders.pop(ct, None)
+                    neural_sentinel.unregister_trade(ct)
 
                 # Reconcile / adopt any untracked ScalperBot orders (e.g. after daemon restart)
                 for p in positions:
@@ -872,6 +890,20 @@ class ScalperBot:
                             "opened_at": int(getattr(p, "time", time.time())),
                             "comment": cmt
                         }
+                        if is_runner and p.ticket not in neural_sentinel.active_tracks:
+                            direction = 1 if p.type == 0 else -1
+                            t_dist = abs(float(p.tp) - float(p.price_open)) / 6.0 if p.tp else 1.0
+                            neural_sentinel.register_trade(
+                                ticket=p.ticket,
+                                symbol=p.symbol,
+                                direction=direction,
+                                entry_price=float(p.price_open),
+                                initial_sl=float(p.sl),
+                                tp1=target_be or (float(p.price_open) + direction * t_dist),
+                                tp2=float(p.tp) if p.tp else (float(p.price_open) + direction * t_dist * 2.5),
+                                volume=float(p.volume),
+                                atr=t_dist / 0.22 if t_dist > 0 else 1.0
+                            )
 
                 for ticket, trade in list(self.active_bot_orders.items()):
                     if not trade.get("auto_be_target"):
@@ -886,33 +918,47 @@ class ScalperBot:
                     curr_sl = float(pos.sl)
                     is_buy = (pos.type == 0)
 
-                    # 1. Dynamic Trailing Runner after Auto-BE
-                    if trade.get("be_done"):
-                        if trade.get("trail_runner"):
-                            t_dist = abs(target_tp1 - entry_px)
-                            if t_dist > 0:
-                                target_trail = None
-                                if is_buy:
-                                    if pos.price_current >= entry_px + t_dist * 4.5:
-                                        target_trail = entry_px + t_dist * 2.5
-                                    elif pos.price_current >= entry_px + t_dist * 2.5:
-                                        target_trail = entry_px + t_dist * 1.0
-                                    if target_trail and target_trail > curr_sl:
-                                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
-                                        req = {"action": mt5.TRADE_ACTION_SLTP, "position": ticket, "symbol": pos.symbol, "sl": round(target_trail, digits), "tp": float(pos.tp)}
-                                        with self.mt5_lock:
-                                            mt5.order_send(req)
-                                else:
-                                    if pos.price_current <= entry_px - t_dist * 4.5:
-                                        target_trail = entry_px - t_dist * 2.5
-                                    elif pos.price_current <= entry_px - t_dist * 2.5:
-                                        target_trail = entry_px - t_dist * 1.0
-                                    if target_trail and (curr_sl == 0.0 or target_trail < curr_sl):
-                                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
-                                        req = {"action": mt5.TRADE_ACTION_SLTP, "position": ticket, "symbol": pos.symbol, "sl": round(target_trail, digits), "tp": float(pos.tp)}
-                                        with self.mt5_lock:
-                                            mt5.order_send(req)
+                    # 1. Neural Sentinel Multi-Neuron Real-Time Evaluation
+                    bars_data = None
+                    try:
+                        with self.mt5_lock:
+                            rates = mt5.copy_rates_from_pos(pos.symbol, mt5.TIMEFRAME_M5, 0, 35)
+                        if rates is not None and len(rates) > 10:
+                            bars_data = [
+                                {"time": int(r["time"]), "open": float(r["open"]), "high": float(r["high"]), "low": float(r["low"]), "close": float(r["close"])}
+                                for r in rates
+                            ]
+                    except Exception:
+                        bars_data = None
+
+                    point = getattr(pos, 'point', 0.001) or 0.001
+                    eval_res = neural_sentinel.evaluate_trade(
+                        ticket=ticket,
+                        current_price=float(pos.price_current),
+                        bars=bars_data,
+                        point=point
+                    )
+
+                    if eval_res.get("should_update_mt5"):
+                        new_sl = eval_res["proposed_sl"]
+                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
+                        req = {
+                            "action": mt5.TRADE_ACTION_SLTP,
+                            "position": ticket,
+                            "symbol": pos.symbol,
+                            "sl": round(new_sl, digits),
+                            "tp": float(pos.tp),
+                        }
+                        with self.mt5_lock:
+                            res = mt5.order_send(req)
+                        if res and res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, 'TRADE_RETCODE_PLACED', 10008)):
+                            trade["current_sl"] = new_sl
+                            print(f"[SCALPER_BOT:NEURAL-RATCHET] >>> Ratcheted SL for #{ticket} ({pos.symbol}) to {new_sl:.3f} | Milestone: {eval_res['milestone']} | Extra Profit Locked: +${eval_res.get('extra_profit_captured', 0):.2f}", flush=True)
+
+                    # If Neural Sentinel is actively managing this runner, it controls all trailing ratchets
+                    if ticket in neural_sentinel.active_tracks:
                         continue
+
 
                     # 2. Initial Auto-BE to entry price when TP1 reached
                     should_be = False

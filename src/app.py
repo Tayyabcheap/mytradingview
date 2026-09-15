@@ -1736,6 +1736,49 @@ def scalper_bot_lot_sizes():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Neural Sentinel (Haider-Scalper-Enhanced Post-TP2 Multi-Neuron Engine)
+# ─────────────────────────────────────────────────────────────────────────────
+@app.route("/api/scalper/neural/status", methods=["GET"])
+def scalper_neural_status():
+    """Retrieve telemetry of all 5 live neurons tracking active Haider-Scalper open trades."""
+    from neural_sentinel import neural_sentinel
+    return jsonify(neural_sentinel.get_status())
+
+
+@app.route("/api/scalper/neural/action", methods=["POST"])
+def scalper_neural_action():
+    """Manual override or emergency ratchet command from the UI."""
+    from neural_sentinel import neural_sentinel
+    data = request.get_json(force=True) or {}
+    ticket = data.get("ticket")
+    action = data.get("action")
+    if not ticket:
+        return jsonify({"success": False, "error": "Missing ticket parameter"}), 400
+    try:
+        ticket = int(ticket)
+    except (ValueError, TypeError):
+        return jsonify({"success": False, "error": "Invalid ticket ID"}), 400
+    res = neural_sentinel.force_action(ticket=ticket, action=action)
+    return jsonify(res)
+
+
+@app.route("/api/scalper/neural/simulate", methods=["POST"])
+def scalper_neural_simulate():
+    """Simulate a trade in Neural Sentinel to demonstrate 5 live neurons or clear test trade."""
+    from neural_sentinel import neural_sentinel
+    data = request.get_json(force=True) or {}
+    action = data.get("action", "simulate")
+    if action == "clear":
+        neural_sentinel.clear_simulated_trade()
+        return jsonify({"success": True, "message": "Simulated trade cleared"})
+    sym = data.get("symbol", "XAUUSDc")
+    direction = int(data.get("direction", 1))
+    eval_res = neural_sentinel.simulate_test_trade(symbol=sym, direction=direction)
+    return jsonify({"success": True, "simulated_trade": eval_res})
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+
 # Monte Carlo Stress Lab, Market Screener, and Discord Notification Endpoints
 # ─────────────────────────────────────────────────────────────────────────────
 @app.route("/api/stress_test/monte_carlo", methods=["GET", "POST"])

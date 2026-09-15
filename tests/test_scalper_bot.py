@@ -332,6 +332,136 @@ class TestScalperBot(unittest.TestCase):
         self.assertEqual(sym_state["scan_status"], "POSITION_ACTIVE (TESTUSD)")
 
 
+class TestNeuralSentinel(unittest.TestCase):
+    def setUp(self):
+        from neural_sentinel import neural_sentinel
+        self.ns = neural_sentinel
+        self.ns.active_tracks.clear()
+        self.ns.history_events.clear()
+        self.client = app.test_client()
+
+    def test_trade_registration_and_status(self):
+        self.ns.register_trade(
+            ticket=12345,
+            symbol="XAUUSDc",
+            direction=1,
+            entry_price=2500.0,
+            initial_sl=2495.0,
+            tp1=2503.0,
+            tp2=2508.0,
+            volume=0.20,
+            atr=2.5
+        )
+        self.assertIn(12345, self.ns.active_tracks)
+        status = self.ns.get_status()
+        self.assertTrue(status["neurons_active"])
+        self.assertEqual(status["live_count"], 1)
+        self.assertEqual(status["state"], "LIVE_NEURAL_TRACKING")
+
+    def test_buy_ratchet_milestones_and_invariants(self):
+        """Verify BUY trade progresses through milestones and SL strictly never decreases."""
+        self.ns.register_trade(
+            ticket=777,
+            symbol="XAUUSDc",
+            direction=1,
+            entry_price=2500.0,
+            initial_sl=2495.0,
+            tp1=2503.0,
+            tp2=2508.0,
+            volume=0.20,
+            atr=2.5
+        )
+
+        # 1. Price at 2501 (between entry and TP1): should hold current SL
+        res1 = self.ns.evaluate_trade(777, current_price=2501.0, point=0.01)
+        self.assertEqual(res1["current_sl"], 2495.0)
+
+        # 2. Price hits TP1 (2503.0): Auto-BE triggers
+        res2 = self.ns.evaluate_trade(777, current_price=2503.20, point=0.01)
+        self.assertEqual(res2["milestone"], "TP1_BANKED_BE")
+        self.assertGreaterEqual(res2["proposed_sl"], 2500.0)
+
+        # 3. Price surges past TP2 (2508.50): Parabolic Profit Ratchet locks TP1 + bonus
+        res3 = self.ns.evaluate_trade(777, current_price=2508.50, point=0.01)
+        self.assertEqual(res3["milestone"], "TP2_SURGED_RUNNER_ACTIVE")
+        self.assertGreater(res3["proposed_sl"], 2500.0)
+        self.assertGreaterEqual(res3["extra_profit_captured"], 0.0)
+
+        # 4. Invariant test: sudden pullback to 2505.0 must NOT move SL backwards!
+        saved_sl = res3["proposed_sl"]
+        res_pullback = self.ns.evaluate_trade(777, current_price=2505.0, point=0.01)
+        self.assertGreaterEqual(res_pullback["proposed_sl"], saved_sl)
+
+        # 5. Hyper-Extension beyond TP2 (2515.0): Ratchets even higher
+        res4 = self.ns.evaluate_trade(777, current_price=2515.0, point=0.01)
+        self.assertEqual(res4["milestone"], "HYPER_EXTENSION")
+        self.assertGreater(res4["proposed_sl"], saved_sl)
+
+    def test_sell_ratchet_milestones_and_invariants(self):
+        """Verify SELL trade progresses through milestones and SL strictly never increases."""
+        self.ns.register_trade(
+            ticket=888,
+            symbol="EURUSDc",
+            direction=-1,
+            entry_price=1.1000,
+            initial_sl=1.1030,
+            tp1=1.0970,
+            tp2=1.0930,
+            volume=0.50,
+            atr=0.0020
+        )
+
+        # 1. Price drops to TP1 (1.0968): Auto-BE triggers
+        res1 = self.ns.evaluate_trade(888, current_price=1.0968, point=0.00001)
+        self.assertEqual(res1["milestone"], "TP1_BANKED_BE")
+        self.assertLessEqual(res1["proposed_sl"], 1.1000)
+
+        # 2. Price surges past TP2 (1.0920): Ratchet locks profit
+        res2 = self.ns.evaluate_trade(888, current_price=1.0920, point=0.00001)
+        self.assertIn(res2["milestone"], ["TP2_SURGED_RUNNER_ACTIVE", "HYPER_EXTENSION"])
+        self.assertLess(res2["proposed_sl"], 1.1000)
+
+        # 3. Pullback must NOT move SL up!
+        saved_sl = res2["proposed_sl"]
+        res_pullback = self.ns.evaluate_trade(888, current_price=1.0940, point=0.00001)
+        self.assertLessEqual(res_pullback["proposed_sl"], saved_sl)
+
+    def test_neural_api_endpoints(self):
+        """Test GET /api/scalper/neural/status and simulation endpoints."""
+        # 1. Initial status: Standby
+        res = self.client.get("/api/scalper/neural/status")
+        self.assertEqual(res.status_code, 200)
+        data = json.loads(res.data)
+        self.assertEqual(data["state"], "STANDBY_SCANNING")
+        self.assertFalse(data["neurons_active"])
+
+        # 2. Simulate a live trade
+        sim_res = self.client.post("/api/scalper/neural/simulate", json={"symbol": "XAUUSDc", "direction": 1})
+        self.assertEqual(sim_res.status_code, 200)
+        sim_data = json.loads(sim_res.data)
+        self.assertTrue(sim_data["success"])
+
+        # 3. Status now indicates live tracking
+        res2 = self.client.get("/api/scalper/neural/status")
+        data2 = json.loads(res2.data)
+        self.assertEqual(data2["state"], "LIVE_NEURAL_TRACKING")
+        self.assertTrue(data2["neurons_active"])
+        self.assertGreaterEqual(len(data2["active_trades"]), 1)
+
+        # 4. Manual operator action test
+        act_res = self.client.post("/api/scalper/neural/action", json={"ticket": 999901, "action": "tighten"})
+        self.assertEqual(act_res.status_code, 200)
+        act_data = json.loads(act_res.data)
+        self.assertTrue(act_data["success"])
+
+        # 5. Clear simulation
+        clear_res = self.client.post("/api/scalper/neural/simulate", json={"action": "clear"})
+        self.assertEqual(clear_res.status_code, 200)
+        res3 = self.client.get("/api/scalper/neural/status")
+        data3 = json.loads(res3.data)
+        self.assertFalse(data3["neurons_active"])
+
+
 if __name__ == "__main__":
     unittest.main()
 

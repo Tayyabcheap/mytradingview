@@ -14,6 +14,7 @@ import KLineChartArea from './components/KLineChartArea';
 import MonteCarloTab from './components/MonteCarloTab';
 import GoldOrderBlocksTab from './components/GoldOrderBlocksTab';
 import SupportResistanceTab from './components/SupportResistanceTab';
+import NeuralSentinelTab from './components/NeuralSentinelTab';
 import MarketScreenerModal from './components/MarketScreenerModal';
 import NotificationSettingsModal from './components/NotificationSettingsModal';
 import SignalPerformanceModal from './components/SignalPerformanceModal';
@@ -295,6 +296,7 @@ const INITIAL_INDICATORS = [
 const INITIAL_WORKSPACE_TABS = [
   { id: 'dashboard', title: 'Dashboard', type: 'dashboard', closable: false },
   { id: 'chart-main', title: 'Chart: XAUUSDc', type: 'chart', symbol: 'XAUUSDc', timeframe: '1H', closable: false },
+  { id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false },
   { id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false },
   { id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: false },
   { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false },
@@ -305,6 +307,9 @@ function App() {
   // Top Workspace Tabs
   const [workspaceTabs, setWorkspaceTabs] = useState(() => {
     const loaded = loadLS('workspaceTabs', INITIAL_WORKSPACE_TABS);
+    if (!loaded.some(t => t.id === 'neural_sentinel')) {
+      loaded.push({ id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false });
+    }
     if (!loaded.some(t => t.id === 'monte_carlo')) {
       loaded.push({ id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false });
     }
@@ -2652,6 +2657,16 @@ function App() {
             accountInfo={accountInfo}
             onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
             defaultSymbol={symbol}
+          />
+        </div>
+      )}
+
+      {/* 7. TAB 7: HAIDER SCALPER NEURAL SENTINEL VIEW */}
+      {activeTab.type === 'neural_sentinel' && (
+        <div style={{ flex: 1, overflow: 'hidden' }}>
+          <NeuralSentinelTab
+            accountInfo={accountInfo}
+            onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
           />
         </div>
       )}
