@@ -25,21 +25,21 @@ from real_dip_bt import wilder_atr, wilder_rsi
 def backtest(
     bars: List[Tuple[int, float, float, float, float]],  # (ts, o, h, l, c)
     atr_len: int = 14,
-    impulse_mult: float = 0.65,
+    impulse_mult: float = 0.45,
     rsi_len: int = 14,
     rsi_buy_level: float = 30.0,
     rsi_sell_level: float = 70.0,
     target_level: float = 80.0,
-    sl_buffer: float = 0.25,
-    min_wick_ratio: float = 0.22,
+    sl_buffer: float = 0.20,
+    min_wick_ratio: float = 0.18,
     skip_rollover: bool = True,
     mintick: float = 0.001,
     lot_size: float = 0.10,
     tick_value: float = 0.10,
-    sweep_lookback: int = 8,
+    sweep_lookback: int = 4,
     use_trend_filter: bool = True,
-    tp1_atr_mult: float = 0.22,
-    tp2_atr_mult: float = 2.00,
+    tp1_atr_mult: float = 0.25,
+    tp2_atr_mult: float = 3.00,
     trail_runner: bool = True
 ) -> Dict[str, Any]:
     n = len(bars)

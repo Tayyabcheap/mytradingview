@@ -42,11 +42,11 @@ MAX_INSTRUMENTS = 10
 DEFAULT_SYMBOLS = ["XAUUSDm", "BTCUSDm", "GBPUSDm", "GBPJPYm", "USDJPYm"]
 
 CHAMPION_SYMBOL_CONFIGS: Dict[str, Dict[str, Any]] = {
-    "XAUUSD": {"tp1_mult": 0.25, "tp2_mult": 1.80, "sl_mult": 0.25, "trail_runner": False},
-    "BTCUSD": {"tp1_mult": 0.22, "tp2_mult": 2.50, "sl_mult": 0.20, "trail_runner": True},
-    "GBPUSD": {"tp1_mult": 0.25, "tp2_mult": 2.20, "sl_mult": 0.20, "trail_runner": True},
-    "GBPJPY": {"tp1_mult": 0.22, "tp2_mult": 2.00, "sl_mult": 0.22, "trail_runner": True},
-    "USDJPY": {"tp1_mult": 0.25, "tp2_mult": 2.50, "sl_mult": 0.25, "trail_runner": False},
+    "XAUUSD": {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4},
+    "BTCUSD": {"tp1_mult": 0.22, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4},
+    "GBPUSD": {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4},
+    "GBPJPY": {"tp1_mult": 0.22, "tp2_mult": 2.80, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.55, "min_wick": 0.22, "sweep_lookback": 6},
+    "USDJPY": {"tp1_mult": 0.25, "tp2_mult": 2.80, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.50, "min_wick": 0.20, "sweep_lookback": 5},
 }
 
 def get_champion_config(symbol: str) -> Dict[str, Any]:
@@ -54,7 +54,7 @@ def get_champion_config(symbol: str) -> Dict[str, Any]:
     for key, cfg in CHAMPION_SYMBOL_CONFIGS.items():
         if key in base:
             return cfg
-    return {"tp1_mult": 0.22, "tp2_mult": 2.00, "sl_mult": 0.25, "trail_runner": True}
+    return {"tp1_mult": 0.25, "tp2_mult": 3.00, "sl_mult": 0.20, "trail_runner": True, "impulse_mult": 0.45, "min_wick": 0.18, "sweep_lookback": 4}
 
 
 class ScalperBot:
@@ -633,8 +633,13 @@ class ScalperBot:
         upper_wick = (h - max(o, c)) / crange
 
         if active_strat == "CHAMPION_SCALPER":
-            # 1. Microstructure Liquidity Sweep (8-bar lookback)
-            sweep_n = min(8, n - 1)
+            sym_cfg = get_champion_config(broker_sym)
+            sweep_req = sym_cfg.get("sweep_lookback", 4)
+            req_impulse = sym_cfg.get("impulse_mult", 0.45)
+            req_wick = sym_cfg.get("min_wick", 0.18)
+
+            # 1. Microstructure Liquidity Sweep
+            sweep_n = min(sweep_req, n - 1)
             prev_highs = highs[-1 - sweep_n:-1]
             prev_lows = lows[-1 - sweep_n:-1]
             swept_high = (h > max(prev_highs)) if prev_highs else True
@@ -664,8 +669,8 @@ class ScalperBot:
                 trend_bull = c > ema50
                 trend_bear = c < ema50
 
-            is_buy = (c < o) and (cbody >= curr_atr * 0.65) and (lower_wick >= 0.22) and (curr_rsi <= 30.0) and bb_lower_hit and swept_low
-            is_sell = (c > o) and (cbody >= curr_atr * 0.65) and (upper_wick >= 0.22) and (curr_rsi >= 70.0) and bb_upper_hit and swept_high
+            is_buy = (c < o) and (cbody >= curr_atr * req_impulse) and (lower_wick >= req_wick) and (curr_rsi <= 30.0) and bb_lower_hit and swept_low
+            is_sell = (c > o) and (cbody >= curr_atr * req_impulse) and (upper_wick >= req_wick) and (curr_rsi >= 70.0) and bb_upper_hit and swept_high
 
             if is_buy and not trend_bull and curr_rsi >= 26.0:
                 is_buy = False
@@ -673,7 +678,6 @@ class ScalperBot:
                 is_sell = False
 
             strat_name = "Champion-Scalper"
-            sym_cfg = get_champion_config(broker_sym)
             sl_buffer_mult = sym_cfg["sl_mult"]
             tp1_atr_mult = sym_cfg["tp1_mult"]
             tp2_atr_mult = sym_cfg["tp2_mult"]

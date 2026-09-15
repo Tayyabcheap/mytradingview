@@ -103,15 +103,17 @@ def main():
     parser = argparse.ArgumentParser(description="Haider-Scalper-Enhanced Backtester")
     parser.add_argument("--symbol", "-s", default="XAUUSDc", help="MT5 Symbol name (default: XAUUSDc)")
     parser.add_argument("--tf", "-t", default="5M", help="Timeframe: 5M (default: 5M)")
-    parser.add_argument("--bars", "-b", type=int, default=3000, help="Number of bars to backtest (default: 3000)")
+    parser.add_argument("--bars", "-b", type=int, default=5000, help="Number of bars to backtest (default: 5000)")
     parser.add_argument("--atr-len", type=int, default=14, help="ATR Length (default: 14)")
-    parser.add_argument("--impulse", type=float, default=1.0, help="Big Candle Size multiplier x ATR (default: 1.0)")
+    parser.add_argument("--impulse", type=float, default=0.45, help="Big Candle Size multiplier x ATR (default: 0.45)")
     parser.add_argument("--rsi-len", type=int, default=14, help="RSI Length (default: 14)")
-    parser.add_argument("--rsi-buy", type=float, default=36.0, help="RSI Oversold Buy Zone (default: 36.0)")
-    parser.add_argument("--rsi-sell", type=float, default=64.0, help="RSI Overbought Sell Zone (default: 64.0)")
-    parser.add_argument("--tp-pct", type=float, default=50.0, help="Target Level %% TP (default: 50.0)")
-    parser.add_argument("--sl-buf", type=float, default=1.35, help="SL Buffer x ATR (default: 1.35)")
+    parser.add_argument("--rsi-buy", type=float, default=30.0, help="RSI Oversold Buy Zone (default: 30.0)")
+    parser.add_argument("--rsi-sell", type=float, default=70.0, help="RSI Overbought Sell Zone (default: 70.0)")
+    parser.add_argument("--tp1-mult", type=float, default=0.25, help="TP1 ATR multiplier (default: 0.25)")
+    parser.add_argument("--tp2-mult", type=float, default=3.00, help="TP2 Runner ATR multiplier (default: 3.00)")
+    parser.add_argument("--sl-buf", type=float, default=0.20, help="SL Buffer x ATR (default: 0.20)")
     parser.add_argument("--min-wick", type=float, default=0.18, help="Min Rejection Wick ratio (default: 0.18)")
+    parser.add_argument("--sweep", type=int, default=4, help="Microstructure sweep lookback bars (default: 4)")
     parser.add_argument("--lots", type=float, default=0.10, help="Trade lots (default: 0.10)")
     parser.add_argument("--export", "-e", help="Export trades to CSV path")
 
@@ -128,12 +130,15 @@ def main():
         rsi_len=args.rsi_len,
         rsi_buy_level=args.rsi_buy,
         rsi_sell_level=args.rsi_sell,
-        target_level=args.tp_pct,
+        tp1_atr_mult=args.tp1_mult,
+        tp2_atr_mult=args.tp2_mult,
         sl_buffer=args.sl_buf,
         min_wick_ratio=args.min_wick,
+        sweep_lookback=args.sweep,
         skip_rollover=True,
         lot_size=args.lots,
-        mintick=0.01
+        mintick=0.001,
+        tick_value=0.10
     )
 
     print_stats_table(stats, args.symbol, args.tf, len(bars))

@@ -11,7 +11,7 @@ Core mathematical and analytical implementations for:
 
 import math
 import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # 1. Quantitative Mathematician: Hurst Exponent & Kelly Criterion
