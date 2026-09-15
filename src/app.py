@@ -1800,7 +1800,15 @@ def scalper_bot_toggle():
                     aligned_lots[broker_sym] = val
         symbol_lot_sizes = aligned_lots
     
-    res = bot.configure(enabled=enabled, strategy=strategy, lot_size=lot_size, symbol=symbol, symbols=symbols, symbol_lot_sizes=symbol_lot_sizes)
+    res = bot.configure(
+        enabled=enabled, 
+        strategy=strategy, 
+        lot_size=lot_size, 
+        symbol=symbol, 
+        symbols=symbols, 
+        symbol_lot_sizes=symbol_lot_sizes,
+        strategies=data.get("strategies") or data.get("strategy_configs")
+    )
     return jsonify(res)
 
 

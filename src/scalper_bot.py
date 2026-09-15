@@ -248,12 +248,45 @@ class ScalperBot:
     def configure(self, enabled: Optional[bool] = None, strategy: Optional[str] = None,
                   lot_size: Optional[float] = None, symbol: Optional[str] = None,
                   symbols: Optional[List[str]] = None,
-                  symbol_lot_sizes: Optional[Dict[str, float]] = None) -> Dict[str, Any]:
+                  symbol_lot_sizes: Optional[Dict[str, float]] = None,
+                  strategies: Optional[Dict[str, Any]] = None,
+                  strategy_configs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Update bot configuration, active pairs (up to 10), per-instrument lot sizes, and persist."""
+        strat_map = strategies or strategy_configs
+        if strat_map and isinstance(strat_map, dict):
+            for k, v in strat_map.items():
+                s_key = str(k).upper().replace("-", "_")
+                if s_key in self.strategy_configs:
+                    if isinstance(v, dict):
+                        self.strategy_configs[s_key]["enabled"] = bool(v.get("enabled", False))
+                    else:
+                        self.strategy_configs[s_key]["enabled"] = bool(v)
+
         if enabled is not None:
             self.enabled = bool(enabled)
+            if not self.enabled:
+                # Disabling master auto-trade disables all strategies
+                for c in self.strategy_configs.values():
+                    c["enabled"] = False
+            elif not strat_map:
+                # If master enabled is True and no specific strat_map was passed, enable the single active strategy
+                strat_key = (strategy or self.strategy or "HAIDER_ENHANCED").upper().replace("-", "_")
+                for k, c in self.strategy_configs.items():
+                    c["enabled"] = (k == strat_key)
+
         if strategy in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
             self.strategy = strategy
+
+        # Update master self.enabled to True if any strategy is enabled, or if explicitly enabled
+        any_enabled = any(c.get("enabled", False) for c in self.strategy_configs.values())
+        if self.enabled or any_enabled:
+            self.enabled = True
+            if not self.is_running:
+                self.start()
+        else:
+            self.enabled = False
+            if self.is_running:
+                self.stop()
         if lot_size is not None:
             # Strictly cap Gold at 1.0
             val = max(0.01, min(self.max_gold_lot, float(lot_size)))
@@ -302,6 +335,7 @@ class ScalperBot:
                 self.store.put("settings", "scalper_bot", bot_data)
                 self.store.put("settings", "scalper_symbols", self.symbols)
                 self.store.put("settings", "symbol_lot_sizes", self.symbol_lot_sizes)
+                self.store.put("settings", "strategy_configs", self.strategy_configs)
             except Exception as e:
                 logger.warning(f"Failed to persist bot settings: {e}")
         return self.status()
@@ -379,6 +413,8 @@ class ScalperBot:
                 self.start()
         else:
             self.enabled = False
+            if self.is_running:
+                self.stop()
 
         # Persist
         if self.store:

@@ -101,17 +101,22 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
   const fetchBotConfig = async () => {
     try {
       const res = await fetch('/api/scalper/bot/strategy-config');
+      let backendCfg = null;
       if (res.ok) {
         const data = await res.json();
-        const cfg = data.HAIDER_ENHANCED || data.haider_enhanced || (data.strategy_configs && data.strategy_configs.HAIDER_ENHANCED);
-        if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
-          setStrategyConfig(cfg);
-          try { localStorage.setItem('haider_strategy_config', JSON.stringify(cfg)); } catch (e) {}
-        }
+        backendCfg = data.HAIDER_ENHANCED || data.haider_enhanced || (data.strategy_configs && data.strategy_configs.HAIDER_ENHANCED);
       }
       const bRes = await fetch('/api/scalper/bot/status');
+      let bStatus = null;
       if (bRes.ok) {
-        setBotStatus(await bRes.json());
+        bStatus = await bRes.json();
+        setBotStatus(bStatus);
+      }
+      if (backendCfg && Array.isArray(backendCfg.symbols) && backendCfg.symbols.length > 0) {
+        const isHaiderEnabled = Boolean(backendCfg.enabled ?? (bStatus?.haider_enhanced?.enabled || bStatus?.strategy_configs?.HAIDER_ENHANCED?.enabled));
+        const mergedCfg = { ...backendCfg, enabled: isHaiderEnabled };
+        setStrategyConfig(mergedCfg);
+        try { localStorage.setItem('haider_strategy_config', JSON.stringify(mergedCfg)); } catch (e) {}
       }
     } catch (e) {
       console.error('Error fetching strategy config:', e);
@@ -147,6 +152,10 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
           try { localStorage.setItem('haider_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
       }
+      const bRes = await fetch('/api/scalper/bot/status');
+      if (bRes.ok) {
+        setBotStatus(await bRes.json());
+      }
     } catch (e) {
       console.error('Error updating config:', e);
     } finally {
@@ -155,7 +164,8 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
   };
 
   const handleToggleAutoTrade = () => {
-    const updated = { ...strategyConfig, enabled: !strategyConfig.enabled };
+    const isCurrentlyActive = Boolean(strategyConfig.enabled || botStatus?.haider_enhanced?.enabled || botStatus?.strategy_configs?.HAIDER_ENHANCED?.enabled);
+    const updated = { ...strategyConfig, enabled: !isCurrentlyActive };
     saveConfig(updated);
   };
 
@@ -288,7 +298,9 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
     }
   };
 
-  const isLive = telemetry?.neurons_active && telemetry?.active_trades?.length > 0;
+  const isAutonomousActive = Boolean(strategyConfig.enabled || botStatus?.haider_enhanced?.enabled || botStatus?.strategy_configs?.HAIDER_ENHANCED?.enabled);
+  const isTrackingTrade = Boolean(telemetry?.neurons_active && telemetry?.active_trades?.length > 0);
+  const isLive = isTrackingTrade || isAutonomousActive;
   const activeTrade = telemetry?.active_trades?.find(t => t.ticket === selectedTicket) || telemetry?.active_trades?.[0];
   const neurons = activeTrade?.neurons || {};
 
@@ -317,8 +329,16 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
         padding: '16px 22px',
         background: 'linear-gradient(135deg, rgba(22, 27, 34, 0.92) 0%, rgba(13, 17, 23, 0.98) 100%)',
         borderRadius: 12,
-        border: isLive ? '1px solid rgba(0, 240, 255, 0.4)' : '1px solid rgba(48, 54, 61, 0.7)',
-        boxShadow: isLive ? '0 0 25px rgba(0, 240, 255, 0.15)' : '0 4px 20px rgba(0, 0, 0, 0.3)',
+        border: isTrackingTrade 
+          ? '1px solid rgba(0, 255, 136, 0.5)'
+          : isAutonomousActive 
+          ? '1px solid rgba(0, 240, 255, 0.45)' 
+          : '1px solid rgba(48, 54, 61, 0.7)',
+        boxShadow: isTrackingTrade 
+          ? '0 0 25px rgba(0, 255, 136, 0.2)' 
+          : isAutonomousActive 
+          ? '0 0 25px rgba(0, 240, 255, 0.15)' 
+          : '0 4px 20px rgba(0, 0, 0, 0.3)',
         backdropFilter: 'blur(12px)',
         position: 'relative',
         flexShrink: 0
@@ -330,8 +350,10 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
           left: 0,
           right: 0,
           height: 3,
-          background: isLive 
-            ? 'linear-gradient(90deg, #00f0ff, #00ff88, #8a2be2, #00f0ff)' 
+          background: isTrackingTrade
+            ? 'linear-gradient(90deg, #00ff88, #00f0ff, #8a2be2, #00ff88)'
+            : isAutonomousActive
+            ? 'linear-gradient(90deg, #00f0ff, #00ff88, #00f0ff)'
             : 'linear-gradient(90deg, #30363d, #484f58, #30363d)',
           backgroundSize: '200% 100%',
           animation: isLive ? 'radarSweep 3s linear infinite' : 'none'
@@ -343,14 +365,26 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
             width: 44,
             height: 44,
             borderRadius: 10,
-            background: isLive ? 'rgba(0, 240, 255, 0.15)' : 'rgba(110, 118, 129, 0.12)',
-            border: isLive ? '1px solid #00f0ff' : '1px solid #30363d',
+            background: isTrackingTrade 
+              ? 'rgba(0, 255, 136, 0.18)' 
+              : isAutonomousActive 
+              ? 'rgba(0, 240, 255, 0.15)' 
+              : 'rgba(110, 118, 129, 0.12)',
+            border: isTrackingTrade 
+              ? '1px solid #00ff88' 
+              : isAutonomousActive 
+              ? '1px solid #00f0ff' 
+              : '1px solid #30363d',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
-            boxShadow: isLive ? '0 0 15px rgba(0, 240, 255, 0.3)' : 'none'
+            boxShadow: isTrackingTrade 
+              ? '0 0 15px rgba(0, 255, 136, 0.35)' 
+              : isAutonomousActive 
+              ? '0 0 15px rgba(0, 240, 255, 0.3)' 
+              : 'none'
           }}>
-            <Cpu size={24} color={isLive ? '#00f0ff' : '#8b949e'} />
+            <Cpu size={24} color={isTrackingTrade ? '#00ff88' : isAutonomousActive ? '#00f0ff' : '#8b949e'} />
           </div>
           <div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -360,23 +394,43 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
               <span style={{
                 fontSize: 10.5,
                 fontWeight: 700,
-                padding: '2px 8px',
+                padding: '3px 9px',
                 borderRadius: 20,
-                background: isLive ? 'rgba(0, 255, 136, 0.15)' : 'rgba(110, 118, 129, 0.15)',
-                color: isLive ? '#00ff88' : '#8b949e',
-                border: isLive ? '1px solid rgba(0, 255, 136, 0.4)' : '1px solid rgba(110, 118, 129, 0.3)',
+                background: isTrackingTrade 
+                  ? 'rgba(0, 255, 136, 0.18)' 
+                  : isAutonomousActive 
+                  ? 'rgba(0, 240, 255, 0.18)' 
+                  : 'rgba(110, 118, 129, 0.15)',
+                color: isTrackingTrade 
+                  ? '#00ff88' 
+                  : isAutonomousActive 
+                  ? '#00f0ff' 
+                  : '#8b949e',
+                border: isTrackingTrade 
+                  ? '1px solid rgba(0, 255, 136, 0.45)' 
+                  : isAutonomousActive 
+                  ? '1px solid rgba(0, 240, 255, 0.45)' 
+                  : '1px solid rgba(110, 118, 129, 0.3)',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 5
+                gap: 6
               }}>
                 <span style={{
                   width: 6,
                   height: 6,
                   borderRadius: '50%',
-                  background: isLive ? '#00ff88' : '#8b949e',
-                  boxShadow: isLive ? '0 0 8px #00ff88' : 'none'
+                  background: isTrackingTrade ? '#00ff88' : isAutonomousActive ? '#00f0ff' : '#8b949e',
+                  boxShadow: isTrackingTrade 
+                    ? '0 0 8px #00ff88' 
+                    : isAutonomousActive 
+                    ? '0 0 8px #00f0ff' 
+                    : 'none'
                 }} />
-                {isLive ? '5 LIVE NEURONS FIRING' : 'STANDBY // DORMANT'}
+                {isTrackingTrade 
+                  ? '5 LIVE NEURONS FIRING' 
+                  : isAutonomousActive 
+                  ? 'AUTONOMOUS ACTIVE // SENTINEL SCANNING' 
+                  : 'STANDBY // DORMANT'}
               </span>
             </div>
             <p style={{ margin: '3px 0 0', fontSize: 12, color: '#8b949e' }}>
@@ -455,9 +509,9 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
       <div style={{
         background: 'linear-gradient(180deg, rgba(22, 27, 34, 0.95) 0%, rgba(13, 17, 23, 0.95) 100%)',
         borderRadius: 12,
-        border: strategyConfig.enabled ? '1px solid rgba(8, 153, 129, 0.45)' : '1px solid rgba(48, 54, 61, 0.7)',
+        border: isAutonomousActive ? '1px solid rgba(8, 153, 129, 0.45)' : '1px solid rgba(48, 54, 61, 0.7)',
         padding: '18px 22px',
-        boxShadow: strategyConfig.enabled ? '0 0 20px rgba(8, 153, 129, 0.12)' : 'none',
+        boxShadow: isAutonomousActive ? '0 0 20px rgba(8, 153, 129, 0.12)' : 'none',
         display: 'flex',
         flexDirection: 'column',
         gap: 14,
@@ -496,13 +550,13 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
               width: 34,
               height: 34,
               borderRadius: 8,
-              background: strategyConfig.enabled ? 'rgba(8, 153, 129, 0.2)' : 'rgba(110, 118, 129, 0.12)',
-              border: strategyConfig.enabled ? '1px solid #089981' : '1px solid #30363d',
+              background: isAutonomousActive ? 'rgba(8, 153, 129, 0.2)' : 'rgba(110, 118, 129, 0.12)',
+              border: isAutonomousActive ? '1px solid #089981' : '1px solid #30363d',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center'
             }}>
-              <Sliders size={18} color={strategyConfig.enabled ? '#089981' : '#8b949e'} />
+              <Sliders size={18} color={isAutonomousActive ? '#089981' : '#8b949e'} />
             </div>
             <div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -537,9 +591,9 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
             <button
               onClick={handleToggleAutoTrade}
               style={{
-                background: strategyConfig.enabled ? 'rgba(8, 153, 129, 0.2)' : 'rgba(48, 54, 61, 0.3)',
-                border: strategyConfig.enabled ? '1px solid #089981' : '1px solid #30363d',
-                color: strategyConfig.enabled ? '#00ff88' : '#8b949e',
+                background: isAutonomousActive ? 'rgba(8, 153, 129, 0.2)' : 'rgba(48, 54, 61, 0.3)',
+                border: isAutonomousActive ? '1px solid #089981' : '1px solid #30363d',
+                color: isAutonomousActive ? '#00ff88' : '#8b949e',
                 padding: '8px 16px',
                 borderRadius: 8,
                 fontSize: 12.5,
@@ -548,12 +602,12 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
                 display: 'flex',
                 alignItems: 'center',
                 gap: 8,
-                boxShadow: strategyConfig.enabled ? '0 0 14px rgba(8, 153, 129, 0.3)' : 'none',
+                boxShadow: isAutonomousActive ? '0 0 14px rgba(8, 153, 129, 0.3)' : 'none',
                 transition: 'all 0.15s ease'
               }}
             >
-              <Zap size={14} fill={strategyConfig.enabled ? '#00ff88' : 'none'} />
-              <span>Auto-Trade Haider Scalper: <strong>{strategyConfig.enabled ? 'ON' : 'OFF'}</strong></span>
+              <Zap size={14} fill={isAutonomousActive ? '#00ff88' : 'none'} />
+              <span>Auto-Trade Haider Scalper: <strong>{isAutonomousActive ? 'ON' : 'OFF'}</strong></span>
             </button>
           </div>
         </div>
