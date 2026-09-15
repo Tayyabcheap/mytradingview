@@ -1433,7 +1433,11 @@ function App() {
     const strat = targetStrat || btStrategy;
     setBtLoading(true);
     setBtError(null);
-    const url = strat === 'haider_enhanced'
+    const url = (strat === 'tayyab_enhanced' || strat === 'TAYYAB_ENHANCED')
+      ? `/api/backtest/tayyab_enhanced?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}`
+      : (strat === 'champion_scalper' || strat === 'CHAMPION_SCALPER')
+      ? `/api/backtest/champion_scalper?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}`
+      : strat === 'haider_enhanced'
       ? `/api/backtest/haider_enhanced?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}`
       : strat === 'real_dip'
       ? `/api/backtest/real_dip?symbol=${symbol}&timeframe=${timeframe}&bars=${btBars}`

@@ -352,5 +352,6 @@ def backtest(
         "max_drawdown": round(max_dd * 100.0, 2),
         "max_drawdown_pct": round(max_dd * 100.0, 2),
         "trades_count": len(trades),
+        "verdict": "POSITIVE EDGE (PROFITABLE)" if net_pnl > 0 and win_rate >= 70.0 else ("POSITIVE EDGE" if net_pnl > 0 else "NEGATIVE EDGE"),
         "trades": trades
     }
