@@ -1,8 +1,8 @@
 # Project Memory & Context: MyTradingView
 
-**Last Updated:** September 14, 2026  
+**Last Updated:** September 15, 2026  
 **Repository:** `https://github.com/haider2804/mytradingview.git`  
-**Branch:** `main` (clean, 72 unit tests passing, in sync, commit `3567cbb`)
+**Branch:** `main` (clean, 79 unit tests passing, in sync with `origin/main`, commit `1b35ca3`)
 
 ---
 
@@ -23,6 +23,7 @@
 - **Operational Tabs**:
   - `DashboardTab`: Core overview, market activity, active orders, and broker connection status.
   - `Chart`: Full-featured KLine trading chart with drawing tools, multi-tab workspace, and order execution.
+  - `TayyabScalperTab`: Dedicated high-frequency algorithmic scalping terminal featuring live multi-timeframe matrix scanning (1M, 5M, 15M, 1H, 4H, 1D), per-instrument custom lot sizing table, strategy selector (`Tayyab Scalper Enhanced`, `Haider Scalper Enhanced`, `Champion Scalper`, `Real Dip`), live daemon controls, and 1-click historical backtesting.
   - `TradeJournalTab`: Deal-pairing trade journal with statistics, performance metrics, and **AI Scalper Audit & Coach** post-mortem diagnostic view.
   - `MonteCarloTab`: Vectorized risk modeling, sequence permutations, bootstrap drawdown distributions.
   - `GoldOrderBlocksTab`: Dual-timeframe institutional SMC order block detection with nearest-zone filters.
@@ -46,21 +47,24 @@
 - **Flask Application (`src/app.py`)**: REST endpoints and WebSocket/event streaming for quotes, chart data, orders, alarms, and engine control.
   - `/api/app/update-status`: Proactively runs `git fetch` with upstream checking and distinguishes tracked dirty files from untracked files (`??`).
   - `/api/app/update`: Supports `{ force: true }` parameter for headless VM resets.
+  - `/api/backtest/tayyab_enhanced`: Dedicated backtest endpoint for Tayyab Scalper parameter evaluation.
+  - `/api/scalper/bot/strategy`: Dynamic strategy selection and runtime parameter adjustment.
 - **Broker Symbol Resolution Engine (`src/symbol_utils.py`)**:
   - Shared, thread-safe module providing `clean_base_symbol()` and `resolve_broker_symbol(symbol, mt5_lock)`.
   - Automatically resolves broker suffix variations (`BTCUSD` / `BTCUSDc` $\rightarrow$ `BTCUSDm`, `XAUUSD` $\rightarrow$ `XAUUSDm`, etc.) dynamically across Cent, Trial, and Standard accounts.
 - **Autonomous Scalper Daemon (`src/scalper_bot.py`)**:
   - Dedicated server-side 24/5 background daemon operating completely independent of the browser.
-  - Concurrently monitors 5M closed bars across up to 10 configured instruments.
+  - Concurrently monitors closed bars across up to 10 configured instruments with multi-timeframe scan support.
+  - Supports multiple execution engines: `HAIDER_ENHANCED`, `TAYYAB_SCALPER`, `CHAMPION_SCALPER`, `REAL_DIP`.
   - Reads custom lot sizes per symbol from configuration (`symbol_lots`).
   - Dynamically resolves broker symbols before data copying and order submission.
-  - Executes institutional **2-Tranche scale-out orders** (Tranche 1 @ TP1, Tranche 2 Runner @ TP2) in under 50ms (< 3s SLA). Order comments explicitly denote strategy within MT5's 27-character limit: `Haider-Enhanced [TP1]` (21 chars), `Haider-Enhanced [Runner]` (24 chars), or `Haider-Gold` (11 chars).
+  - Executes institutional **2-Tranche scale-out orders** (Tranche 1 @ TP1, Tranche 2 Runner @ TP2) in under 50ms (< 3s SLA). Order comments explicitly denote strategy within MT5's 27-character limit: `Tayyab-Scalp [TP1]`, `Haider-Enhanced [TP1]`, `Haider-Enhanced [Runner]`, etc.
   - **Single Source of Execution**: Automated signal trading is strictly centralized to the Python Autonomous Daemon; legacy frontend client-side order dispatching is retired to permanently prevent duplicate orders.
   - **In-Flight Duplicate Shield (`_has_open_position`)**: Checks both in-memory registry and MT5 (Magic `999333`) before order dispatch; prevents opening stacked positions on pairs with active trades.
   - **Crash/Restart Recovery Adoption**: Reconnects to and adopts existing Magic `999333` positions in MT5 on server boot, continuing Auto-BE monitoring seamlessly.
   - High-speed 1-second background tick monitor (`_autobe_loop`) that autonomously moves Tranche 2 SL to Breakeven when TP1 is hit.
   - Strictly enforces Gold volume cap $\le 1.0$ lot and demo account protection.
-  - Endpoints: `GET /api/scalper/bot/status`, `POST /api/scalper/bot/toggle`, `GET/POST /api/scalper/bot/symbols`.
+  - Endpoints: `GET /api/scalper/bot/status`, `POST /api/scalper/bot/toggle`, `GET/POST /api/scalper/bot/symbols`, `POST /api/scalper/bot/strategy`.
 - **Scalper Diagnostic & Post-Mortem Logging Engine (`src/scalper_logger.py`, `tools/analyze_scalper_logs.py`)**:
   - Counterfactual 40-bar trajectory evaluation.
   - Premature SL hunt detection ($\le 12$ pips overshoot before reversing to TP) and undersized TP runner detection.
@@ -68,7 +72,7 @@
 - **Account Guardian (`src/trading_account.py`)**: Strict gate ensuring MT5 connects only to configured demo accounts, preventing real money exposure.
 - **Market Clock (`src/market_clock.py`)**: Time management enforcing weekend flat rules and Friday wind-down.
 - **MetaTrader 5 Bridge**: Thread-safe interface with MetaTrader 5 Python API for order placement and market data.
-- **Backtester (`src/backtester.py`, `src/enhanced_scalper_bt.py`, `src/real_dip_bt.py`)**: Vectorized backtesting and historical trade simulation.
+- **Backtester (`src/backtester.py`, `src/enhanced_scalper_bt.py`, `src/real_dip_bt.py`, `tools/backtest_haider_enhanced.py`)**: Vectorized backtesting and historical trade simulation.
 
 ---
 
