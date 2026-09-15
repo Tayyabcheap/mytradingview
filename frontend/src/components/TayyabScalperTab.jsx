@@ -77,9 +77,10 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     }, 3200);
   };
 
+  const cleanBaseSymbol = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
+
   const resolveBrokerSymbol = (rawSym) => {
     if (!rawSym) return '';
-    const clean = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
     const raw = rawSym.trim().toUpperCase();
     if (!brokerSymbols || !brokerSymbols.length) return raw;
 
@@ -91,10 +92,10 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     if (exact) return typeof exact === 'string' ? exact : exact.name;
 
     // 2. Base match
-    const base = clean(raw);
+    const base = cleanBaseSymbol(raw);
     const baseMatch = brokerSymbols.find(s => {
       const name = typeof s === 'string' ? s : s.name;
-      return name && clean(name) === base;
+      return name && cleanBaseSymbol(name) === base;
     });
     if (baseMatch) return typeof baseMatch === 'string' ? baseMatch : baseMatch.name;
 
@@ -106,6 +107,21 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     if (prefixMatch) return typeof prefixMatch === 'string' ? prefixMatch : prefixMatch.name;
 
     return raw;
+  };
+
+  const getTimeframesForSymbol = (sym) => {
+    if (!sym) return ['5M'];
+    const tfMap = strategyConfig.symbol_timeframes || {};
+    if (Array.isArray(tfMap[sym]) && tfMap[sym].length > 0) return tfMap[sym];
+
+    const base = cleanBaseSymbol(sym);
+    if (Array.isArray(tfMap[base]) && tfMap[base].length > 0) return tfMap[base];
+
+    const resolved = resolveBrokerSymbol(sym);
+    if (resolved && Array.isArray(tfMap[resolved]) && tfMap[resolved].length > 0) return tfMap[resolved];
+
+    const isBtc = sym.toUpperCase().includes('BTC');
+    return isBtc ? ['1M', '5M'] : ['5M', '15M'];
   };
 
   // Fetch bot status and strategy config
@@ -200,7 +216,7 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
 
   // Toggle or add multiple timeframes for a pair
   const handleToggleTimeframe = (sym, tf) => {
-    const currentTfs = strategyConfig.symbol_timeframes?.[sym] || ['5M'];
+    const currentTfs = getTimeframesForSymbol(sym);
     let updatedTfs;
     if (currentTfs.includes(tf)) {
       // Don't allow removing if it's the only active timeframe
@@ -215,20 +231,30 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
       triggerToast(`✓ Added ${tf} to ${sym}`, 'success');
     }
 
+    const base = cleanBaseSymbol(sym);
+    const resolved = resolveBrokerSymbol(sym);
     const updatedMap = {
       ...(strategyConfig.symbol_timeframes || {}),
       [sym]: updatedTfs
     };
+    if (base) updatedMap[base] = updatedTfs;
+    if (resolved) updatedMap[resolved] = updatedTfs;
+
     const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
     saveConfig(updated);
   };
 
   // Quick preset timeframes for a pair
   const handleSetPresetTimeframes = (sym, presetTfs, label) => {
+    const base = cleanBaseSymbol(sym);
+    const resolved = resolveBrokerSymbol(sym);
     const updatedMap = {
       ...(strategyConfig.symbol_timeframes || {}),
       [sym]: presetTfs
     };
+    if (base) updatedMap[base] = presetTfs;
+    if (resolved) updatedMap[resolved] = presetTfs;
+
     const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
     saveConfig(updated);
     triggerToast(`Set ${sym} to ${label} (${presetTfs.join(', ')})`, 'success');
@@ -577,7 +603,7 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
                 const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
                 const isBtc = sym.toUpperCase().includes('BTC');
                 const lot = strategyConfig.symbol_lot_sizes?.[sym] || (isBtc ? 1.0 : 0.10);
-                const activeTfs = strategyConfig.symbol_timeframes?.[sym] || (isBtc ? ['1M', '5M'] : ['5M', '15M']);
+                const activeTfs = getTimeframesForSymbol(sym);
 
                 return (
                   <tr key={sym} style={{

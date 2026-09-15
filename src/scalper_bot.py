@@ -574,7 +574,8 @@ class ScalperBot:
                 if tayyab_on:
                     for s in tayyab_cfg.get("symbols", []):
                         lot = tayyab_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
-                        raw_tfs = tayyab_cfg.get("symbol_timeframes", {}).get(s, ["5M"])
+                        base_s = clean_base_symbol(s)
+                        raw_tfs = tayyab_cfg.get("symbol_timeframes", {}).get(s) or (tayyab_cfg.get("symbol_timeframes", {}).get(base_s) if base_s else None) or ["5M"]
                         if not raw_tfs or not isinstance(raw_tfs, list):
                             raw_tfs = ["5M"]
                         for tf in raw_tfs:
