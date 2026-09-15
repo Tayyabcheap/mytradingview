@@ -3,10 +3,11 @@ import {
   Zap, Activity, Shield, TrendingUp, AlertTriangle, CheckCircle2, 
   RefreshCw, Play, Square, ArrowUpRight, ArrowDownRight, Award,
   Cpu, Crosshair, ChevronRight, Lock, Eye, Sparkles, Layers,
-  Sliders, Plus, Trash2, Check, ShieldCheck, DollarSign
+  Sliders, Plus, Trash2, Check, ShieldCheck, DollarSign, Search, Compass, X
 } from 'lucide-react';
+import BrokerSymbolPickerModal from './BrokerSymbolPickerModal';
 
-export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToChart }) {
+export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, onSelectSymbolAndGoToChart }) {
   const [telemetry, setTelemetry] = useState(null);
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -24,6 +25,67 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
   const [savingConfig, setSavingConfig] = useState(false);
   const [newSymbolInput, setNewSymbolInput] = useState('');
   const [botStatus, setBotStatus] = useState(null);
+
+  // Broker Symbols & Modal State
+  const [brokerSymbols, setBrokerSymbols] = useState(propSymbols || []);
+  const [showSymbolPicker, setShowSymbolPicker] = useState(false);
+  const [feedbackToast, setFeedbackToast] = useState(null);
+  const toastTimeoutRef = useRef(null);
+
+  // Keep broker symbols synced with prop or fallback to API
+  useEffect(() => {
+    if (propSymbols && propSymbols.length > 0) {
+      setBrokerSymbols(propSymbols);
+    } else {
+      fetch('/api/symbols')
+        .then(r => r.json())
+        .then(data => {
+          if (Array.isArray(data) && data.length > 0) {
+            setBrokerSymbols(data);
+          }
+        })
+        .catch(() => {});
+    }
+  }, [propSymbols]);
+
+  const triggerToast = (text, type = 'success') => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
+    setFeedbackToast({ text, type });
+    toastTimeoutRef.current = setTimeout(() => {
+      setFeedbackToast(null);
+    }, 3200);
+  };
+
+  const resolveBrokerSymbol = (rawSym) => {
+    if (!rawSym) return '';
+    const clean = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
+    const raw = rawSym.trim().toUpperCase();
+    if (!brokerSymbols || !brokerSymbols.length) return raw;
+
+    // 1. Exact match
+    const exact = brokerSymbols.find(s => {
+      const name = typeof s === 'string' ? s : s.name;
+      return name && name.toUpperCase() === raw;
+    });
+    if (exact) return typeof exact === 'string' ? exact : exact.name;
+
+    // 2. Base match
+    const base = clean(raw);
+    const baseMatch = brokerSymbols.find(s => {
+      const name = typeof s === 'string' ? s : s.name;
+      return name && clean(name) === base;
+    });
+    if (baseMatch) return typeof baseMatch === 'string' ? baseMatch : baseMatch.name;
+
+    // 3. Prefix match
+    const prefixMatch = brokerSymbols.find(s => {
+      const name = typeof s === 'string' ? s : s.name;
+      return name && name.toUpperCase().startsWith(base);
+    });
+    if (prefixMatch) return typeof prefixMatch === 'string' ? prefixMatch : prefixMatch.name;
+
+    return raw;
+  };
 
   const fetchBotConfig = async () => {
     try {
@@ -86,14 +148,31 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
   };
 
   const handleAddSymbol = (symToAdd) => {
-    const sym = (symToAdd || newSymbolInput).trim().toUpperCase();
-    if (!sym) return;
-    if (!strategyConfig.symbols?.includes(sym)) {
-      const isGold = sym.includes('XAU') || sym.includes('GOLD');
-      const updatedSymbols = [...(strategyConfig.symbols || []), sym];
-      const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [sym]: isGold ? 0.10 : 0.10 };
-      saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+    const rawInput = (symToAdd !== undefined ? symToAdd : newSymbolInput).trim();
+    if (!rawInput) {
+      // Empty input -> Open broker symbol picker modal so user can pick!
+      setShowSymbolPicker(true);
+      triggerToast('Select an instrument from the broker directory', 'info');
+      return;
     }
+
+    const resolved = resolveBrokerSymbol(rawInput);
+    if (!resolved) {
+      triggerToast('Please provide a valid instrument symbol', 'warn');
+      return;
+    }
+
+    if (strategyConfig.symbols?.includes(resolved)) {
+      triggerToast(`"${resolved}" is already active in Haider Scalper`, 'warn');
+      setNewSymbolInput('');
+      return;
+    }
+
+    const isGold = resolved.includes('XAU') || resolved.includes('GOLD');
+    const updatedSymbols = [...(strategyConfig.symbols || []), resolved];
+    const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [resolved]: isGold ? 0.10 : 0.10 };
+    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+    triggerToast(`✓ Added ${resolved} to Haider Scalper (Lot: 0.10)`, 'success');
     setNewSymbolInput('');
   };
 
@@ -102,6 +181,7 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
     const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}) };
     delete updatedLots[symToRemove];
     saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+    triggerToast(`Removed ${symToRemove} from strategy`, 'info');
   };
 
   // Poll Neural Sentinel Telemetry
@@ -359,8 +439,35 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
         boxShadow: strategyConfig.enabled ? '0 0 20px rgba(8, 153, 129, 0.12)' : 'none',
         display: 'flex',
         flexDirection: 'column',
-        gap: 14
+        gap: 14,
+        position: 'relative'
       }}>
+        {/* Floating Feedback Notification Banner */}
+        {feedbackToast && (
+          <div style={{
+            position: 'absolute',
+            top: 14,
+            right: 22,
+            padding: '7px 14px',
+            borderRadius: 6,
+            fontSize: 12,
+            fontWeight: 700,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            zIndex: 30,
+            boxShadow: '0 4px 20px rgba(0, 0, 0, 0.6)',
+            background: feedbackToast.type === 'warn' ? '#fbbf24' :
+                        feedbackToast.type === 'info' ? '#38bdf8' :
+                        feedbackToast.type === 'error' ? '#f87171' : '#10b981',
+            color: '#0a0d14'
+          }}>
+            {feedbackToast.type === 'warn' ? <AlertTriangle size={14} /> :
+             feedbackToast.type === 'info' ? <Activity size={14} /> :
+             <CheckCircle2 size={14} />}
+            <span>{feedbackToast.text}</span>
+          </div>
+        )}
         {/* Top bar: Strategy Title & Master Auto-Trade Toggle */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -605,68 +712,149 @@ export default function NeuralSentinelTab({ accountInfo, onSelectSymbolAndGoToCh
         </div>
 
         {/* Add Instrument Controls */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, paddingTop: 4 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ fontSize: 11, color: '#8b949e' }}>Quick Add:</span>
-            {['XAUUSDm', 'XAUUSDc', 'XAUUSD', 'EURUSDm'].map(qs => (
-              <button
-                key={qs}
-                onClick={() => handleAddSymbol(qs)}
-                disabled={strategyConfig.symbols?.includes(qs)}
-                style={{
-                  background: strategyConfig.symbols?.includes(qs) ? 'rgba(48, 54, 61, 0.2)' : 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid #30363d',
-                  color: strategyConfig.symbols?.includes(qs) ? '#484f58' : '#c9d1d9',
-                  padding: '3px 8px',
-                  borderRadius: 4,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: strategyConfig.symbols?.includes(qs) ? 'default' : 'pointer'
-                }}
-              >
-                + {qs}
-              </button>
-            ))}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12, paddingTop: 6 }}>
+          {/* Dynamic Quick Add Pills */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 600 }}>Quick Add:</span>
+            {['XAUUSDm', 'EURUSDm', 'GBPUSDm', 'USDJPYm', 'GBPJPYm', 'BTCUSDm'].map(raw => {
+              const qs = resolveBrokerSymbol(raw);
+              const isAdded = strategyConfig.symbols?.includes(qs);
+              return (
+                <button
+                  key={qs}
+                  onClick={() => handleAddSymbol(qs)}
+                  disabled={isAdded}
+                  style={{
+                    background: isAdded ? 'rgba(48, 54, 61, 0.18)' : 'rgba(255, 255, 255, 0.05)',
+                    border: isAdded ? '1px solid #21262d' : '1px solid #30363d',
+                    color: isAdded ? '#484f58' : '#c9d1d9',
+                    padding: '3px 8px',
+                    borderRadius: 4,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: isAdded ? 'default' : 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                  onMouseEnter={e => {
+                    if (!isAdded) {
+                      e.currentTarget.style.borderColor = '#00f0ff';
+                      e.currentTarget.style.color = '#00f0ff';
+                    }
+                  }}
+                  onMouseLeave={e => {
+                    if (!isAdded) {
+                      e.currentTarget.style.borderColor = '#30363d';
+                      e.currentTarget.style.color = '#c9d1d9';
+                    }
+                  }}
+                >
+                  {isAdded ? `✓ ${qs}` : `+ ${qs}`}
+                </button>
+              );
+            })}
           </div>
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <input
-              type="text"
-              placeholder="Custom broker symbol..."
-              value={newSymbolInput}
-              onChange={e => setNewSymbolInput(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleAddSymbol()}
-              style={{
-                background: '#161b22',
-                border: '1px solid #30363d',
-                borderRadius: 4,
-                color: '#ffffff',
-                padding: '4px 8px',
-                fontSize: 11.5,
-                width: 150
-              }}
-            />
+          {/* Symbol Input, Smart Add Button & Full Broker Browser Button */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+              <input
+                type="text"
+                placeholder="Broker symbol (e.g. EURUSDm)..."
+                value={newSymbolInput}
+                onChange={e => setNewSymbolInput(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAddSymbol()}
+                style={{
+                  background: '#161b22',
+                  border: '1px solid #30363d',
+                  borderRadius: 6,
+                  color: '#ffffff',
+                  padding: '5px 24px 5px 10px',
+                  fontSize: 12,
+                  width: 170,
+                  outline: 'none'
+                }}
+                onFocus={e => e.target.style.borderColor = '#00f0ff'}
+                onBlur={e => e.target.style.borderColor = '#30363d'}
+              />
+              {newSymbolInput && (
+                <button
+                  onClick={() => setNewSymbolInput('')}
+                  style={{
+                    position: 'absolute',
+                    right: 6,
+                    background: 'none',
+                    border: 'none',
+                    color: '#8b949e',
+                    cursor: 'pointer',
+                    padding: 2
+                  }}
+                >
+                  <X size={12} />
+                </button>
+              )}
+            </div>
+
+            {/* Smart Add Button: Adds typed symbol OR opens symbol picker if empty */}
             <button
               onClick={() => handleAddSymbol()}
+              title={newSymbolInput.trim() ? `Add ${newSymbolInput.trim().toUpperCase()} to Haider Scalper` : "Click to browse and add from 350+ broker instruments"}
               style={{
-                background: 'rgba(0, 240, 255, 0.12)',
+                background: newSymbolInput.trim() ? 'rgba(0, 240, 255, 0.22)' : 'rgba(0, 240, 255, 0.12)',
                 border: '1px solid #00f0ff',
                 color: '#00f0ff',
-                padding: '4px 10px',
-                borderRadius: 4,
-                fontSize: 11.5,
+                padding: '5px 12px',
+                borderRadius: 6,
+                fontSize: 12,
                 fontWeight: 700,
                 cursor: 'pointer',
                 display: 'flex',
                 alignItems: 'center',
-                gap: 4
+                gap: 5,
+                boxShadow: newSymbolInput.trim() ? '0 0 12px rgba(0, 240, 255, 0.3)' : 'none',
+                transition: 'all 0.15s ease'
               }}
             >
-              <Plus size={12} /> Add
+              <Plus size={13} />
+              <span>{newSymbolInput.trim() ? `Add ${newSymbolInput.trim().toUpperCase()}` : '+ Add / Browse'}</span>
+            </button>
+
+            {/* Dedicated Browse All Symbols Button */}
+            <button
+              onClick={() => setShowSymbolPicker(true)}
+              title="Open full broker symbol directory"
+              style={{
+                background: 'rgba(255, 255, 255, 0.05)',
+                border: '1px solid #30363d',
+                color: '#8b949e',
+                padding: '5px 10px',
+                borderRadius: 6,
+                fontSize: 11.5,
+                fontWeight: 600,
+                cursor: 'pointer',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 5
+              }}
+              onMouseEnter={e => { e.currentTarget.style.color = '#c9d1d9'; e.currentTarget.style.borderColor = '#8b949e'; }}
+              onMouseLeave={e => { e.currentTarget.style.color = '#8b949e'; e.currentTarget.style.borderColor = '#30363d'; }}
+            >
+              <Search size={12} />
+              <span>Browse All ({brokerSymbols.length || '350+'})</span>
             </button>
           </div>
         </div>
       </div>
+
+      {/* Interactive Broker Symbol Picker Modal */}
+      <BrokerSymbolPickerModal
+        isOpen={showSymbolPicker}
+        onClose={() => setShowSymbolPicker(false)}
+        strategyName="Haider Scalper Neural"
+        activeSymbols={strategyConfig.symbols || []}
+        brokerSymbols={brokerSymbols}
+        onAddSymbol={(sym) => handleAddSymbol(sym)}
+        accentColor="#00f0ff"
+      />
 
       {/* ─────────────────────────────────────────────────────────────
           2. ACTIVE TRADE BANNER OR STANDBY RADAR

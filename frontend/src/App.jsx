@@ -2617,6 +2617,7 @@ function App() {
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <NeuralSentinelTab
             accountInfo={accountInfo}
+            symbols={symbols}
             onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
           />
         </div>
@@ -2627,6 +2628,7 @@ function App() {
         <div style={{ flex: 1, overflow: 'hidden' }}>
           <ChampionScalperTab
             accountInfo={accountInfo}
+            symbols={symbols}
             onSelectSymbolAndGoToChart={handleSelectSymbolAndGoToChart}
           />
         </div>
