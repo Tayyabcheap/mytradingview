@@ -109,6 +109,8 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     return raw;
   };
 
+  const lastUserEditTimeRef = useRef(0);
+
   const getTimeframesForSymbol = (sym) => {
     if (!sym) return ['5M'];
     const tfMap = strategyConfig.symbol_timeframes || {};
@@ -132,13 +134,13 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
         const data = await res.json();
         const cfg = data.TAYYAB_ENHANCED || data.tayyab_enhanced || (data.strategy_configs && data.strategy_configs.TAYYAB_ENHANCED);
         if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
+          const isRecent = (Date.now() - lastUserEditTimeRef.current) < 5000;
           setStrategyConfig(prev => ({
             ...prev,
             ...cfg,
-            symbol_timeframes: {
-              ...(prev.symbol_timeframes || {}),
-              ...(cfg.symbol_timeframes || {})
-            }
+            symbol_timeframes: isRecent && prev.symbol_timeframes
+              ? { ...(cfg.symbol_timeframes || {}), ...prev.symbol_timeframes }
+              : (cfg.symbol_timeframes || prev.symbol_timeframes || {})
           }));
           try { localStorage.setItem('tayyab_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
@@ -163,6 +165,7 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
   }, []);
 
   const saveConfig = async (newCfg) => {
+    lastUserEditTimeRef.current = Date.now();
     setStrategyConfig(newCfg);
     try { localStorage.setItem('tayyab_strategy_config', JSON.stringify(newCfg)); } catch (e) {}
     setSavingConfig(true);
@@ -185,10 +188,7 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
           setStrategyConfig(prev => ({
             ...prev,
             ...cfg,
-            symbol_timeframes: {
-              ...(prev.symbol_timeframes || {}),
-              ...(cfg.symbol_timeframes || {})
-            }
+            symbol_timeframes: newCfg.symbol_timeframes || cfg.symbol_timeframes || prev.symbol_timeframes
           }));
           try { localStorage.setItem('tayyab_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
@@ -216,6 +216,7 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
 
   // Toggle or add multiple timeframes for a pair
   const handleToggleTimeframe = (sym, tf) => {
+    lastUserEditTimeRef.current = Date.now();
     const currentTfs = getTimeframesForSymbol(sym);
     let updatedTfs;
     if (currentTfs.includes(tf)) {
@@ -233,11 +234,16 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
 
     const base = cleanBaseSymbol(sym);
     const resolved = resolveBrokerSymbol(sym);
-    const updatedMap = {
-      ...(strategyConfig.symbol_timeframes || {}),
-      [sym]: updatedTfs
-    };
-    if (base) updatedMap[base] = updatedTfs;
+    const updatedMap = { ...(strategyConfig.symbol_timeframes || {}) };
+    updatedMap[sym] = updatedTfs;
+    if (base) {
+      updatedMap[base] = updatedTfs;
+      for (const k of Object.keys(updatedMap)) {
+        if (cleanBaseSymbol(k) === base) {
+          updatedMap[k] = updatedTfs;
+        }
+      }
+    }
     if (resolved) updatedMap[resolved] = updatedTfs;
 
     const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
@@ -246,13 +252,19 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
 
   // Quick preset timeframes for a pair
   const handleSetPresetTimeframes = (sym, presetTfs, label) => {
+    lastUserEditTimeRef.current = Date.now();
     const base = cleanBaseSymbol(sym);
     const resolved = resolveBrokerSymbol(sym);
-    const updatedMap = {
-      ...(strategyConfig.symbol_timeframes || {}),
-      [sym]: presetTfs
-    };
-    if (base) updatedMap[base] = presetTfs;
+    const updatedMap = { ...(strategyConfig.symbol_timeframes || {}) };
+    updatedMap[sym] = presetTfs;
+    if (base) {
+      updatedMap[base] = presetTfs;
+      for (const k of Object.keys(updatedMap)) {
+        if (cleanBaseSymbol(k) === base) {
+          updatedMap[k] = presetTfs;
+        }
+      }
+    }
     if (resolved) updatedMap[resolved] = presetTfs;
 
     const updated = { ...strategyConfig, symbol_timeframes: updatedMap };

@@ -405,10 +405,13 @@ class ScalperBot:
                 if isinstance(tfs, list):
                     clean_tfs = [str(tf).strip().upper() for tf in tfs if tf]
                     clean_s = str(s).strip()
-                    cfg["symbol_timeframes"][clean_s] = clean_tfs
                     base_s = clean_base_symbol(clean_s)
+                    cfg["symbol_timeframes"][clean_s] = clean_tfs
                     if base_s:
                         cfg["symbol_timeframes"][base_s] = clean_tfs
+                        for existing_k in list(cfg["symbol_timeframes"].keys()):
+                            if clean_base_symbol(existing_k) == base_s:
+                                cfg["symbol_timeframes"][existing_k] = clean_tfs
 
         # Collect union of all strategy symbols to keep self.symbols and worker loop synchronized
         all_strat_syms = []
