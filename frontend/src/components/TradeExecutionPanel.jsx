@@ -132,7 +132,16 @@ export default function TradeExecutionPanel({
       })
       .catch(() => {});
     return () => { alive = false; };
-  }, [isGold]);
+  }, []);
+
+  // Clamp lot size safely if switching to Gold
+  useEffect(() => {
+    if (isGold && lotSize > 1.0) {
+      setLotSize(1.0);
+      setLotInput('1.00');
+      if (onLotSizeChange) onLotSizeChange(1.0);
+    }
+  }, [isGold, lotSize, onLotSizeChange]);
 
   // Persist lot size safely to state, localStorage, and server database
   const persistLotSize = (val) => {

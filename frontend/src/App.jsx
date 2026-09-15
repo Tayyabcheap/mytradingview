@@ -51,6 +51,78 @@ function saveLS(key, value) {
   } catch (e) {}
 }
 
+// Dedicated robust lot size input cell: allows free typing, backspacing, decimal points without jumping
+function LotSizeInputCell({ symbol, isGold, value, onCommit }) {
+  const [text, setText] = useState(null);
+  const isFocusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isFocusedRef.current) {
+      setText(null);
+    }
+  }, [value]);
+
+  const numVal = Number(value);
+  const displayVal = text !== null ? text : (!isNaN(numVal) && numVal > 0 ? numVal.toFixed(2) : '0.10');
+
+  const handleCommit = (rawStr) => {
+    let num = parseFloat(rawStr);
+    const maxL = isGold ? 1.0 : 50.0;
+    if (isNaN(num) || num < 0.01) num = 0.01;
+    if (num > maxL) num = maxL;
+    num = parseFloat(num.toFixed(2));
+    setText(null);
+    onCommit(symbol, num);
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={displayVal}
+      onFocus={() => {
+        isFocusedRef.current = true;
+        setText(String(value ?? '0.10'));
+      }}
+      onChange={(e) => {
+        const sanitized = e.target.value.replace(/[^0-9.]/g, '');
+        const parts = sanitized.split('.');
+        const clean = parts[0] + (parts.length > 1 ? '.' + parts.slice(1).join('') : '');
+        setText(clean);
+      }}
+      onBlur={() => {
+        isFocusedRef.current = false;
+        if (text !== null) {
+          handleCommit(text);
+        }
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          isFocusedRef.current = false;
+          handleCommit(e.currentTarget.value);
+          e.currentTarget.blur();
+        } else if (e.key === 'Escape') {
+          isFocusedRef.current = false;
+          setText(null);
+          e.currentTarget.blur();
+        }
+      }}
+      onClick={e => e.stopPropagation()}
+      style={{
+        width: 48,
+        textAlign: 'center',
+        background: '#0d1117',
+        border: '1px solid #30363d',
+        borderRadius: 3,
+        color: '#ffffff',
+        fontSize: 11,
+        fontWeight: 700,
+        padding: '2px 0'
+      }}
+    />
+  );
+}
+
 const CHART_TYPES = [
   { id: 'candle_solid', label: 'Candles', icon: '🕯️' },
   { id: 'candle_stroke', label: 'Hollow Candles', icon: '🪔' },
@@ -407,6 +479,27 @@ function App() {
   });
   const [showLotTable, setShowLotTable] = useState(true);
   const [botStatus, setBotStatus] = useState(null);
+  const lastUserLotEditRef = useRef(0);
+
+  const cleanBase = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
+
+  const getSymbolLot = (sym) => {
+    if (!symbolLotSizes || typeof symbolLotSizes !== 'object') return 0.10;
+    if (symbolLotSizes[sym] !== undefined && typeof symbolLotSizes[sym] === 'number') {
+      return symbolLotSizes[sym];
+    }
+    const base = cleanBase(sym);
+    if (base && symbolLotSizes[base] !== undefined && typeof symbolLotSizes[base] === 'number') {
+      return symbolLotSizes[base];
+    }
+    for (const [k, v] of Object.entries(symbolLotSizes)) {
+      if (cleanBase(k) === base && typeof v === 'number') {
+        return v;
+      }
+    }
+    return 0.10;
+  };
+
   useEffect(() => {
     // Initial fetch of active symbols & lot sizes configured on backend
     fetch('/api/scalper/bot/symbols')
@@ -447,7 +540,14 @@ function App() {
             }
             if (d.symbol_lot_sizes && typeof d.symbol_lot_sizes === 'object' && Object.keys(d.symbol_lot_sizes).length > 0) {
               setSymbolLotSizes(prev => {
-                const merged = { ...prev, ...d.symbol_lot_sizes };
+                const isRecent = (Date.now() - lastUserLotEditRef.current) < 8000;
+                const merged = { ...prev };
+                for (const [k, v] of Object.entries(d.symbol_lot_sizes)) {
+                  if (isRecent && prev[k] !== undefined) {
+                    continue;
+                  }
+                  merged[k] = v;
+                }
                 saveLS('symbolLotSizes', merged);
                 return merged;
               });
@@ -476,6 +576,7 @@ function App() {
   }, []);
 
   const handleUpdateSymbolLotSize = (sym, newLot) => {
+    lastUserLotEditRef.current = Date.now();
     const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
     let val = Math.max(0.01, parseFloat(newLot) || 0.01);
     if (isGold) {
@@ -485,7 +586,12 @@ function App() {
     }
     val = parseFloat(val.toFixed(2));
 
-    const updated = { ...symbolLotSizes, [sym]: val };
+    const base = cleanBase(sym);
+    const updated = { 
+      ...symbolLotSizes, 
+      [sym]: val,
+      ...(base ? { [base]: val } : {})
+    };
     setSymbolLotSizes(updated);
     saveLS('symbolLotSizes', updated);
 
@@ -493,16 +599,31 @@ function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol_lot_sizes: updated })
-    }).catch(() => {});
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.symbol_lot_sizes && typeof d.symbol_lot_sizes === 'object') {
+        setSymbolLotSizes(prev => {
+          const merged = { ...prev, ...d.symbol_lot_sizes };
+          saveLS('symbolLotSizes', merged);
+          return merged;
+        });
+      }
+    })
+    .catch(() => {});
   };
 
   const handleApplyAllLots = (presetVal) => {
+    lastUserLotEditRef.current = Date.now();
     const updated = { ...symbolLotSizes };
     scalperSymbols.forEach(s => {
       const isGold = s.toUpperCase().includes('XAU') || s.toUpperCase().includes('GOLD');
       let val = presetVal;
       if (isGold) val = Math.min(1.0, val);
-      updated[s] = parseFloat(val.toFixed(2));
+      val = parseFloat(val.toFixed(2));
+      updated[s] = val;
+      const base = cleanBase(s);
+      if (base) updated[base] = val;
     });
     setSymbolLotSizes(updated);
     saveLS('symbolLotSizes', updated);
@@ -511,7 +632,18 @@ function App() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ symbol_lot_sizes: updated })
-    }).catch(() => {});
+    })
+    .then(r => r.json())
+    .then(d => {
+      if (d && d.symbol_lot_sizes && typeof d.symbol_lot_sizes === 'object') {
+        setSymbolLotSizes(prev => {
+          const merged = { ...prev, ...d.symbol_lot_sizes };
+          saveLS('symbolLotSizes', merged);
+          return merged;
+        });
+      }
+    })
+    .catch(() => {});
   };
 
   const handleSaveScalperSymbols = async (newSymbols) => {
@@ -1911,9 +2043,7 @@ function App() {
                             {scalperSymbols.map((sym, idx) => {
                               const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
                               const isCrypto = sym.toUpperCase().includes('BTC') || sym.toUpperCase().includes('ETH');
-                              const currentLot = (symbolLotSizes && symbolLotSizes[sym] !== undefined)
-                                ? symbolLotSizes[sym]
-                                : 0.10;
+                              const currentLot = getSymbolLot(sym);
                               return (
                                 <tr
                                   key={sym}
@@ -1974,30 +2104,11 @@ function App() {
                                         −
                                       </button>
 
-                                      <input
-                                        type="number"
-                                        step="0.01"
-                                        min="0.01"
-                                        max={isGold ? 1.0 : 50.0}
+                                      <LotSizeInputCell
+                                        symbol={sym}
+                                        isGold={isGold}
                                         value={currentLot}
-                                        onClick={e => e.stopPropagation()}
-                                        onChange={(e) => {
-                                          const val = parseFloat(e.target.value);
-                                          if (!isNaN(val)) {
-                                            handleUpdateSymbolLotSize(sym, val);
-                                          }
-                                        }}
-                                        style={{
-                                          width: 48,
-                                          textAlign: 'center',
-                                          background: '#0d1117',
-                                          border: '1px solid #30363d',
-                                          borderRadius: 3,
-                                          color: '#ffffff',
-                                          fontSize: 11,
-                                          fontWeight: 700,
-                                          padding: '2px 0'
-                                        }}
+                                        onCommit={handleUpdateSymbolLotSize}
                                       />
 
                                       <button

@@ -1627,7 +1627,18 @@ def scalper_bot_toggle():
         aligned_lots = {}
         for s, l in symbol_lot_sizes.items():
             if s:
-                aligned_lots[resolve_broker_symbol(s)] = l
+                try:
+                    val = float(l)
+                except (ValueError, TypeError):
+                    continue
+                s_str = str(s).strip()
+                aligned_lots[s_str] = val
+                base_sym = clean_base_symbol(s_str)
+                if base_sym:
+                    aligned_lots[base_sym] = val
+                broker_sym = resolve_broker_symbol(s_str)
+                if broker_sym:
+                    aligned_lots[broker_sym] = val
         symbol_lot_sizes = aligned_lots
     
     res = bot.configure(enabled=enabled, strategy=strategy, lot_size=lot_size, symbol=symbol, symbols=symbols, symbol_lot_sizes=symbol_lot_sizes)
@@ -1667,7 +1678,18 @@ def scalper_bot_lot_sizes():
         if isinstance(raw_lots, dict):
             for s, l in raw_lots.items():
                 if s:
-                    aligned_lots[resolve_broker_symbol(s)] = l
+                    try:
+                        val = float(l)
+                    except (ValueError, TypeError):
+                        continue
+                    s_str = str(s).strip()
+                    aligned_lots[s_str] = val
+                    base_sym = clean_base_symbol(s_str)
+                    if base_sym:
+                        aligned_lots[base_sym] = val
+                    broker_sym = resolve_broker_symbol(s_str)
+                    if broker_sym:
+                        aligned_lots[broker_sym] = val
         res = bot.configure(symbol_lot_sizes=aligned_lots)
         if store:
             store.put("settings", "symbol_lot_sizes", bot.symbol_lot_sizes)

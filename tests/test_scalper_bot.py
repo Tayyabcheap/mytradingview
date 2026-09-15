@@ -216,8 +216,15 @@ class TestScalperBot(unittest.TestCase):
         })
         self.assertIn("symbol_lot_sizes", status)
         self.assertEqual(status["symbol_lot_sizes"]["XAUUSDc"], 1.0)
+        self.assertEqual(status["symbol_lot_sizes"]["XAUUSD"], 1.0)
         self.assertEqual(status["symbol_lot_sizes"]["EURUSDc"], 0.25)
         self.assertEqual(status["symbol_lot_sizes"]["USDJPYc"], 0.50)
+
+        # Verify get_lot_for_symbol across suffix variations
+        self.assertEqual(self.bot.get_lot_for_symbol("XAUUSDm"), 1.0)
+        self.assertEqual(self.bot.get_lot_for_symbol("XAUUSD"), 1.0)
+        self.assertEqual(self.bot.get_lot_for_symbol("EURUSD"), 0.25)
+        self.assertEqual(self.bot.get_lot_for_symbol("USDJPYm"), 0.50)
 
         # 2. Test API GET & POST /api/scalper/bot/lot_sizes
         with app.test_client() as client:
@@ -229,15 +236,30 @@ class TestScalperBot(unittest.TestCase):
 
             post_res = client.post("/api/scalper/bot/lot_sizes", json={
                 "symbol_lot_sizes": {
-                    "GBPUSDc": 0.30,
-                    "XAUUSDc": 0.05
+                    "GBPUSDm": 0.30,
+                    "XAUUSDm": 0.05
                 }
             })
             self.assertEqual(post_res.status_code, 200)
             post_data = json.loads(post_res.data)
             self.assertTrue(post_data["success"])
-            self.assertEqual(post_data["symbol_lot_sizes"]["GBPUSDc"], 0.30)
-            self.assertEqual(post_data["symbol_lot_sizes"]["XAUUSDc"], 0.05)
+            # Exact key passed by frontend is preserved
+            self.assertEqual(post_data["symbol_lot_sizes"]["GBPUSDm"], 0.30)
+            self.assertEqual(post_data["symbol_lot_sizes"]["XAUUSDm"], 0.05)
+            # Clean base symbol is preserved
+            self.assertEqual(post_data["symbol_lot_sizes"]["GBPUSD"], 0.30)
+            self.assertEqual(post_data["symbol_lot_sizes"]["XAUUSD"], 0.05)
+            # get_lot_for_symbol resolves all variations on the singleton bot configured via API
+            server_bot = get_scalper_bot()
+            self.assertEqual(server_bot.get_lot_for_symbol("XAUUSDm"), 0.05)
+            self.assertEqual(server_bot.get_lot_for_symbol("XAUUSDc"), 0.05)
+            self.assertEqual(server_bot.get_lot_for_symbol("XAUUSD"), 0.05)
+
+        # Also test on self.bot directly
+        self.bot.configure(symbol_lot_sizes={"XAUUSDm": 0.05})
+        self.assertEqual(self.bot.get_lot_for_symbol("XAUUSDm"), 0.05)
+        self.assertEqual(self.bot.get_lot_for_symbol("XAUUSDc"), 0.05)
+        self.assertEqual(self.bot.get_lot_for_symbol("XAUUSD"), 0.05)
 
     def test_order_comments_strategy_labeling_and_length(self):
         """Ensure order comments clearly state Haider-Enhanced and stay strictly <= 27 characters."""

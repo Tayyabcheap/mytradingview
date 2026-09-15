@@ -98,16 +98,28 @@ class ScalperBot:
             if "lot_size" in saved:
                 self.lot_size = float(saved.get("lot_size", 0.10))
 
-            saved_lots = saved.get("symbol_lot_sizes") or self.store.get("settings", "symbol_lot_sizes")
-            if isinstance(saved_lots, dict):
-                for s, l in saved_lots.items():
-                    try:
-                        val = float(l)
-                        if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
-                            val = min(self.max_gold_lot, val)
-                        self.symbol_lot_sizes[str(s).strip()] = round(max(0.01, val), 2)
-                    except Exception:
-                        pass
+            # Merge from both "settings.symbol_lot_sizes" and "settings.scalper_bot.symbol_lot_sizes"
+            standalone_lots = self.store.get("settings", "symbol_lot_sizes") or {}
+            bot_lots = saved.get("symbol_lot_sizes") or {}
+            combined_lots = {}
+            if isinstance(standalone_lots, dict):
+                combined_lots.update(standalone_lots)
+            if isinstance(bot_lots, dict):
+                combined_lots.update(bot_lots)
+
+            for s, l in combined_lots.items():
+                try:
+                    val = float(l)
+                    if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
+                        val = min(self.max_gold_lot, val)
+                    clamped = round(max(0.01, val), 2)
+                    clean_s = str(s).strip()
+                    self.symbol_lot_sizes[clean_s] = clamped
+                    base_s = clean_base_symbol(clean_s)
+                    if base_s and base_s not in self.symbol_lot_sizes:
+                        self.symbol_lot_sizes[base_s] = clamped
+                except Exception:
+                    pass
 
             saved_syms = saved.get("symbols") or self.store.get("settings", "scalper_symbols")
             if isinstance(saved_syms, list) and len(saved_syms) > 0:
@@ -181,7 +193,16 @@ class ScalperBot:
                     val = float(v)
                     if "XAU" in str(s).upper() or "GOLD" in str(s).upper():
                         val = min(self.max_gold_lot, val)
-                    self.symbol_lot_sizes[str(s).strip()] = round(max(0.01, val), 2)
+                    clamped = round(max(0.01, val), 2)
+                    clean_s = str(s).strip()
+                    self.symbol_lot_sizes[clean_s] = clamped
+                    base_s = clean_base_symbol(clean_s)
+                    if base_s:
+                        self.symbol_lot_sizes[base_s] = clamped
+                        # Synchronize all existing keys sharing the same base symbol
+                        for k in list(self.symbol_lot_sizes.keys()):
+                            if clean_base_symbol(k) == base_s:
+                                self.symbol_lot_sizes[k] = clamped
                 except (ValueError, TypeError):
                     pass
         if symbols is not None and isinstance(symbols, list):
@@ -270,6 +291,31 @@ class ScalperBot:
             "active_orders_count": len(self.active_bot_orders),
             "active_orders": list(self.active_bot_orders.values())
         }
+
+    def get_lot_for_symbol(self, symbol: str) -> float:
+        """Lookup lot size for symbol checking exact, clean base, and broker resolved."""
+        is_gold = "XAU" in str(symbol).upper() or "GOLD" in str(symbol).upper()
+        s_clean = str(symbol).strip()
+        base = clean_base_symbol(s_clean)
+        
+        val = None
+        if s_clean in self.symbol_lot_sizes:
+            val = self.symbol_lot_sizes[s_clean]
+        elif base and base in self.symbol_lot_sizes:
+            val = self.symbol_lot_sizes[base]
+        else:
+            # Check any alias sharing the base
+            for k, v in self.symbol_lot_sizes.items():
+                if base and clean_base_symbol(k) == base:
+                    val = v
+                    break
+        
+        if val is None:
+            val = self.lot_size
+            
+        if is_gold:
+            val = min(self.max_gold_lot, val)
+        return max(0.01, round(float(val), 2))
 
     # ─────────────────────────────────────────────────────────────────────────
     # Background Worker Loop: Iterates over all active instruments
@@ -502,7 +548,7 @@ class ScalperBot:
     def _execute_signal(self, symbol: str, signal_type: str, entry: float, sl: float, tp1: float, strategy_name: str):
         # Strict user risk constraint: Gold lot size <= 1.0
         is_gold = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
-        raw_lot = self.symbol_lot_sizes.get(symbol, self.lot_size)
+        raw_lot = self.get_lot_for_symbol(symbol)
         total_lot = min(self.max_gold_lot, raw_lot) if is_gold else raw_lot
         total_lot = max(0.01, round(total_lot, 2))
 
