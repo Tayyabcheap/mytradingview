@@ -15,16 +15,27 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
   const [botStatus, setBotStatus] = useState(null);
 
   // Strategy Configuration & Instruments State
-  const [strategyConfig, setStrategyConfig] = useState({
-    enabled: false,
-    symbols: ['BTCUSDm', 'XAUUSDm', 'GBPUSDm', 'GBPJPYm', 'USDJPYm'],
-    symbol_lot_sizes: {
-      'BTCUSDm': 1.0,
-      'XAUUSDm': 0.10,
-      'GBPUSDm': 0.10,
-      'GBPJPYm': 0.10,
-      'USDJPYm': 0.10
-    }
+  const [strategyConfig, setStrategyConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('champion_strategy_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.symbols) && parsed.symbols.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return {
+      enabled: false,
+      symbols: ['BTCUSDc', 'XAUUSDc', 'GBPUSDc', 'GBPJPYc', 'USDJPYc'],
+      symbol_lot_sizes: {
+        'BTCUSDc': 1.0,
+        'XAUUSDc': 0.10,
+        'GBPUSDc': 0.10,
+        'GBPJPYc': 0.10,
+        'USDJPYc': 0.10
+      }
+    };
   });
   const [savingConfig, setSavingConfig] = useState(false);
   const [newSymbolInput, setNewSymbolInput] = useState('');
@@ -97,8 +108,10 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
       const res = await fetch('/api/scalper/bot/strategy-config');
       if (res.ok) {
         const data = await res.json();
-        if (data && data.CHAMPION_SCALPER) {
-          setStrategyConfig(data.CHAMPION_SCALPER);
+        const cfg = data.CHAMPION_SCALPER || data.champion_scalper || (data.strategy_configs && data.strategy_configs.CHAMPION_SCALPER);
+        if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
+          setStrategyConfig(cfg);
+          try { localStorage.setItem('champion_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
       }
       const bRes = await fetch('/api/scalper/bot/status');
@@ -122,9 +135,10 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
 
   const saveConfig = async (newCfg) => {
     setStrategyConfig(newCfg);
+    try { localStorage.setItem('champion_strategy_config', JSON.stringify(newCfg)); } catch (e) {}
     setSavingConfig(true);
     try {
-      await fetch('/api/scalper/bot/strategy-config', {
+      const res = await fetch('/api/scalper/bot/strategy-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -134,7 +148,14 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
           symbol_lot_sizes: newCfg.symbol_lot_sizes
         })
       });
-      fetchBotConfig();
+      if (res.ok) {
+        const data = await res.json();
+        const cfg = data.CHAMPION_SCALPER || data.champion_scalper || (data.strategy_configs && data.strategy_configs.CHAMPION_SCALPER);
+        if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
+          setStrategyConfig(cfg);
+          try { localStorage.setItem('champion_strategy_config', JSON.stringify(cfg)); } catch (e) {}
+        }
+      }
     } catch (e) {
       console.error('Error updating Champion config:', e);
     } finally {

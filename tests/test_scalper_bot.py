@@ -487,11 +487,17 @@ class TestNeuralSentinel(unittest.TestCase):
         self.assertTrue(champ_data["enabled"])
         champ_cfg = champ_data["champion_scalper"]
         self.assertTrue(champ_cfg["enabled"])
-        self.assertIn("BTCUSDm", champ_cfg["symbols"])
+        champ_syms = champ_cfg["symbols"]
+        self.assertTrue(any("BTCUSD" in s for s in champ_syms))
+        self.assertTrue(any("XAUUSD" in s for s in champ_syms))
         # Safety invariant: Gold strictly capped at 1.0
-        self.assertLessEqual(champ_cfg["symbol_lot_sizes"]["XAUUSDm"], 1.0)
-        self.assertEqual(champ_cfg["symbol_lot_sizes"]["XAUUSDm"], 1.0)
-        self.assertEqual(champ_cfg["symbol_lot_sizes"]["BTCUSDm"], 0.50)
+        gold_key = next((k for k in champ_cfg["symbol_lot_sizes"] if "XAU" in k), None)
+        self.assertIsNotNone(gold_key)
+        self.assertLessEqual(champ_cfg["symbol_lot_sizes"][gold_key], 1.0)
+        self.assertEqual(champ_cfg["symbol_lot_sizes"][gold_key], 1.0)
+        btc_key = next((k for k in champ_cfg["symbol_lot_sizes"] if "BTCUSD" in k), None)
+        self.assertIsNotNone(btc_key)
+        self.assertEqual(champ_cfg["symbol_lot_sizes"][btc_key], 0.50)
 
         # 3. Configure Haider Scalper Enhanced with isolated Gold setup
         post_haider = {

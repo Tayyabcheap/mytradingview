@@ -1709,15 +1709,28 @@ def scalper_bot_strategy_config():
                     if broker_sym:
                         aligned_lots[broker_sym] = val
 
-        res = bot.configure_strategy(
+        bot.configure_strategy(
             strategy_key=strategy,
             enabled=enabled,
             symbols=symbols,
             symbol_lot_sizes=aligned_lots
         )
+        if store:
+            store.put("settings", "strategy_configs", bot.strategy_configs)
+            store.put("settings", "scalper_symbols", bot.symbols)
+
+        res = bot.status()
+        res["success"] = True
+        res["strategy"] = strategy
+        res["HAIDER_ENHANCED"] = bot.strategy_configs.get("HAIDER_ENHANCED", {})
+        res["CHAMPION_SCALPER"] = bot.strategy_configs.get("CHAMPION_SCALPER", {})
         return jsonify(res)
 
-    return jsonify(bot.strategy_configs)
+    res = bot.status()
+    res["strategy_configs"] = bot.strategy_configs
+    res["HAIDER_ENHANCED"] = bot.strategy_configs.get("HAIDER_ENHANCED", {})
+    res["CHAMPION_SCALPER"] = bot.strategy_configs.get("CHAMPION_SCALPER", {})
+    return jsonify(res)
 
 
 @app.route("/api/scalper/bot/symbols", methods=["GET", "POST"])

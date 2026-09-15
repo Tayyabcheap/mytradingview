@@ -17,10 +17,21 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
   const pollIntervalRef = useRef(null);
 
   // Strategy Configuration & Instruments State
-  const [strategyConfig, setStrategyConfig] = useState({
-    enabled: false,
-    symbols: ['XAUUSDm'],
-    symbol_lot_sizes: { 'XAUUSDm': 0.10 }
+  const [strategyConfig, setStrategyConfig] = useState(() => {
+    try {
+      const saved = localStorage.getItem('haider_strategy_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && Array.isArray(parsed.symbols) && parsed.symbols.length > 0) {
+          return parsed;
+        }
+      }
+    } catch (e) {}
+    return {
+      enabled: false,
+      symbols: ['XAUUSDc'],
+      symbol_lot_sizes: { 'XAUUSDc': 0.10 }
+    };
   });
   const [savingConfig, setSavingConfig] = useState(false);
   const [newSymbolInput, setNewSymbolInput] = useState('');
@@ -92,8 +103,10 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
       const res = await fetch('/api/scalper/bot/strategy-config');
       if (res.ok) {
         const data = await res.json();
-        if (data && data.HAIDER_ENHANCED) {
-          setStrategyConfig(data.HAIDER_ENHANCED);
+        const cfg = data.HAIDER_ENHANCED || data.haider_enhanced || (data.strategy_configs && data.strategy_configs.HAIDER_ENHANCED);
+        if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
+          setStrategyConfig(cfg);
+          try { localStorage.setItem('haider_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
       }
       const bRes = await fetch('/api/scalper/bot/status');
@@ -107,15 +120,16 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
 
   useEffect(() => {
     fetchBotConfig();
-    const interval = setInterval(fetchBotConfig, 4000);
+    const interval = setInterval(fetchBotConfig, 3000);
     return () => clearInterval(interval);
   }, []);
 
   const saveConfig = async (newCfg) => {
     setStrategyConfig(newCfg);
+    try { localStorage.setItem('haider_strategy_config', JSON.stringify(newCfg)); } catch (e) {}
     setSavingConfig(true);
     try {
-      await fetch('/api/scalper/bot/strategy-config', {
+      const res = await fetch('/api/scalper/bot/strategy-config', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -125,7 +139,14 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
           symbol_lot_sizes: newCfg.symbol_lot_sizes
         })
       });
-      fetchBotConfig();
+      if (res.ok) {
+        const data = await res.json();
+        const cfg = data.HAIDER_ENHANCED || data.haider_enhanced || (data.strategy_configs && data.strategy_configs.HAIDER_ENHANCED);
+        if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
+          setStrategyConfig(cfg);
+          try { localStorage.setItem('haider_strategy_config', JSON.stringify(cfg)); } catch (e) {}
+        }
+      }
     } catch (e) {
       console.error('Error updating config:', e);
     } finally {

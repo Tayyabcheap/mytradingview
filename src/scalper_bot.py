@@ -331,6 +331,15 @@ class ScalperBot:
                 except (ValueError, TypeError):
                     pass
 
+        # Collect union of all strategy symbols to keep self.symbols and worker loop synchronized
+        all_strat_syms = []
+        for c in self.strategy_configs.values():
+            for s in c.get("symbols", []):
+                if s and s not in all_strat_syms:
+                    all_strat_syms.append(s)
+        if all_strat_syms:
+            self.symbols = all_strat_syms[:MAX_INSTRUMENTS]
+
         # Update master self.enabled to True if any strategy is enabled
         any_enabled = any(c.get("enabled", False) for c in self.strategy_configs.values())
         if any_enabled:
@@ -344,6 +353,7 @@ class ScalperBot:
         if self.store:
             try:
                 self.store.put("settings", "strategy_configs", self.strategy_configs)
+                self.store.put("settings", "scalper_symbols", self.symbols)
             except Exception as e:
                 logger.warning(f"Failed to persist strategy_configs: {e}")
 
