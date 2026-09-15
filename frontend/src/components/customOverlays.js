@@ -797,10 +797,13 @@ const signalsIndicator = {
       ctx.restore();
 
       // Format card rows to 3 decimal places
+      const isChamp = d.strategyId === 'CHAMPION_SCALPER' || d.isChampion;
       const isEnh = d.strategyId === 'HAIDER_ENHANCED' || d.isEnhanced;
-      const cardTitle = isEnh 
-        ? `${isBuy ? '\u25B2 BUY [ENHANCED]' : '\u25BC SELL [ENHANCED]'}  ${d.entryPrice.toFixed(3)}`
-        : `${isBuy ? '\u25B2 BUY' : '\u25BC SELL'}  ${d.entryPrice.toFixed(3)}`;
+      const cardTitle = isChamp
+        ? `${isBuy ? '\u25B2 BUY [CHAMPION]' : '\u25BC SELL [CHAMPION]'}  ${d.entryPrice.toFixed(3)}`
+        : (isEnh 
+          ? `${isBuy ? '\u25B2 BUY [ENHANCED]' : '\u25BC SELL [ENHANCED]'}  ${d.entryPrice.toFixed(3)}`
+          : `${isBuy ? '\u25B2 BUY' : '\u25BC SELL'}  ${d.entryPrice.toFixed(3)}`);
 
       const tp1Pips = d.tp1_pips ?? +(Math.abs(d.tp1Price - d.entryPrice) * 10).toFixed(1);
       const tp1Usd = d.tp1_usd ?? +(tp1Pips * 1.0).toFixed(2);
@@ -810,8 +813,9 @@ const signalsIndicator = {
       const tp2Pips = hasTp2 ? (d.tp2_pips ?? +(Math.abs(d.tp2Price - d.entryPrice) * 10).toFixed(1)) : 0;
       const tp2Usd = hasTp2 ? (d.tp2_usd ?? +(tp2Pips * 1.0).toFixed(2)) : 0;
 
+      const titleColor = isChamp ? '#10b981' : (isEnh ? '#00f2fe' : accent);
       const rows = [
-        { t: cardTitle, c: isEnh ? '#00f2fe' : accent, bold: true },
+        { t: cardTitle, c: titleColor, bold: true },
         { t: `TP1  ${d.tp1Price.toFixed(3)} (+${tp1Pips}p / +$${tp1Usd})`, c: '#2ea88f' },
         ...(hasTp2 ? [{ t: `TP2  ${d.tp2Price.toFixed(3)} (+${tp2Pips}p / +$${tp2Usd})`, c: '#089981' }] : []),
         { t: `SL   ${d.slPrice.toFixed(3)} (-${slPips}p / -$${slUsd})`, c: '#f23645' },

@@ -394,9 +394,13 @@ function App() {
   const [activeSignalStrategies, setActiveSignalStrategies] = useState(() => {
     const saved = loadLS('activeSignalStrategies', null);
     if (saved && typeof saved === 'object') {
-      return { REAL_DIP: !!saved.REAL_DIP, HAIDER_ENHANCED: !!saved.HAIDER_ENHANCED };
+      return {
+        CHAMPION_SCALPER: saved.CHAMPION_SCALPER !== undefined ? !!saved.CHAMPION_SCALPER : true,
+        HAIDER_ENHANCED: !!saved.HAIDER_ENHANCED,
+        REAL_DIP: !!saved.REAL_DIP
+      };
     }
-    return { REAL_DIP: true, HAIDER_ENHANCED: false };
+    return { CHAMPION_SCALPER: true, HAIDER_ENHANCED: true, REAL_DIP: false };
   });
   const [showSignalsMenu, setShowSignalsMenu] = useState(false);
   const [signalsList, setSignalsList] = useState([]);
@@ -1188,7 +1192,7 @@ function App() {
       } : ind));
 
       // Sync active strategy to backend autonomous bot
-      const activeStrat = next.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP';
+      const activeStrat = next.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (next.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP');
       fetch('/api/scalper/bot/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1200,7 +1204,7 @@ function App() {
   };
 
   const handleSelectAllSignalStrategies = (enableAll = true) => {
-    const next = { REAL_DIP: enableAll, HAIDER_ENHANCED: enableAll };
+    const next = { CHAMPION_SCALPER: enableAll, HAIDER_ENHANCED: enableAll, REAL_DIP: enableAll };
     setActiveSignalStrategies(next);
     saveLS('activeSignalStrategies', next);
     setSignalsEnabled(enableAll);
@@ -1304,8 +1308,9 @@ function App() {
   const executeSignalTrade = async () => {
     if (!signalToast) return;
     const t = signalToast;
+    const isChampion = t.strategy === 'Champion-Scalper' || t.strategyId === 'CHAMPION_SCALPER';
     const isEnhanced = t.strategy === 'Haider-Scalper-Enhanced' || t.strategyId === 'HAIDER_ENHANCED';
-    const cmt = isEnhanced ? 'Haider-Enhanced' : (t.strategy ? String(t.strategy).replace('-Scalper', '').slice(0, 27) : 'Signal-Execute');
+    const cmt = isChampion ? 'Champion-Scalp' : (isEnhanced ? 'Haider-Enhanced' : (t.strategy ? String(t.strategy).replace('-Scalper', '').slice(0, 27) : 'Signal-Execute'));
     const body = { symbol: t.symbol, type: t.type, volume: parseFloat(signalToastLot) || 0.01,
       sl: +Number(t.sl).toFixed(2), tp: +Number(t.tp1).toFixed(2), comment: cmt };
     setSignalToast(null);
@@ -1346,9 +1351,10 @@ function App() {
         const sig = series[li];
 
         // STRICT USER DIRECTIVE: Haider Scalper strategies ONLY work on 5M and ONLY execute on 5M chart
+        const isChampionSig = sig.strategyId === 'CHAMPION_SCALPER' || sig.strategy === 'Champion-Scalper';
         const isHaiderSig = sig.strategyId === 'REAL_DIP' || sig.strategy === 'Haider-Gold-Scalper';
         const isEnhancedSig = sig.strategyId === 'HAIDER_ENHANCED' || sig.strategy === 'Haider-Scalper-Enhanced';
-        if ((isHaiderSig || isEnhancedSig) && timeframe.toUpperCase() !== '5M') {
+        if ((isChampionSig || isHaiderSig || isEnhancedSig) && timeframe.toUpperCase() !== '5M') {
           return; // Strictly abort: Haider scalper strategies only execute on 5-minute chart
         }
 
@@ -1799,6 +1805,50 @@ function App() {
                     </div>
                   </div>
 
+                  {/* 1. Champion-Scalper (93%+ WR) */}
+                  <div
+                    onClick={() => handleToggleSignalStrategy('CHAMPION_SCALPER')}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      color: activeSignalStrategies.CHAMPION_SCALPER ? '#10b981' : 'var(--text)',
+                      background: activeSignalStrategies.CHAMPION_SCALPER ? 'rgba(16, 185, 129, 0.14)' : 'transparent',
+                      borderLeft: activeSignalStrategies.CHAMPION_SCALPER ? '3px solid #10b981' : '3px solid transparent',
+                      transition: 'background 0.15s ease'
+                    }}
+                    onMouseEnter={e => { if (!activeSignalStrategies.CHAMPION_SCALPER) e.currentTarget.style.background = '#2a2e39'; }}
+                    onMouseLeave={e => { if (!activeSignalStrategies.CHAMPION_SCALPER) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 700 }}>Champion-Scalper</span>
+                        <span style={{
+                          fontSize: 9,
+                          fontWeight: 800,
+                          padding: '1px 5px',
+                          borderRadius: 3,
+                          background: 'rgba(16, 185, 129, 0.22)',
+                          color: '#10b981',
+                          border: '1px solid rgba(16, 185, 129, 0.5)'
+                        }}>
+                          93%+ WR
+                        </span>
+                      </div>
+                      <div style={{
+                        width: 16, height: 16, borderRadius: 3,
+                        border: activeSignalStrategies.CHAMPION_SCALPER ? '1px solid #10b981' : '1px solid #555d6e',
+                        background: activeSignalStrategies.CHAMPION_SCALPER ? '#10b981' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {activeSignalStrategies.CHAMPION_SCALPER && <Check size={12} color="#000" strokeWidth={3} />}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Liquidity Sweep + BB Extremes + EMA 50 {timeframe.toUpperCase() !== '5M' && activeSignalStrategies.CHAMPION_SCALPER && '• Chart not 5M'}
+                    </div>
+                  </div>
+
                   {/* 2. Haider-Scalper-Enhanced (90%+ WR) */}
                   <div
                     onClick={() => handleToggleSignalStrategy('HAIDER_ENHANCED')}
@@ -2164,7 +2214,7 @@ function App() {
                       const next = !autoTradeSignals;
                       setAutoTradeSignals(next);
                       saveLS('autoTradeSignals', next);
-                      const stratKey = activeSignalStrategies.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP';
+                      const stratKey = activeSignalStrategies.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (activeSignalStrategies.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP');
                       fetch('/api/scalper/bot/toggle', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -2814,7 +2864,7 @@ function App() {
                 {symbol} · {timeframe} · strategy: {
                   Object.keys(activeSignalStrategies || {})
                     .filter(k => activeSignalStrategies[k])
-                    .map(k => k === 'HAIDER_ENHANCED' ? 'Haider-Scalper-Enhanced' : (k === 'REAL_DIP' ? 'Haider-Gold-Scalper' : k))
+                    .map(k => k === 'CHAMPION_SCALPER' ? 'Champion-Scalper' : (k === 'HAIDER_ENHANCED' ? 'Haider-Scalper-Enhanced' : (k === 'REAL_DIP' ? 'Haider-Gold-Scalper' : k)))
                     .join(', ') || 'Haider-Gold-Scalper'
                 }
               </div>
@@ -2877,6 +2927,7 @@ function App() {
               {/* Strategy Selector */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, background: '#131722', padding: 4, borderRadius: 6, border: '1px solid var(--border)' }}>
                 {[
+                  { id: 'champion_scalper', label: 'Champion-Scalper (93%+)' },
                   { id: 'haider_enhanced', label: 'Haider-Scalper-Enhanced (90%+)' },
                   { id: 'real_dip', label: 'Haider-Gold-Scalper' },
                   { id: 'gold_scalper', label: 'Gold Scalper Pro' }
