@@ -1145,10 +1145,9 @@ def backtest_haider_enhanced():
         return jsonify({"error": str(e)}), 500
 
 
-@app.route("/api/backtest/tayyab_enhanced", methods=["GET"])
 @app.route("/api/backtest/champion_scalper", methods=["GET"])
-def backtest_tayyab_enhanced():
-    """Run Tayyab-Scalper-Enhanced (4-Bar Microstructure Sweep + 0.18x Anti-Hunt SL + 3.20x TP2) on MT5 history."""
+def backtest_champion_scalper():
+    """Run original Champion-Scalper (8-bar sweep, 0.65x impulse, 0.22x wick, 0.25x SL, 2.00x TP2)."""
     if not init_mt5():
         return jsonify({"error": "MT5 not connected"}), 500
 
@@ -1183,24 +1182,88 @@ def backtest_tayyab_enhanced():
         from enhanced_scalper_bt import backtest as _bt_enh
         res = _bt_enh(
             bars,
-            atr_len=int(request.args.get("atr_len", 14)),
-            impulse_mult=float(request.args.get("impulse_mult", 0.45)),
-            rsi_len=int(request.args.get("rsi_len", 14)),
-            rsi_buy_level=float(request.args.get("rsi_buy", 30.0)),
-            rsi_sell_level=float(request.args.get("rsi_sell", 70.0)),
-            target_level=float(request.args.get("target_level", 80.0)),
-            sl_buffer=float(request.args.get("sl_buffer", 0.18)),
-            min_wick_ratio=float(request.args.get("min_wick_ratio", 0.18)),
+            atr_len=14,
+            impulse_mult=0.65,
+            rsi_len=14,
+            rsi_buy_level=30.0,
+            rsi_sell_level=70.0,
+            target_level=80.0,
+            sl_buffer=0.25,
+            min_wick_ratio=0.22,
             skip_rollover=True,
             lot_size=float(request.args.get("lot_size", 0.10)),
             mintick=mintick,
             tick_value=tick_value,
-            sweep_lookback=int(request.args.get("sweep_lookback", 4)),
+            sweep_lookback=8,
             use_trend_filter=True,
-            tp1_atr_mult=float(request.args.get("tp1_mult", 0.25)),
-            tp2_atr_mult=float(request.args.get("tp2_mult", 3.20)),
+            tp1_atr_mult=0.22,
+            tp2_atr_mult=2.00,
             trail_runner=True
         )
+        res["strategy"] = "Champion-Scalper"
+        res["symbol"] = symbol
+        res["timeframe"] = tf_str
+        return jsonify(res)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/backtest/tayyab_enhanced", methods=["GET"])
+def backtest_tayyab_enhanced():
+    """Run upgraded Tayyab-Scalper-Enhanced (4-Bar Microstructure Sweep + 0.18x Anti-Hunt SL + 3.20x TP2) on MT5 history."""
+    if not init_mt5():
+        return jsonify({"error": "MT5 not connected"}), 500
+
+    raw_symbol = request.args.get("symbol", "XAUUSD")
+    symbol = resolve_broker_symbol(raw_symbol)
+    tf_str = request.args.get("timeframe", "5M")
+    bars_n = int(request.args.get("bars", 3000))
+
+    tf_const = TF_MAP.get(tf_str)
+    if tf_const is None:
+        alt = {"H1": "1H", "H4": "4H", "D1": "1D", "M1": "1M", "M5": "5M",
+               "M15": "15M", "M30": "30M", "W1": "1W"}.get(tf_str)
+        tf_const = TF_MAP.get(alt) if alt else None
+    if tf_const is None:
+        return jsonify({"error": f"Invalid timeframe: {tf_str}"}), 400
+
+    with mt5_lock:
+        if not mt5.symbol_select(symbol, True):
+            return jsonify({"error": f"Symbol not found: {symbol}"}), 404
+        info = mt5.symbol_info(symbol)
+        mintick = float(info.point) if (info and info.point) else float(request.args.get("mintick", 0.01))
+        tick_value = float(info.trade_tick_value) if (info and info.trade_tick_value) else 1.0
+        rates = mt5.copy_rates_from_pos(symbol, tf_const, 0, bars_n)
+
+    if rates is None or len(rates) == 0:
+        return jsonify({"error": "No history returned from MT5"}), 404
+
+    bars = [(int(r["time"]), float(r["open"]), float(r["high"]),
+             float(r["low"]), float(r["close"])) for r in rates]
+
+    try:
+        from enhanced_scalper_bt import backtest as _bt_enh
+        res = _bt_enh(
+            bars,
+            atr_len=14,
+            impulse_mult=0.45,
+            rsi_len=14,
+            rsi_buy_level=30.0,
+            rsi_sell_level=70.0,
+            target_level=80.0,
+            sl_buffer=0.18,
+            min_wick_ratio=0.18,
+            skip_rollover=True,
+            lot_size=float(request.args.get("lot_size", 0.10)),
+            mintick=mintick,
+            tick_value=tick_value,
+            sweep_lookback=4,
+            use_trend_filter=True,
+            tp1_atr_mult=0.25,
+            tp2_atr_mult=3.20,
+            trail_runner=True
+        )
+        res["strategy"] = "Tayyab-Scalper-Enhanced"
         res["symbol"] = symbol
         res["timeframe"] = tf_str
         return jsonify(res)
