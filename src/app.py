@@ -53,7 +53,10 @@ PORT = int(os.environ.get("PORT", 5000))
 # (drive-by CSRF against a money-moving localhost server).
 ALLOWED_ORIGINS = [
     "http://127.0.0.1:5000", "http://localhost:5000",
+    "http://127.0.0.1:5001", "http://localhost:5001",
     "http://127.0.0.1:5173", "http://localhost:5173",
+    "http://127.0.0.1:5174", "http://localhost:5174",
+    f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}",
 ]
 custom_origin = os.environ.get("ALLOWED_ORIGIN")
 if custom_origin and custom_origin not in ALLOWED_ORIGINS:
@@ -2335,4 +2338,4 @@ if __name__ == "__main__":
         bot.start()
     except Exception as _b_err:
         print(f"[SCALPER_BOT] Startup warning: {_b_err}", flush=True)
-    socketio.run(app, host=HOST, port=PORT, debug=True, use_reloader=False)
+    socketio.run(app, host=HOST, port=PORT, debug=True, use_reloader=False, allow_unsafe_werkzeug=True)

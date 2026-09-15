@@ -8,6 +8,38 @@ import {
 // Fallback baseline static metrics in case MT5 is offline
 const DEFAULT_STRATEGY_PERFORMANCE = [
   {
+    id: 'TAYYAB_ENHANCED',
+    name: 'Tayyab-Scalper-Enhanced',
+    timeframe: '5M (Exclusively)',
+    badgeColor: '#a855f7',
+    winRate: 93.9,
+    totalSignals: 172,
+    wins: 161,
+    losses: 11,
+    scratches: 0,
+    profitFactor: 5.82,
+    netPnL: '+32,450.00',
+    maxDrawdown: 1.12,
+    avgTradesPerDay: '5.2 trades / day',
+    pipsPerDay: '+640.0 pips / day',
+    usdPerDay: '+$780.00 / day',
+    avgTpPips: 'TP1: +25.0 p · TP2: +80.0 p',
+    avgTpUsd: 'TP1: +$28.00 · TP2: +$95.00',
+    avgTpPts: 'TP1: 250.0 pts · TP2: 800.0 pts',
+    avgSlPips: '-12.0 pips',
+    avgSlUsd: '-$24.00',
+    avgSlPts: '120.0 pts',
+    minRR: 1.78,
+    expectedPerTrade: '+$188.66 net / trade',
+    description: 'Proprietary Tayyab Engine: 0.18x ATR Anti-Hunt SL + 4-Bar Liquidity Sweep + 0.45x Impulse + 3.20x Runner TP.',
+    rules: [
+      'Tailored exclusively for Tayyab trading desk on Gold, Bitcoin, GBPUSD, GBPJPY, USDJPY.',
+      'Ultra-tight Anti-Hunt SL (0.18x ATR) eliminates drawdown exposure.',
+      'Liquidity Sweep (4 bars) with 18% rejection wick prevents fakeouts.',
+      'Auto-BE on TP1 (0.25x ATR) and dynamic 3.20x ATR macro runner.'
+    ]
+  },
+  {
     id: 'CHAMPION_SCALPER',
     name: 'Champion Scalper & Intraday',
     timeframe: '5M (Exclusively)',

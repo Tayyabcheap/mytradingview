@@ -58,7 +58,7 @@ def get_champion_config(symbol: str) -> Dict[str, Any]:
 
 
 class ScalperBot:
-    ALLOWED_STRATEGIES = ("CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP")
+    ALLOWED_STRATEGIES = ("TAYYAB_ENHANCED", "CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP")
 
     def __init__(self, store=None, mt5_lock: Optional[threading.RLock] = None):
         self.store = store or app_store
@@ -66,7 +66,7 @@ class ScalperBot:
         
         # Configuration
         self.enabled = False
-        self.strategy = "HAIDER_ENHANCED"  # default strategy
+        self.strategy = "TAYYAB_ENHANCED"  # default strategy
         self.symbols = list(DEFAULT_SYMBOLS)
         self.max_instruments = MAX_INSTRUMENTS
         self.timeframe_str = "5M"
@@ -76,6 +76,17 @@ class ScalperBot:
 
         # Isolated Per-Strategy Configurations (instruments & lot sizes)
         self.strategy_configs: Dict[str, Dict[str, Any]] = {
+            "TAYYAB_ENHANCED": {
+                "enabled": True,
+                "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm", "GBPJPYm", "USDJPYm"],
+                "symbol_lot_sizes": {
+                    "BTCUSDm": 1.0,
+                    "XAUUSDm": 0.10,
+                    "GBPUSDm": 0.10,
+                    "GBPJPYm": 0.10,
+                    "USDJPYm": 0.10
+                }
+            },
             "HAIDER_ENHANCED": {
                 "enabled": False,
                 "symbols": ["XAUUSDm"],
@@ -131,7 +142,7 @@ class ScalperBot:
                 saved = {}
             if "enabled" in saved:
                 self.enabled = bool(saved.get("enabled", False))
-            if "strategy" in saved and saved["strategy"] in ("CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
+            if "strategy" in saved and saved["strategy"] in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
                 self.strategy = saved["strategy"]
             if "lot_size" in saved:
                 self.lot_size = float(saved.get("lot_size", 0.10))
@@ -139,7 +150,7 @@ class ScalperBot:
             # Merge per-strategy configurations
             saved_strat_configs = self.store.get("settings", "strategy_configs")
             if isinstance(saved_strat_configs, dict):
-                for k in ("HAIDER_ENHANCED", "CHAMPION_SCALPER"):
+                for k in ("TAYYAB_ENHANCED", "HAIDER_ENHANCED", "CHAMPION_SCALPER"):
                     if k in saved_strat_configs and isinstance(saved_strat_configs[k], dict):
                         self.strategy_configs[k].update(saved_strat_configs[k])
                         for sym, l in list(self.strategy_configs[k].get("symbol_lot_sizes", {}).items()):
@@ -234,7 +245,7 @@ class ScalperBot:
         """Update bot configuration, active pairs (up to 10), per-instrument lot sizes, and persist."""
         if enabled is not None:
             self.enabled = bool(enabled)
-        if strategy in ("CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
+        if strategy in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
             self.strategy = strategy
         if lot_size is not None:
             # Strictly cap Gold at 1.0
@@ -406,6 +417,7 @@ class ScalperBot:
             "lot_size": self.lot_size,
             "symbol_lot_sizes": self.symbol_lot_sizes,
             "strategy_configs": self.strategy_configs,
+            "tayyab_enhanced": self.strategy_configs.get("TAYYAB_ENHANCED", {}),
             "haider_enhanced": self.strategy_configs.get("HAIDER_ENHANCED", {}),
             "champion_scalper": self.strategy_configs.get("CHAMPION_SCALPER", {}),
             "max_gold_lot": self.max_gold_lot,
@@ -451,12 +463,14 @@ class ScalperBot:
         while not self._stop_event.is_set():
             try:
                 # Check active status of strategies
+                tayyab_cfg = self.strategy_configs.get("TAYYAB_ENHANCED", {})
                 haider_cfg = self.strategy_configs.get("HAIDER_ENHANCED", {})
                 champ_cfg = self.strategy_configs.get("CHAMPION_SCALPER", {})
+                tayyab_on = tayyab_cfg.get("enabled", False)
                 haider_on = haider_cfg.get("enabled", False)
                 champ_on = champ_cfg.get("enabled", False)
 
-                if not self.enabled and not haider_on and not champ_on:
+                if not self.enabled and not tayyab_on and not haider_on and not champ_on:
                     self.status_message = "STANDBY (Disabled by User)"
                     self._stop_event.wait(3.0)
                     continue
@@ -487,6 +501,10 @@ class ScalperBot:
 
                 # Build active execution items: (strategy_key, symbol, lot_size)
                 active_plans = []
+                if tayyab_on:
+                    for s in tayyab_cfg.get("symbols", []):
+                        lot = tayyab_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
+                        active_plans.append(("TAYYAB_ENHANCED", s, lot))
                 if haider_on:
                     for s in haider_cfg.get("symbols", []):
                         lot = haider_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
@@ -632,7 +650,7 @@ class ScalperBot:
         lower_wick = (min(o, c) - l) / crange
         upper_wick = (h - max(o, c)) / crange
 
-        if active_strat == "CHAMPION_SCALPER":
+        if active_strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER"):
             sym_cfg = get_champion_config(broker_sym)
             sweep_req = sym_cfg.get("sweep_lookback", 4)
             req_impulse = sym_cfg.get("impulse_mult", 0.45)
@@ -677,7 +695,7 @@ class ScalperBot:
             if is_sell and not trend_bear and curr_rsi <= 74.0:
                 is_sell = False
 
-            strat_name = "Champion-Scalper"
+            strat_name = "Tayyab-Scalper-Enhanced" if active_strat == "TAYYAB_ENHANCED" else "Champion-Scalper"
             sl_buffer_mult = sym_cfg["sl_mult"]
             tp1_atr_mult = sym_cfg["tp1_mult"]
             tp2_atr_mult = sym_cfg["tp2_mult"]
@@ -700,7 +718,7 @@ class ScalperBot:
 
         if is_sell:
             entry = float(current_bar["open"])
-            if active_strat == "CHAMPION_SCALPER":
+            if active_strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER"):
                 tp1 = entry - (curr_atr * tp1_atr_mult)
                 sl = h + (curr_atr * sl_buffer_mult)
             else:
@@ -756,7 +774,7 @@ class ScalperBot:
 
         elif is_buy:
             entry = float(current_bar["open"])
-            if active_strat == "CHAMPION_SCALPER":
+            if active_strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER"):
                 tp1 = entry + (curr_atr * tp1_atr_mult)
                 sl = l - (curr_atr * sl_buffer_mult)
             else:
@@ -824,10 +842,10 @@ class ScalperBot:
         total_lot = min(self.max_gold_lot, raw_lot) if is_gold else raw_lot
         total_lot = max(0.01, round(total_lot, 2))
 
-        strat = "CHAMPION_SCALPER" if ("Champion" in strategy_name or strategy_name == "CHAMPION_SCALPER") else ("HAIDER_ENHANCED" if "Enhanced" in strategy_name or strategy_name == "HAIDER_ENHANCED" else self.strategy)
+        strat = "TAYYAB_ENHANCED" if ("Tayyab" in strategy_name or strategy_name == "TAYYAB_ENHANCED") else ("CHAMPION_SCALPER" if ("Champion" in strategy_name or strategy_name == "CHAMPION_SCALPER") else ("HAIDER_ENHANCED" if "Enhanced" in strategy_name or strategy_name == "HAIDER_ENHANCED" else self.strategy))
         direction = 1 if signal_type == "BUY" else -1
         t_dist = abs(tp1 - entry)
-        if strat == "CHAMPION_SCALPER":
+        if strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER"):
             sym_cfg = get_champion_config(symbol)
             ratio = (sym_cfg["tp2_mult"] / sym_cfg["tp1_mult"]) if sym_cfg.get("tp1_mult") else 8.0
             tp2 = (entry + t_dist * ratio) if direction == 1 else max(0.001, entry - t_dist * ratio)
@@ -837,8 +855,10 @@ class ScalperBot:
             trail_active = False
 
         # Tranche volume calculation
-        is_multi_tranche = (strat in ("CHAMPION_SCALPER", "HAIDER_ENHANCED"))
-        if strat == "CHAMPION_SCALPER":
+        is_multi_tranche = (strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER", "HAIDER_ENHANCED"))
+        if strat == "TAYYAB_ENHANCED":
+            base_label = "Tayyab-Enhanced"
+        elif strat == "CHAMPION_SCALPER":
             base_label = "Champion-Scalp"
         elif strat == "HAIDER_ENHANCED":
             base_label = "Haider-Enhanced"

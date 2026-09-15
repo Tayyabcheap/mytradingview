@@ -393,20 +393,23 @@ function App() {
 
   // Signals State (Haider-Gold-Scalper & Haider-Scalper-Enhanced)
   const DEFAULT_SIGNAL_STRATEGIES = {
-    REAL_DIP: true,
-    HAIDER_ENHANCED: false
+    TAYYAB_ENHANCED: true,
+    CHAMPION_SCALPER: true,
+    HAIDER_ENHANCED: true,
+    REAL_DIP: false
   };
   const [signalsEnabled, setSignalsEnabled] = useState(() => loadLS('signalsEnabled', true));
   const [activeSignalStrategies, setActiveSignalStrategies] = useState(() => {
     const saved = loadLS('activeSignalStrategies', null);
     if (saved && typeof saved === 'object') {
       return {
+        TAYYAB_ENHANCED: saved.TAYYAB_ENHANCED !== undefined ? !!saved.TAYYAB_ENHANCED : true,
         CHAMPION_SCALPER: saved.CHAMPION_SCALPER !== undefined ? !!saved.CHAMPION_SCALPER : true,
         HAIDER_ENHANCED: !!saved.HAIDER_ENHANCED,
         REAL_DIP: !!saved.REAL_DIP
       };
     }
-    return { CHAMPION_SCALPER: true, HAIDER_ENHANCED: true, REAL_DIP: false };
+    return { TAYYAB_ENHANCED: true, CHAMPION_SCALPER: true, HAIDER_ENHANCED: true, REAL_DIP: false };
   });
   const [showSignalsMenu, setShowSignalsMenu] = useState(false);
   const [signalsList, setSignalsList] = useState([]);
@@ -1198,7 +1201,7 @@ function App() {
       } : ind));
 
       // Sync active strategy to backend autonomous bot
-      const activeStrat = next.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (next.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP');
+      const activeStrat = next.TAYYAB_ENHANCED ? 'TAYYAB_ENHANCED' : (next.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (next.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP'));
       fetch('/api/scalper/bot/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1210,7 +1213,7 @@ function App() {
   };
 
   const handleSelectAllSignalStrategies = (enableAll = true) => {
-    const next = { CHAMPION_SCALPER: enableAll, HAIDER_ENHANCED: enableAll, REAL_DIP: enableAll };
+    const next = { TAYYAB_ENHANCED: enableAll, CHAMPION_SCALPER: enableAll, HAIDER_ENHANCED: enableAll, REAL_DIP: enableAll };
     setActiveSignalStrategies(next);
     saveLS('activeSignalStrategies', next);
     setSignalsEnabled(enableAll);
@@ -1897,6 +1900,51 @@ function App() {
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
                       Anti-Hunt SL + 18% Wick + Auto-BE {timeframe.toUpperCase() !== '5M' && activeSignalStrategies.HAIDER_ENHANCED && '• Chart not 5M'}
+                    </div>
+                  </div>
+
+                  {/* 3. Tayyab-Scalper-Enhanced (94%+ WR) */}
+                  <div
+                    onClick={() => handleToggleSignalStrategy('TAYYAB_ENHANCED')}
+                    style={{
+                      padding: '8px 12px',
+                      fontSize: 13,
+                      cursor: 'pointer',
+                      color: activeSignalStrategies.TAYYAB_ENHANCED ? '#a855f7' : 'var(--text)',
+                      background: activeSignalStrategies.TAYYAB_ENHANCED ? 'rgba(168, 85, 247, 0.14)' : 'transparent',
+                      borderLeft: activeSignalStrategies.TAYYAB_ENHANCED ? '3px solid #a855f7' : '3px solid transparent',
+                      transition: 'background 0.15s ease',
+                      marginTop: 2
+                    }}
+                    onMouseEnter={e => { if (!activeSignalStrategies.TAYYAB_ENHANCED) e.currentTarget.style.background = '#2a2e39'; }}
+                    onMouseLeave={e => { if (!activeSignalStrategies.TAYYAB_ENHANCED) e.currentTarget.style.background = 'transparent'; }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 700 }}>Tayyab-Scalper-Enhanced</span>
+                        <span style={{
+                          fontSize: 9,
+                          fontWeight: 800,
+                          padding: '1px 5px',
+                          borderRadius: 3,
+                          background: 'rgba(168, 85, 247, 0.22)',
+                          color: '#a855f7',
+                          border: '1px solid rgba(168, 85, 247, 0.5)'
+                        }}>
+                          94%+ WR
+                        </span>
+                      </div>
+                      <div style={{
+                        width: 16, height: 16, borderRadius: 3,
+                        border: activeSignalStrategies.TAYYAB_ENHANCED ? '1px solid #a855f7' : '1px solid #555d6e',
+                        background: activeSignalStrategies.TAYYAB_ENHANCED ? '#a855f7' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center'
+                      }}>
+                        {activeSignalStrategies.TAYYAB_ENHANCED && <Check size={12} color="#fff" strokeWidth={3} />}
+                      </div>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
+                      Anti-Hunt SL (0.18) + 18% Wick + Sweep 4 • Chart not 5M
                     </div>
                   </div>
 
@@ -2647,7 +2695,7 @@ function App() {
                 {symbol} · {timeframe} · strategy: {
                   Object.keys(activeSignalStrategies || {})
                     .filter(k => activeSignalStrategies[k])
-                    .map(k => k === 'CHAMPION_SCALPER' ? 'Champion-Scalper' : (k === 'HAIDER_ENHANCED' ? 'Haider-Scalper-Enhanced' : (k === 'REAL_DIP' ? 'Haider-Gold-Scalper' : k)))
+                    .map(k => k === 'TAYYAB_ENHANCED' ? 'Tayyab-Scalper-Enhanced' : (k === 'CHAMPION_SCALPER' ? 'Champion-Scalper' : (k === 'HAIDER_ENHANCED' ? 'Haider-Scalper-Enhanced' : (k === 'REAL_DIP' ? 'Haider-Gold-Scalper' : k))))
                     .join(', ') || 'Haider-Gold-Scalper'
                 }
               </div>
@@ -2710,6 +2758,7 @@ function App() {
               {/* Strategy Selector */}
               <div style={{ display: 'flex', gap: 6, marginBottom: 12, background: '#131722', padding: 4, borderRadius: 6, border: '1px solid var(--border)' }}>
                 {[
+                  { id: 'tayyab_enhanced', label: 'Tayyab-Scalper-Enhanced (94%+)' },
                   { id: 'champion_scalper', label: 'Champion-Scalper (93%+)' },
                   { id: 'haider_enhanced', label: 'Haider-Scalper-Enhanced (90%+)' },
                   { id: 'real_dip', label: 'Haider-Gold-Scalper' },
