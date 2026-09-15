@@ -38,17 +38,19 @@ logger = logging.getLogger("scalper_bot")
 logger.setLevel(logging.INFO)
 
 MAX_INSTRUMENTS = 10
-DEFAULT_SYMBOLS = ["XAUUSDc"]
+DEFAULT_SYMBOLS = ["XAUUSDm", "BTCUSDm", "GBPUSDm", "USDJPYm", "EURUSDm"]
 
 
 class ScalperBot:
+    ALLOWED_STRATEGIES = ("CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP")
+
     def __init__(self, store=None, mt5_lock: Optional[threading.RLock] = None):
         self.store = store or app_store
         self.mt5_lock = mt5_lock or threading.RLock()
         
         # Configuration
         self.enabled = False
-        self.strategy = "HAIDER_ENHANCED"  # "HAIDER_ENHANCED" or "REAL_DIP"
+        self.strategy = "CHAMPION_SCALPER"  # "CHAMPION_SCALPER", "HAIDER_ENHANCED", or "REAL_DIP"
         self.symbols = list(DEFAULT_SYMBOLS)
         self.max_instruments = MAX_INSTRUMENTS
         self.timeframe_str = "5M"
@@ -93,7 +95,7 @@ class ScalperBot:
                 saved = {}
             if "enabled" in saved:
                 self.enabled = bool(saved.get("enabled", False))
-            if "strategy" in saved and saved["strategy"] in ("HAIDER_ENHANCED", "REAL_DIP"):
+            if "strategy" in saved and saved["strategy"] in ("CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
                 self.strategy = saved["strategy"]
             if "lot_size" in saved:
                 self.lot_size = float(saved.get("lot_size", 0.10))
@@ -181,7 +183,7 @@ class ScalperBot:
         """Update bot configuration, active pairs (up to 10), per-instrument lot sizes, and persist."""
         if enabled is not None:
             self.enabled = bool(enabled)
-        if strategy in ("HAIDER_ENHANCED", "REAL_DIP"):
+        if strategy in ("CHAMPION_SCALPER", "HAIDER_ENHANCED", "REAL_DIP"):
             self.strategy = strategy
         if lot_size is not None:
             # Strictly cap Gold at 1.0
@@ -467,25 +469,79 @@ class ScalperBot:
         if crange <= 0:
             return
 
-        if self.strategy == "HAIDER_ENHANCED":
-            lower_wick = (min(o, c) - l) / crange
-            upper_wick = (h - max(o, c)) / crange
+        lower_wick = (min(o, c) - l) / crange
+        upper_wick = (h - max(o, c)) / crange
 
+        if self.strategy == "CHAMPION_SCALPER":
+            # 1. Microstructure Liquidity Sweep (8-bar lookback)
+            sweep_n = min(8, n - 1)
+            prev_highs = highs[-1 - sweep_n:-1]
+            prev_lows = lows[-1 - sweep_n:-1]
+            swept_high = (h > max(prev_highs)) if prev_highs else True
+            swept_low = (l < min(prev_lows)) if prev_lows else True
+
+            # 2. 20-period Bollinger Band extremes
+            bb_upper = None
+            bb_lower = None
+            if n >= 20:
+                w = closes[-20:]
+                m = sum(w) / 20.0
+                s = math.sqrt(sum((x - m) ** 2 for x in w) / 20.0)
+                bb_upper = m + 1.8 * s
+                bb_lower = m - 1.8 * s
+
+            bb_lower_hit = (l <= bb_lower) if bb_lower is not None else True
+            bb_upper_hit = (h >= bb_upper) if bb_upper is not None else True
+
+            # 3. 50 EMA & 200 EMA trend alignment
+            trend_bull = True
+            trend_bear = True
+            if n >= 50:
+                k50 = 2.0 / 51.0
+                ema50 = closes[0]
+                for val in closes[1:]:
+                    ema50 = val * k50 + ema50 * (1.0 - k50)
+                trend_bull = c > ema50
+                trend_bear = c < ema50
+
+            is_buy = (c < o) and (cbody >= curr_atr * 0.65) and (lower_wick >= 0.22) and (curr_rsi <= 30.0) and bb_lower_hit and swept_low
+            is_sell = (c > o) and (cbody >= curr_atr * 0.65) and (upper_wick >= 0.22) and (curr_rsi >= 70.0) and bb_upper_hit and swept_high
+
+            if is_buy and not trend_bull and curr_rsi >= 26.0:
+                is_buy = False
+            if is_sell and not trend_bear and curr_rsi <= 74.0:
+                is_sell = False
+
+            strat_name = "Champion-Scalper"
+            sl_buffer_mult = 0.25
+            tp1_atr_mult = 0.20
+            tp2_atr_mult = 1.60
+
+        elif self.strategy == "HAIDER_ENHANCED":
             is_buy = (c < o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi < self.rsi_buy_level) and (lower_wick >= self.min_wick_ratio)
             is_sell = (c > o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi > self.rsi_sell_level) and (upper_wick >= self.min_wick_ratio)
             sl_buffer_mult = self.sl_buffer  # 1.35x ATR
+            strat_name = "Haider-Scalper-Enhanced"
+            tp1_atr_mult = None
+            tp2_atr_mult = 2.2
         else:
             # Baseline REAL_DIP
             is_buy = (c < o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi < self.rsi_buy_level)
             is_sell = (c > o) and (cbody > curr_atr * self.impulse_mult) and (curr_rsi > self.rsi_sell_level)
             sl_buffer_mult = 1.0
-
-        strat_name = "Haider-Scalper-Enhanced" if self.strategy == "HAIDER_ENHANCED" else "Haider-Gold-Scalper"
+            strat_name = "Haider-Gold-Scalper"
+            tp1_atr_mult = None
+            tp2_atr_mult = 2.2
 
         if is_sell:
             entry = float(current_bar["open"])
-            tp1 = h - (crange * (self.target_level / 100.0))
-            sl = h + (curr_atr * sl_buffer_mult)
+            if self.strategy == "CHAMPION_SCALPER":
+                tp1 = entry - (curr_atr * tp1_atr_mult)
+                sl = h + (curr_atr * sl_buffer_mult)
+            else:
+                tp1 = h - (crange * (self.target_level / 100.0))
+                sl = h + (curr_atr * sl_buffer_mult)
+
             sym_state["setup_state"] = 1
             sym_state["setup_high"] = h
             sym_state["setup_low"] = l
@@ -514,8 +570,13 @@ class ScalperBot:
 
         elif is_buy:
             entry = float(current_bar["open"])
-            tp1 = l + (crange * (self.target_level / 100.0))
-            sl = l - (curr_atr * sl_buffer_mult)
+            if self.strategy == "CHAMPION_SCALPER":
+                tp1 = entry + (curr_atr * tp1_atr_mult)
+                sl = l - (curr_atr * sl_buffer_mult)
+            else:
+                tp1 = l + (crange * (self.target_level / 100.0))
+                sl = l - (curr_atr * sl_buffer_mult)
+
             sym_state["setup_state"] = -1
             sym_state["setup_high"] = h
             sym_state["setup_low"] = l
@@ -554,13 +615,21 @@ class ScalperBot:
 
         direction = 1 if signal_type == "BUY" else -1
         t_dist = abs(tp1 - entry)
-        tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.001, entry - t_dist * 2.2)
+        if self.strategy == "CHAMPION_SCALPER":
+            tp2 = (entry + t_dist * 8.0) if direction == 1 else max(0.001, entry - t_dist * 8.0)
+        else:
+            tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.001, entry - t_dist * 2.2)
 
         # Tranche volume calculation
-        is_enhanced = (self.strategy == "HAIDER_ENHANCED")
-        base_label = "Haider-Enhanced" if is_enhanced else "Haider-Gold"
+        is_multi_tranche = (self.strategy in ("CHAMPION_SCALPER", "HAIDER_ENHANCED"))
+        if self.strategy == "CHAMPION_SCALPER":
+            base_label = "Champion-Scalp"
+        elif self.strategy == "HAIDER_ENHANCED":
+            base_label = "Haider-Enhanced"
+        else:
+            base_label = "Haider-Gold"
 
-        if total_lot >= 0.02 and is_enhanced:
+        if total_lot >= 0.02 and is_multi_tranche:
             tranche_1_vol = round(total_lot * 0.5, 2)
             tranche_2_vol = round(total_lot - tranche_1_vol, 2)
             orders_to_place = [

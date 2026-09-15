@@ -62,6 +62,7 @@ backend.log
 _backup*/
 _to_delete/
 _bt_out.txt
+scratch/
 
 # ─── Internal Notes, Handover & Non-Mandatory Artifacts ────────────────
 Claude outputs/

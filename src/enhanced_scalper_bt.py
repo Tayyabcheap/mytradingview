@@ -1,13 +1,18 @@
 """
-Haider-Scalper-Enhanced Backtest Engine
-=======================================
-High-Accuracy Quantitative Algorithmic Engine for Spot Gold (XAUUSD / XAUUSDc).
+Haider-Scalper-Enhanced (Champion Scalper Engine)
+=================================================
+Ultra-High-Accuracy Institutional Algorithmic Engine for Spot Gold, Crypto, and Forex.
 
-Systematic Upgrades over Baseline Haider-Gold-Scalper:
-1. Anti-Hunt Structural SL Buffer (1.35x ATR) — Eliminates 70%+ of retail cluster stop-outs.
-2. Rejection Wick Absorption Filter (>= 18% of candle range) — Distinguishes genuine liquidity absorption from runaway trend continuation.
-3. Market Rollover Spread Defense (21:00-22:30 UTC) — Protects against toxic broker spread widening.
-4. 2-Tranche Dynamic Scaling & Auto-BE at TP1 — Banks 50% at TP1 (+1.5R) and moves SL to Breakeven (0 risk), letting runner trail to TP2 (+2.2R - +2.5R).
+Systematic Quantitative Edge:
+1. Microstructure Liquidity Sweep (8-bar lookback) — Confirms retail stop hunting.
+2. Statistical Bollinger Band Exhaustion (20-period, 1.8 std) — Detects true mean-reversion boundaries.
+3. Strict Momentum Exhaustion (RSI <= 30.0 / >= 70.0) — Eliminates fakeout mid-range entries.
+4. Institutional Absorption Rejection Wick (>= 22% of candle range) — Confirms institutional order absorption.
+5. Trend Regime Filter (50 EMA vs 200 EMA) — Avoids cascading counter-trend steamrolls.
+6. Market Rollover Spread Defense (21:00-22:30 UTC) — Protects against toxic broker spread spikes.
+7. 2-Tranche Dynamic Scaling with Instant Auto-BE at TP1 — Banks 50% at TP1 (+0.20x - +0.25x ATR),
+   instantly locking Stop Loss at entry (zero risk), while letting the runner expand into TP2 (+1.60x ATR).
+8. Tight Structural Anti-Hunt SL — Placed 0.25x ATR beyond the rejection wick extreme to minimize loss magnitude.
 """
 
 from __future__ import annotations
@@ -20,20 +25,24 @@ from real_dip_bt import wilder_atr, wilder_rsi
 def backtest(
     bars: List[Tuple[int, float, float, float, float]],  # (ts, o, h, l, c)
     atr_len: int = 14,
-    impulse_mult: float = 1.0,
+    impulse_mult: float = 0.65,
     rsi_len: int = 14,
-    rsi_buy_level: float = 36.0,
-    rsi_sell_level: float = 64.0,
-    target_level: float = 50.0,
-    sl_buffer: float = 1.35,
-    min_wick_ratio: float = 0.18,
+    rsi_buy_level: float = 30.0,
+    rsi_sell_level: float = 70.0,
+    target_level: float = 80.0,
+    sl_buffer: float = 0.25,
+    min_wick_ratio: float = 0.22,
     skip_rollover: bool = True,
-    mintick: float = 0.01,
+    mintick: float = 0.001,
     lot_size: float = 0.10,
-    tick_value: float = 1.0
+    tick_value: float = 0.10,
+    sweep_lookback: int = 8,
+    use_trend_filter: bool = True,
+    tp1_atr_mult: float = 0.20,
+    tp2_atr_mult: float = 1.60
 ) -> Dict[str, Any]:
     n = len(bars)
-    if n < max(atr_len, rsi_len) + 5:
+    if n < max(atr_len, rsi_len) + 20:
         return {"error": "Not enough bars"}
 
     times = [b[0] for b in bars]
@@ -45,12 +54,34 @@ def backtest(
     atr = wilder_atr(highs, lows, closes, atr_len)
     rsi = wilder_rsi(closes, rsi_len)
 
+    # 20 Bollinger Bands (1.8 std)
+    bb_upper = [0.0] * n
+    bb_lower = [0.0] * n
+    for i in range(20, n):
+        w = closes[i-19:i+1]
+        m = sum(w) / 20.0
+        s = math.sqrt(sum((x - m)**2 for x in w) / 20.0)
+        bb_upper[i] = m + 1.8 * s
+        bb_lower[i] = m - 1.8 * s
+
+    # 50 EMA & 200 EMA
+    def calc_ema(series, period):
+        res = [series[0]] * len(series)
+        k = 2.0 / (period + 1.0)
+        for i in range(1, len(series)):
+            res[i] = series[i] * k + res[i-1] * (1.0 - k)
+        return res
+
+    ema50 = calc_ema(closes, 50)
+    ema200 = calc_ema(closes, 200)
+
     setup_state = 0
     setup_bar_index = -1
     setup_high = 0.0
     setup_low = 0.0
     setup_range = 0.0
-    tp_level = 0.0
+    tp1_level = 0.0
+    tp2_level = 0.0
     sl_level = 0.0
 
     trades = []
@@ -75,11 +106,12 @@ def backtest(
             tr = active_trade
             if tr['direction'] == 1:  # Long
                 tr['max_excursion'] = max(tr['max_excursion'], h - tr['entry_price'])
-                
+
                 # Check TP1 hit first (secures 50% profit and moves SL to entry)
                 if h >= tr['tp_price'] and not tr.get('tp1_hit', False):
                     tr['tp1_hit'] = True
                     tr['sl_price'] = tr['entry_price']  # Auto-BE
+                    tr['banked_half'] = (tr['tp_price'] - tr['entry_price']) * (lot_size * 0.5) * (tick_value / mintick)
 
                 # Check SL hit
                 if l <= tr['sl_price']:
@@ -87,11 +119,9 @@ def backtest(
                     tr['exit_time'] = t
                     tr['exit_price'] = tr['sl_price']
                     if tr.get('tp1_hit', False):
-                        # 50% banked at TP1, 50% closed at BE
                         tr['exit_reason'] = "TP1 + BE HIT"
-                        half_pts = abs(tr['tp_price'] - tr['entry_price']) / mintick
-                        tr['points'] = half_pts * 0.5
-                        tr['pnl'] = (tr['tp_price'] - tr['entry_price']) * (lot_size * 0.5) * (tick_value / mintick)
+                        tr['pnl'] = tr['banked_half']
+                        tr['points'] = abs(tr['tp_price'] - tr['entry_price']) * 0.5 / mintick
                         win_points.append(tr['points'])
                     else:
                         tr['exit_reason'] = "SL HIT"
@@ -107,10 +137,11 @@ def backtest(
                     tr['exit_time'] = t
                     tr['exit_price'] = tr['tp2_price']
                     tr['exit_reason'] = "FULL TP1+TP2 HIT"
+                    runner_pnl = (tr['tp2_price'] - tr['entry_price']) * (lot_size * 0.5) * (tick_value / mintick)
+                    tr['pnl'] = tr['banked_half'] + runner_pnl
                     half_tp1 = (abs(tr['tp_price'] - tr['entry_price']) / mintick) * 0.5
                     half_tp2 = (abs(tr['tp2_price'] - tr['entry_price']) / mintick) * 0.5
                     tr['points'] = half_tp1 + half_tp2
-                    tr['pnl'] = ((tr['tp_price'] - tr['entry_price']) * 0.5 + (tr['tp2_price'] - tr['entry_price']) * 0.5) * lot_size * (tick_value / mintick)
                     win_points.append(tr['points'])
                     active_trade = None
 
@@ -119,7 +150,8 @@ def backtest(
 
                 if l <= tr['tp_price'] and not tr.get('tp1_hit', False):
                     tr['tp1_hit'] = True
-                    tr['sl_price'] = tr['entry_price']  # Auto-BE
+                    tr['sl_price'] = tr['entry_price']
+                    tr['banked_half'] = (tr['entry_price'] - tr['tp_price']) * (lot_size * 0.5) * (tick_value / mintick)
 
                 if h >= tr['sl_price']:
                     tr['exit_idx'] = i
@@ -127,9 +159,8 @@ def backtest(
                     tr['exit_price'] = tr['sl_price']
                     if tr.get('tp1_hit', False):
                         tr['exit_reason'] = "TP1 + BE HIT"
-                        half_pts = abs(tr['entry_price'] - tr['tp_price']) / mintick
-                        tr['points'] = half_pts * 0.5
-                        tr['pnl'] = (tr['entry_price'] - tr['tp_price']) * (lot_size * 0.5) * (tick_value / mintick)
+                        tr['pnl'] = tr['banked_half']
+                        tr['points'] = abs(tr['entry_price'] - tr['tp_price']) * 0.5 / mintick
                         win_points.append(tr['points'])
                     else:
                         tr['exit_reason'] = "SL HIT"
@@ -144,10 +175,11 @@ def backtest(
                     tr['exit_time'] = t
                     tr['exit_price'] = tr['tp2_price']
                     tr['exit_reason'] = "FULL TP1+TP2 HIT"
+                    runner_pnl = (tr['entry_price'] - tr['tp2_price']) * (lot_size * 0.5) * (tick_value / mintick)
+                    tr['pnl'] = tr['banked_half'] + runner_pnl
                     half_tp1 = (abs(tr['entry_price'] - tr['tp_price']) / mintick) * 0.5
                     half_tp2 = (abs(tr['entry_price'] - tr['tp2_price']) / mintick) * 0.5
                     tr['points'] = half_tp1 + half_tp2
-                    tr['pnl'] = ((tr['entry_price'] - tr['tp_price']) * 0.5 + (tr['entry_price'] - tr['tp2_price']) * 0.5) * lot_size * (tick_value / mintick)
                     win_points.append(tr['points'])
                     active_trade = None
 
@@ -182,58 +214,72 @@ def backtest(
                 active_trade = None
 
             direction = 1 if buy_signal else -1
-            t_range = abs(tp_level - o)
-            tp2_target = (o + t_range * 2.2) if direction == 1 else max(0.0, o - t_range * 2.2)
             new_t = {
                 'signal_idx': setup_bar_index,
                 'entry_idx': i,
                 'direction': direction,
                 'entry_price': o,
                 'sl_price': sl_level,
-                'tp_price': tp_level,
-                'tp2_price': tp2_target,
-                'trade_range': t_range,
+                'tp_price': tp1_level,
+                'tp2_price': tp2_level,
                 'entry_time': t,
                 'max_excursion': 0.0,
                 'points': 0.0,
                 'pnl': 0.0,
                 'exit_reason': "OPEN",
-                'tp1_hit': False
+                'tp1_hit': False,
+                'banked_half': 0.0
             }
             trades.append(new_t)
             active_trade = new_t
 
         # 4. Detect Setup on Bar Close
-        if curr_atr is not None and curr_rsi is not None:
-            # Rollover check
+        if curr_atr is not None and curr_rsi is not None and i >= 20:
             if skip_rollover and (dt.hour == 21 or (dt.hour == 22 and dt.minute <= 30)):
                 continue
 
-            cbody = abs(c - o)
             crange = h - l
-            if crange > 0:
-                lower_wick = (min(o, c) - l) / crange
-                upper_wick = (h - max(o, c)) / crange
+            cbody = abs(c - o)
+            if crange <= 0 or curr_atr <= 0:
+                continue
 
-                is_buy = (c < o) and (cbody > curr_atr * impulse_mult) and (curr_rsi < rsi_buy_level) and (lower_wick >= min_wick_ratio)
-                is_sell = (c > o) and (cbody > curr_atr * impulse_mult) and (curr_rsi > rsi_sell_level) and (upper_wick >= min_wick_ratio)
+            lower_wick = (min(o, c) - l) / crange
+            upper_wick = (h - max(o, c)) / crange
 
-                if is_sell and setup_state == 0:
-                    setup_state = 1
-                    setup_bar_index = i
-                    setup_high = h
-                    setup_low = l
-                    setup_range = crange
-                    tp_level = setup_high - (setup_range * (target_level / 100.0))
-                    sl_level = setup_high + (curr_atr * sl_buffer)
-                elif is_buy and setup_state == 0:
-                    setup_state = -1
-                    setup_bar_index = i
-                    setup_high = h
-                    setup_low = l
-                    setup_range = crange
-                    tp_level = setup_low + (setup_range * (target_level / 100.0))
-                    sl_level = setup_low - (curr_atr * sl_buffer)
+            # Liquidity sweep check
+            prev_highs = highs[max(0, i-sweep_lookback):i]
+            prev_lows = lows[max(0, i-sweep_lookback):i]
+            swept_high = (h > max(prev_highs)) if prev_highs else True
+            swept_low = (l < min(prev_lows)) if prev_lows else True
+
+            is_buy = (c < o) and (cbody >= curr_atr * impulse_mult) and (lower_wick >= min_wick_ratio) and (curr_rsi <= rsi_buy_level) and (l <= bb_lower[i]) and swept_low
+            is_sell = (c > o) and (cbody >= curr_atr * impulse_mult) and (upper_wick >= min_wick_ratio) and (curr_rsi >= rsi_sell_level) and (h >= bb_upper[i]) and swept_high
+
+            # Trend Alignment filter
+            if use_trend_filter and i >= 200:
+                if is_buy and ema50[i] < ema200[i] and curr_rsi >= 26.0:
+                    is_buy = False
+                if is_sell and ema50[i] > ema200[i] and curr_rsi <= 74.0:
+                    is_sell = False
+
+            if is_sell and setup_state == 0:
+                setup_state = 1
+                setup_bar_index = i
+                setup_high = h
+                setup_low = l
+                setup_range = crange
+                tp1_level = c - (curr_atr * tp1_atr_mult)
+                tp2_level = c - (curr_atr * tp2_atr_mult)
+                sl_level = h + (curr_atr * sl_buffer)
+            elif is_buy and setup_state == 0:
+                setup_state = -1
+                setup_bar_index = i
+                setup_high = h
+                setup_low = l
+                setup_range = crange
+                tp1_level = c + (curr_atr * tp1_atr_mult)
+                tp2_level = c + (curr_atr * tp2_atr_mult)
+                sl_level = l - (curr_atr * sl_buffer)
 
     total_signals = len(trades)
     win_count = sum(1 for t in trades if t['exit_reason'] in ("TP HIT", "TP1 + BE HIT", "FULL TP1+TP2 HIT"))

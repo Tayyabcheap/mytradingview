@@ -287,6 +287,29 @@ class TestScalperBot(unittest.TestCase):
         self.assertEqual(sent_orders[0]["comment"], "Haider-Gold")
         self.assertLessEqual(len(sent_orders[0]["comment"]), 27)
 
+        # 3. Champion Scalper strategy with 2-tranche split
+        sent_orders.clear()
+        self.bot.strategy = "CHAMPION_SCALPER"
+        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Champion-Scalper")
+        self.assertEqual(len(sent_orders), 2)
+        self.assertEqual(sent_orders[0]["comment"], "Champion-Scalp [TP1]")
+        self.assertEqual(sent_orders[1]["comment"], "Champion-Scalp [Runner]")
+        for order in sent_orders:
+            self.assertLessEqual(len(order["comment"]), 27, f"Comment {order['comment']} exceeds 27 chars!")
+
+    def test_champion_scalper_strategy_initialization_and_symbols(self):
+        """Verify CHAMPION_SCALPER is valid, has 5 default symbols, and config loads properly."""
+        from src.scalper_bot import ScalperBot, DEFAULT_SYMBOLS
+        self.assertIn("CHAMPION_SCALPER", ScalperBot.ALLOWED_STRATEGIES)
+        res = self.bot.configure(strategy="CHAMPION_SCALPER", symbols=DEFAULT_SYMBOLS)
+        self.assertEqual(res["strategy"], "CHAMPION_SCALPER")
+        self.assertEqual(self.bot.strategy, "CHAMPION_SCALPER")
+        self.assertIn("BTCUSDm", self.bot.symbols)
+        self.assertIn("XAUUSDm", self.bot.symbols)
+        self.assertIn("GBPUSDm", self.bot.symbols)
+        self.assertIn("USDJPYm", self.bot.symbols)
+        self.assertIn("EURUSDm", self.bot.symbols)
+
     def test_has_open_position_prevents_duplicate_entries(self):
         """Verify that _has_open_position detects active trades and prevents duplicate entries on the same symbol."""
         self.bot.active_bot_orders.clear()

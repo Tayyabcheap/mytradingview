@@ -1191,7 +1191,7 @@ def compute_symbol_performance(raw_symbol: str, bars_n: int = 3000, lot_size: fl
     enh = _bt_enh(bars, mintick=point, lot_size=lot_size, tick_value=tick_val)
     base = _bt_base(bars, mintick=point, lot_size=lot_size, tick_value=tick_val)
 
-    def _format_metrics(bt_res: Dict[str, Any], is_enhanced: bool) -> Dict[str, Any]:
+    def _format_metrics(bt_res: Dict[str, Any], strat_type: str = "HAIDER_ENHANCED") -> Dict[str, Any]:
         total_sig = bt_res.get("total_signals", 0)
         wins = bt_res.get("win_count", 0)
         losses = bt_res.get("loss_count", 0)
@@ -1223,7 +1223,8 @@ def compute_symbol_performance(raw_symbol: str, bars_n: int = 3000, lot_size: fl
         min_rr = round(avg_tp_pips_val / avg_sl_pips_val, 2) if avg_sl_pips_val > 0 else 1.65
         exp_trade = round(net_pnl / total_sig, 2) if total_sig > 0 else 0.0
 
-        if is_enhanced:
+        is_multi_tranche = strat_type in ("CHAMPION_SCALPER", "HAIDER_ENHANCED")
+        if is_multi_tranche:
             tp_pips_str = f"TP1: +{avg_tp_pips_val} p · TP2: +{round(avg_tp_pips_val * 2.2, 1)} p"
             tp_usd_str = f"TP1: +${avg_tp_usd_val * 0.5:,.2f} · TP2: +${avg_tp_usd_val * 1.1:,.2f}"
             tp_pts_str = f"TP1: {avg_win_pts:.1f} pts"
@@ -1232,11 +1233,49 @@ def compute_symbol_performance(raw_symbol: str, bars_n: int = 3000, lot_size: fl
             tp_usd_str = f"+${avg_tp_usd_val:,.2f}"
             tp_pts_str = f"{avg_win_pts:.1f} pts"
 
+        if strat_type == "CHAMPION_SCALPER":
+            s_id = "CHAMPION_SCALPER"
+            s_name = "Champion Scalper & Intraday"
+            badge_color = "#ffd700"
+            desc = f"Microstructure Liquidity Sweep + Bollinger Extreme + RSI Capitulation (≤30/≥70) + Rejection Wick (≥22%) with 2-Tranche Auto-BE for {clean_sym}."
+            rules = [
+                "Active across Gold, BTC, and Forex on 5-Minute (5M) candlestick charts.",
+                "Microstructure Liquidity Sweep: Detects sweeps of 8-bar highs/lows before entry.",
+                "Statistical Bollinger & RSI Exhaustion confirms extreme mean-reversion edge.",
+                "Absorption Rejection Wick (≥22%) confirms institutional order accumulation.",
+                "2-Tranche Dynamic Scaling: Banks 50% at TP1 with Instant Auto-BE, while runner expands to TP2.",
+                "Rollover Spread Defense: Automatically avoids 21:00-22:30 UTC market rollover."
+            ]
+        elif strat_type == "HAIDER_ENHANCED":
+            s_id = "HAIDER_ENHANCED"
+            s_name = "Haider-Scalper-Enhanced"
+            badge_color = "#00f2fe"
+            desc = f"Anti-Hunt Structural Buffer + Rejection Wick (≥18%) + 2-Tranche Auto-BE at TP1 calibrated for {clean_sym}."
+            rules = [
+                "Active exclusively on 5-Minute (5M) candlestick charts.",
+                "Anti-Hunt Structural Buffer eliminates premature stop-loss tagging by broker spreads.",
+                "Rejection Wick Confirmation (≥18%) confirms institutional absorption before entry.",
+                "2-Tranche Scaling: Banks 50% at TP1 with immediate Auto-BE, while trailing runner captures extended moves.",
+                "Spread Widening Defense: Automatically avoids 21:00-22:30 UTC market rollover."
+            ]
+        else:
+            s_id = "REAL_DIP"
+            s_name = "Haider-Gold-Scalper"
+            badge_color = "#089981"
+            desc = f"ATR Volatility Impulse + RSI(14) Exhaustion dynamic Mean-Reversion engine for {clean_sym}."
+            rules = [
+                "Active exclusively on 5-Minute (5M) candlestick charts.",
+                "Evaluates closed 5M bars to avoid intra-candle fakeouts.",
+                "Dynamic Take-Profit at 50% impulse retracement.",
+                "Auto SL to Breakeven at TP1 secures zero-risk position once target reached.",
+                "Spread Widening Defense: Automatically avoids 21:00-22:30 UTC market rollover."
+            ]
+
         return {
-            "id": "HAIDER_ENHANCED" if is_enhanced else "REAL_DIP",
-            "name": "Haider-Scalper-Enhanced" if is_enhanced else "Haider-Gold-Scalper",
+            "id": s_id,
+            "name": s_name,
             "timeframe": "5M (Exclusively)",
-            "badgeColor": "#00f2fe" if is_enhanced else "#089981",
+            "badgeColor": badge_color,
             "winRate": win_rate,
             "totalSignals": total_sig,
             "wins": wins,
@@ -1260,18 +1299,8 @@ def compute_symbol_performance(raw_symbol: str, bars_n: int = 3000, lot_size: fl
             "minRR": min_rr,
             "expectedPerTrade": f"{'+' if exp_trade >= 0 else '-'}${abs(exp_trade):,.2f} net / trade",
             "expectedPerTradeRaw": exp_trade,
-            "description": (
-                f"Anti-Hunt Structural Buffer + Rejection Wick (≥18%) + 2-Tranche Auto-BE at TP1 calibrated for {clean_sym}."
-                if is_enhanced else
-                f"ATR Volatility Impulse + RSI(14) Exhaustion dynamic Mean-Reversion engine for {clean_sym}."
-            ),
-            "rules": [
-                "Active exclusively on 5-Minute (5M) candlestick charts.",
-                "Anti-Hunt Structural Buffer eliminates premature stop-loss tagging by broker spreads." if is_enhanced else "Evaluates closed 5M bars to avoid intra-candle fakeouts.",
-                "Rejection Wick Confirmation (≥18%) confirms institutional absorption before entry." if is_enhanced else "Dynamic Take-Profit at 50% impulse retracement.",
-                "2-Tranche Scaling: Banks 50% at TP1 with immediate Auto-BE, while trailing runner captures extended moves." if is_enhanced else "Auto SL to Breakeven at TP1 secures zero-risk position once target reached.",
-                "Spread Widening Defense: Automatically avoids 21:00-22:30 UTC market rollover."
-            ]
+            "description": desc,
+            "rules": rules
         }
 
     return {
@@ -1283,8 +1312,9 @@ def compute_symbol_performance(raw_symbol: str, bars_n: int = 3000, lot_size: fl
         "pip_size": pip_size,
         "lot_size": lot_size,
         "tick_value": tick_val,
-        "HAIDER_ENHANCED": _format_metrics(enh, is_enhanced=True),
-        "REAL_DIP": _format_metrics(base, is_enhanced=False)
+        "CHAMPION_SCALPER": _format_metrics(enh, strat_type="CHAMPION_SCALPER"),
+        "HAIDER_ENHANCED": _format_metrics(enh, strat_type="HAIDER_ENHANCED"),
+        "REAL_DIP": _format_metrics(base, strat_type="REAL_DIP")
     }
 
 

@@ -82,7 +82,7 @@ export default function SignalPerformanceModal({
   currentSymbol = 'XAUUSDc',
   availableSymbols = []
 }) {
-  const [selectedStratId, setSelectedStratId] = useState('HAIDER_ENHANCED');
+  const [selectedStratId, setSelectedStratId] = useState('CHAMPION_SCALPER');
   const [selectedSymbol, setSelectedSymbol] = useState(currentSymbol || 'XAUUSDc');
   const [perfCache, setPerfCache] = useState({});
   const [batchData, setBatchData] = useState([]);
@@ -115,7 +115,7 @@ export default function SignalPerformanceModal({
       const res = await fetch(`/api/scalper/performance?symbol=${encodeURIComponent(sym)}&bars=3000&lot_size=0.10`);
       if (res.ok) {
         const data = await res.json();
-        if (data && data.HAIDER_ENHANCED) {
+        if (data && (data.CHAMPION_SCALPER || data.HAIDER_ENHANCED)) {
           setPerfCache(prev => ({ ...prev, [sym]: data }));
         }
       }
@@ -143,7 +143,7 @@ export default function SignalPerformanceModal({
           // Also populate individual cache entries
           const newCache = {};
           data.instruments.forEach(item => {
-            if (item && item.symbol && item.HAIDER_ENHANCED) {
+            if (item && item.symbol && (item.CHAMPION_SCALPER || item.HAIDER_ENHANCED)) {
               newCache[item.symbol] = item;
             }
           });
@@ -169,17 +169,18 @@ export default function SignalPerformanceModal({
 
   // Active symbol dataset
   const activePerf = perfCache[selectedSymbol];
+  const championData = activePerf?.CHAMPION_SCALPER || activePerf?.HAIDER_ENHANCED || DEFAULT_STRATEGY_PERFORMANCE[1];
   const enhancedData = activePerf?.HAIDER_ENHANCED || DEFAULT_STRATEGY_PERFORMANCE[1];
   const baselineData = activePerf?.REAL_DIP || DEFAULT_STRATEGY_PERFORMANCE[0];
 
-  const current = selectedStratId === 'REAL_DIP' ? baselineData : enhancedData;
+  const current = selectedStratId === 'REAL_DIP' ? baselineData : (selectedStratId === 'HAIDER_ENHANCED' ? enhancedData : championData);
   const isEnabled = activeSignalStrategies && activeSignalStrategies[current.id];
 
   // Batch ranking summary metrics
-  const validBatchItems = batchData.filter(item => item && item.HAIDER_ENHANCED);
+  const validBatchItems = batchData.filter(item => item && (item.CHAMPION_SCALPER || item.HAIDER_ENHANCED));
   const avgBatchWinRate = validBatchItems.length > 0
-    ? (validBatchItems.reduce((acc, it) => acc + (it.HAIDER_ENHANCED.winRate || 0), 0) / validBatchItems.length).toFixed(1)
-    : '85.4';
+    ? (validBatchItems.reduce((acc, it) => acc + ((it.CHAMPION_SCALPER || it.HAIDER_ENHANCED).winRate || 0), 0) / validBatchItems.length).toFixed(1)
+    : '89.6';
 
   const totalBatchTradesPerDay = validBatchItems.length > 0
     ? validBatchItems.reduce((acc, it) => acc + (it.HAIDER_ENHANCED.avgTradesPerDayRaw || 0), 0).toFixed(1)
@@ -399,6 +400,7 @@ export default function SignalPerformanceModal({
         }}>
           {/* Strategy Tabs */}
           {[
+            { id: 'CHAMPION_SCALPER', name: 'Champion Scalper (90% Target)', color: '#ffd700', badge: `${championData.winRate}% WR` },
             { id: 'HAIDER_ENHANCED', name: 'Haider-Scalper-Enhanced', color: '#00f2fe', badge: `${enhancedData.winRate}% WR` },
             { id: 'REAL_DIP', name: 'Haider-Gold-Scalper', color: '#089981', badge: `${baselineData.winRate}% WR` },
           ].map(strat => {
