@@ -1197,12 +1197,21 @@ function App() {
         params: { ...ind.params, strategy: next, timeframe }
       } : ind));
 
-      // Sync active strategy to backend autonomous bot
+      // Sync active strategy to backend autonomous bot with isolated strategy map
       const activeStrat = next.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (next.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP');
+      const stratMap = {
+        CHAMPION_SCALPER: Boolean(next.CHAMPION_SCALPER && autoTradeSignals),
+        HAIDER_ENHANCED: Boolean(next.HAIDER_ENHANCED && autoTradeSignals),
+        REAL_DIP: Boolean(next.REAL_DIP && autoTradeSignals)
+      };
       fetch('/api/scalper/bot/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ strategy: activeStrat, enabled: hasAny && autoTradeSignals })
+        body: JSON.stringify({ 
+          strategy: activeStrat, 
+          enabled: hasAny && autoTradeSignals,
+          strategies: stratMap
+        })
       }).catch(() => {});
 
       return next;
@@ -1219,6 +1228,20 @@ function App() {
       visible: enableAll,
       params: { ...ind.params, strategy: next, timeframe }
     } : ind));
+
+    const stratMap = {
+      CHAMPION_SCALPER: Boolean(enableAll && autoTradeSignals),
+      HAIDER_ENHANCED: Boolean(enableAll && autoTradeSignals),
+      REAL_DIP: Boolean(enableAll && autoTradeSignals)
+    };
+    fetch('/api/scalper/bot/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        enabled: enableAll && autoTradeSignals,
+        strategies: stratMap
+      })
+    }).catch(() => {});
   };
 
   const handleTakeSnapshot = () => {
@@ -1985,11 +2008,24 @@ function App() {
                       const next = !autoTradeSignals;
                       setAutoTradeSignals(next);
                       saveLS('autoTradeSignals', next);
+                      const hasAny = Object.values(activeSignalStrategies).some(Boolean);
                       const stratKey = activeSignalStrategies.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (activeSignalStrategies.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP');
+                      const stratMap = {
+                        CHAMPION_SCALPER: Boolean(activeSignalStrategies.CHAMPION_SCALPER && next),
+                        HAIDER_ENHANCED: Boolean(activeSignalStrategies.HAIDER_ENHANCED && next),
+                        REAL_DIP: Boolean(activeSignalStrategies.REAL_DIP && next)
+                      };
                       fetch('/api/scalper/bot/toggle', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ enabled: next, strategy: stratKey, lot_size: activeLotSize, symbols: scalperSymbols, symbol_lot_sizes: symbolLotSizes })
+                        body: JSON.stringify({ 
+                          enabled: next && hasAny, 
+                          strategy: stratKey, 
+                          strategies: stratMap,
+                          lot_size: activeLotSize, 
+                          symbols: scalperSymbols, 
+                          symbol_lot_sizes: symbolLotSizes 
+                        })
                       }).catch(() => {});
                       fetch('/api/settings', {
                         method: 'POST',

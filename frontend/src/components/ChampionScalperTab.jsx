@@ -118,9 +118,8 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
         setBotStatus(bData);
       }
       if (backendCfg && Array.isArray(backendCfg.symbols) && backendCfg.symbols.length > 0) {
-        const isMasterBotOn = Boolean(bData?.enabled && (bData?.strategy === 'CHAMPION_SCALPER' || bData?.champion_scalper?.enabled));
-        const effectiveEnabled = backendCfg.enabled || isMasterBotOn;
-        const mergedCfg = { ...backendCfg, enabled: effectiveEnabled };
+        const isChampEnabled = Boolean(backendCfg.enabled ?? (bData?.champion_scalper?.enabled || bData?.strategy_configs?.CHAMPION_SCALPER?.enabled));
+        const mergedCfg = { ...backendCfg, enabled: isChampEnabled };
         setStrategyConfig(mergedCfg);
         try { localStorage.setItem('champion_strategy_config', JSON.stringify(mergedCfg)); } catch (e) {}
       }
@@ -173,7 +172,7 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
   };
 
   const handleToggleAutoTrade = () => {
-    const isCurrentlyActive = Boolean(strategyConfig.enabled || botStatus?.enabled);
+    const isCurrentlyActive = Boolean(strategyConfig.enabled || botStatus?.champion_scalper?.enabled || botStatus?.strategy_configs?.CHAMPION_SCALPER?.enabled);
     const updated = { ...strategyConfig, enabled: !isCurrentlyActive };
     saveConfig(updated);
   };
@@ -232,7 +231,7 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
     o.magic === 999333
   );
 
-  const isAutonomousActive = Boolean(strategyConfig.enabled || botStatus?.enabled || (botStatus?.is_running && botStatus?.strategy === 'CHAMPION_SCALPER'));
+  const isAutonomousActive = Boolean(strategyConfig.enabled || botStatus?.champion_scalper?.enabled || botStatus?.strategy_configs?.CHAMPION_SCALPER?.enabled);
 
   return (
     <div style={{

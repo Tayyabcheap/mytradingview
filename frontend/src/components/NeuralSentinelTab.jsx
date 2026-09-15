@@ -113,9 +113,8 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
         setBotStatus(bStatus);
       }
       if (backendCfg && Array.isArray(backendCfg.symbols) && backendCfg.symbols.length > 0) {
-        const isMasterBotOn = Boolean(bStatus?.enabled && (bStatus?.strategy === 'HAIDER_ENHANCED' || !bStatus?.champion_scalper?.enabled));
-        const effectiveEnabled = backendCfg.enabled || isMasterBotOn;
-        const mergedCfg = { ...backendCfg, enabled: effectiveEnabled };
+        const isHaiderEnabled = Boolean(backendCfg.enabled ?? (bStatus?.haider_enhanced?.enabled || bStatus?.strategy_configs?.HAIDER_ENHANCED?.enabled));
+        const mergedCfg = { ...backendCfg, enabled: isHaiderEnabled };
         setStrategyConfig(mergedCfg);
         try { localStorage.setItem('haider_strategy_config', JSON.stringify(mergedCfg)); } catch (e) {}
       }
@@ -165,7 +164,7 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
   };
 
   const handleToggleAutoTrade = () => {
-    const isCurrentlyActive = Boolean(strategyConfig.enabled || botStatus?.enabled);
+    const isCurrentlyActive = Boolean(strategyConfig.enabled || botStatus?.haider_enhanced?.enabled || botStatus?.strategy_configs?.HAIDER_ENHANCED?.enabled);
     const updated = { ...strategyConfig, enabled: !isCurrentlyActive };
     saveConfig(updated);
   };
@@ -299,7 +298,7 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
     }
   };
 
-  const isAutonomousActive = Boolean(strategyConfig.enabled || botStatus?.enabled || (botStatus?.is_running && botStatus?.strategy === 'HAIDER_ENHANCED'));
+  const isAutonomousActive = Boolean(strategyConfig.enabled || botStatus?.haider_enhanced?.enabled || botStatus?.strategy_configs?.HAIDER_ENHANCED?.enabled);
   const isTrackingTrade = Boolean(telemetry?.neurons_active && telemetry?.active_trades?.length > 0);
   const isLive = isTrackingTrade || isAutonomousActive;
   const activeTrade = telemetry?.active_trades?.find(t => t.ticket === selectedTicket) || telemetry?.active_trades?.[0];

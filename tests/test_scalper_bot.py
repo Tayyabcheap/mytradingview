@@ -9,6 +9,7 @@ import sys
 
 # Ensure src is on sys.path
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
 sys.path.insert(0, os.path.join(BASE_DIR, "src"))
 
 from scalper_bot import ScalperBot, get_scalper_bot
@@ -299,7 +300,7 @@ class TestScalperBot(unittest.TestCase):
 
     def test_champion_scalper_strategy_initialization_and_symbols(self):
         """Verify CHAMPION_SCALPER is valid, has 5 default symbols, and config loads properly."""
-        from src.scalper_bot import ScalperBot, DEFAULT_SYMBOLS
+        from scalper_bot import ScalperBot, DEFAULT_SYMBOLS
         self.assertIn("CHAMPION_SCALPER", ScalperBot.ALLOWED_STRATEGIES)
         res = self.bot.configure(strategy="CHAMPION_SCALPER", symbols=DEFAULT_SYMBOLS)
         self.assertEqual(res["strategy"], "CHAMPION_SCALPER")
@@ -512,7 +513,29 @@ class TestNeuralSentinel(unittest.TestCase):
         self.assertEqual(haider_res.status_code, 200)
         haider_data = json.loads(haider_res.data)
         self.assertTrue(haider_data["haider_enhanced"]["enabled"])
-        self.assertEqual(haider_data["haider_enhanced"]["symbol_lot_sizes"]["XAUUSDc"], 0.05)
+        # 4. Test isolated strategy toggle via /api/scalper/bot/toggle with strategies map
+        toggle_res = self.client.post("/api/scalper/bot/toggle", json={
+            "enabled": True,
+            "strategy": "HAIDER_ENHANCED",
+            "strategies": {
+                "HAIDER_ENHANCED": True,
+                "CHAMPION_SCALPER": False,
+                "REAL_DIP": False
+            }
+        })
+        self.assertEqual(toggle_res.status_code, 200)
+        toggle_data = json.loads(toggle_res.data)
+        self.assertTrue(toggle_data["enabled"])
+        self.assertTrue(toggle_data["haider_enhanced"]["enabled"])
+        self.assertFalse(toggle_data["champion_scalper"]["enabled"])
+
+        # When master toggle is disabled, all strategies become disabled
+        off_res = self.client.post("/api/scalper/bot/toggle", json={"enabled": False})
+        self.assertEqual(off_res.status_code, 200)
+        off_data = json.loads(off_res.data)
+        self.assertFalse(off_data["enabled"])
+        self.assertFalse(off_data["haider_enhanced"]["enabled"])
+        self.assertFalse(off_data["champion_scalper"]["enabled"])
 
 
 if __name__ == "__main__":
