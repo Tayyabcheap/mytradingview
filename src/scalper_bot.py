@@ -395,6 +395,9 @@ class ScalperBot:
                     base_s = clean_base_symbol(clean_s)
                     if base_s:
                         cfg["symbol_lot_sizes"][base_s] = clamped
+                        for existing_k in list(cfg["symbol_lot_sizes"].keys()):
+                            if clean_base_symbol(existing_k) == base_s:
+                                cfg["symbol_lot_sizes"][existing_k] = clamped
                 except (ValueError, TypeError):
                     pass
 
