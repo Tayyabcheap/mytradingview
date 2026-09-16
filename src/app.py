@@ -254,17 +254,24 @@ def _check_auto_breakeven(positions):
                     should_move_be = True
 
             if should_move_be:
+                s_info = None
+                try:
+                    s_info = mt5.symbol_info(p.symbol)
+                except Exception:
+                    pass
+                is_jpy_or_gold = "JPY" in p.symbol.upper() or "XAU" in p.symbol.upper() or "GOLD" in p.symbol.upper()
+                digits = int(s_info.digits) if (s_info and s_info.digits is not None) else (3 if is_jpy_or_gold else 5)
                 req = {
                     "action": mt5.TRADE_ACTION_SLTP,
                     "position": ticket,
                     "symbol": p.symbol,
-                    "sl": float(open_price),
-                    "tp": float(p.tp),
+                    "sl": round(float(open_price), digits),
+                    "tp": round(float(p.tp), digits) if p.tp else 0.0,
                 }
                 res = mt5.order_send(req)
                 if res and res.retcode == mt5.TRADE_RETCODE_DONE:
                     track["be_done"] = True
-                    print(f"[AUTO-BE] >>> Moved SL for #{ticket} ({p.symbol}) to Breakeven ({open_price})!", flush=True)
+                    print(f"[AUTO-BE] >>> Moved SL for #{ticket} ({p.symbol}) to Breakeven ({open_price:.{digits}f})!", flush=True)
                     send_discord_alert(
                         title=f"🛡️ Auto-Breakeven Primed: #{ticket} ({p.symbol})",
                         description=f"Position #{ticket} reached TP1 ({tp1}). Stop Loss was moved to Breakeven at entry price ({open_price}). Trade is now 100% risk-free!",
@@ -1801,6 +1808,9 @@ def scalper_bot_toggle():
                     aligned_lots[broker_sym] = val
         symbol_lot_sizes = aligned_lots
     
+    max_trades_per_tf = data.get("max_trades_per_tf")
+    drawdown_limits = data.get("drawdown_limits")
+    
     res = bot.configure(
         enabled=enabled, 
         strategy=strategy, 
@@ -1808,9 +1818,29 @@ def scalper_bot_toggle():
         symbol=symbol, 
         symbols=symbols, 
         symbol_lot_sizes=symbol_lot_sizes,
-        strategies=data.get("strategies") or data.get("strategy_configs")
+        strategies=data.get("strategies") or data.get("strategy_configs"),
+        max_trades_per_tf=max_trades_per_tf,
+        drawdown_limits=drawdown_limits
     )
     return jsonify(res)
+
+
+@app.route("/api/scalper/bot/drawdown-limits", methods=["GET", "POST"])
+def scalper_bot_drawdown_limits():
+    """Get or update account-level max drawdown limits (daily, weekly, monthly in % and USD)."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        bot.configure(drawdown_limits=data)
+        return jsonify({
+            "success": True,
+            "drawdown_limits": bot.drawdown_limits
+        })
+    return jsonify({
+        "success": True,
+        "drawdown_limits": bot.drawdown_limits
+    })
 
 
 @app.route("/api/scalper/bot/strategy-config", methods=["GET", "POST"])

@@ -16,7 +16,7 @@ import math
 import logging
 import threading
 import datetime
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 
 try:
     import MetaTrader5 as mt5
@@ -87,6 +87,28 @@ class ScalperBot:
         self.lot_size = 0.10
         self.symbol_lot_sizes: Dict[str, float] = {}
         self.max_gold_lot = 1.0  # Mandatory safety cap: <= 1.0 lot on Gold
+        self.max_trades_per_tf = 2  # Allows up to 2 concurrent trades per timeframe per pair
+
+        # Account Max Drawdown Guardian (Daily, Weekly, Monthly in % and USD)
+        self.drawdown_limits: Dict[str, Any] = {
+            "daily_pct": None,
+            "daily_usd": None,
+            "weekly_pct": None,
+            "weekly_usd": None,
+            "monthly_pct": None,
+            "monthly_usd": None,
+            "daily_start_balance": None,
+            "daily_start_date": None,
+            "daily_peak_equity": None,
+            "weekly_start_balance": None,
+            "weekly_start_week": None,
+            "weekly_peak_equity": None,
+            "monthly_start_balance": None,
+            "monthly_start_month": None,
+            "monthly_peak_equity": None,
+            "breached": False,
+            "breach_reason": None
+        }
 
         # Isolated Per-Strategy Configurations (instruments & lot sizes)
         self.strategy_configs: Dict[str, Dict[str, Any]] = {
@@ -225,6 +247,16 @@ class ScalperBot:
                 self.symbols = [str(s).strip() for s in saved_syms if s][:MAX_INSTRUMENTS]
             elif saved.get("symbol"):
                 self.symbols = [str(saved.get("symbol")).strip()]
+
+            if "max_trades_per_tf" in saved:
+                try:
+                    self.max_trades_per_tf = max(1, int(saved.get("max_trades_per_tf", 2)))
+                except Exception:
+                    pass
+
+            saved_dd = self.store.get("settings", "drawdown_limits") or saved.get("drawdown_limits")
+            if isinstance(saved_dd, dict):
+                self.drawdown_limits.update(saved_dd)
         except Exception as e:
             logger.warning(f"Failed to load bot settings: {e}")
 
@@ -278,7 +310,9 @@ class ScalperBot:
                   symbols: Optional[List[str]] = None,
                   symbol_lot_sizes: Optional[Dict[str, float]] = None,
                   strategies: Optional[Dict[str, Any]] = None,
-                  strategy_configs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                  strategy_configs: Optional[Dict[str, Any]] = None,
+                  max_trades_per_tf: Optional[int] = None,
+                  drawdown_limits: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Update bot configuration, active pairs (up to 10), per-instrument lot sizes, and persist."""
         strat_map = strategies or strategy_configs
         if strat_map and isinstance(strat_map, dict):
@@ -350,6 +384,31 @@ class ScalperBot:
             if s_clean and s_clean not in self.symbols:
                 self.symbols = [s_clean] + [x for x in self.symbols if x != s_clean][:MAX_INSTRUMENTS - 1]
 
+        if max_trades_per_tf is not None:
+            try:
+                self.max_trades_per_tf = max(1, int(max_trades_per_tf))
+            except (ValueError, TypeError):
+                pass
+
+        if drawdown_limits is not None and isinstance(drawdown_limits, dict):
+            for k, v in drawdown_limits.items():
+                if k in self.drawdown_limits:
+                    if v is None or str(v).strip() == "" or v == 0:
+                        self.drawdown_limits[k] = None
+                    else:
+                        try:
+                            self.drawdown_limits[k] = float(v)
+                        except (ValueError, TypeError):
+                            self.drawdown_limits[k] = v
+            if drawdown_limits.get("reset_breach"):
+                self.drawdown_limits["breached"] = False
+                self.drawdown_limits["breach_reason"] = None
+            if self.store:
+                try:
+                    self.store.put("settings", "drawdown_limits", self.drawdown_limits)
+                except Exception:
+                    pass
+
         if self.store:
             try:
                 bot_data = {
@@ -358,12 +417,15 @@ class ScalperBot:
                     "lot_size": self.lot_size,
                     "symbol_lot_sizes": self.symbol_lot_sizes,
                     "symbols": self.symbols,
-                    "symbol": self.symbols[0] if self.symbols else "XAUUSDc"
+                    "symbol": self.symbols[0] if self.symbols else "XAUUSDc",
+                    "max_trades_per_tf": self.max_trades_per_tf,
+                    "drawdown_limits": self.drawdown_limits
                 }
                 self.store.put("settings", "scalper_bot", bot_data)
                 self.store.put("settings", "scalper_symbols", self.symbols)
                 self.store.put("settings", "symbol_lot_sizes", self.symbol_lot_sizes)
                 self.store.put("settings", "strategy_configs", self.strategy_configs)
+                self.store.put("settings", "drawdown_limits", self.drawdown_limits)
             except Exception as e:
                 logger.warning(f"Failed to persist bot settings: {e}")
         return self.status()
@@ -460,6 +522,129 @@ class ScalperBot:
 
         return self.status()
 
+    def check_account_drawdown_limits(self, a_info=None) -> Tuple[bool, Optional[str]]:
+        """
+        Check if any configured Daily, Weekly, or Monthly Max Drawdown limit (% or USD) has been hit.
+        If breached, autonomously halts all trading and sends an urgent notification.
+        Returns (is_breached, reason).
+        """
+        if not self.drawdown_limits:
+            return False, None
+
+        has_limits = any(
+            self.drawdown_limits.get(k) is not None and float(self.drawdown_limits.get(k) or 0) > 0
+            for k in ("daily_pct", "daily_usd", "weekly_pct", "weekly_usd", "monthly_pct", "monthly_usd")
+        )
+        if not has_limits:
+            return False, None
+
+        if a_info is None and MT5_AVAILABLE:
+            try:
+                with self.mt5_lock:
+                    a_info = mt5.account_info()
+            except Exception:
+                pass
+
+        if not a_info:
+            return False, None
+
+        try:
+            equity = float(a_info.equity)
+            balance = float(a_info.balance)
+            now = datetime.datetime.now(datetime.timezone.utc)
+            today_str = now.strftime("%Y-%m-%d")
+            week_str = now.strftime("%Y-W%W")
+            month_str = now.strftime("%Y-%m")
+
+            # 1. Daily Track
+            if self.drawdown_limits.get("daily_start_date") != today_str:
+                self.drawdown_limits["daily_start_date"] = today_str
+                self.drawdown_limits["daily_start_balance"] = balance
+                self.drawdown_limits["daily_peak_equity"] = equity
+            else:
+                self.drawdown_limits["daily_peak_equity"] = max(
+                    float(self.drawdown_limits.get("daily_peak_equity", equity) or equity), equity
+                )
+
+            # 2. Weekly Track
+            if self.drawdown_limits.get("weekly_start_week") != week_str:
+                self.drawdown_limits["weekly_start_week"] = week_str
+                self.drawdown_limits["weekly_start_balance"] = balance
+                self.drawdown_limits["weekly_peak_equity"] = equity
+            else:
+                self.drawdown_limits["weekly_peak_equity"] = max(
+                    float(self.drawdown_limits.get("weekly_peak_equity", equity) or equity), equity
+                )
+
+            # 3. Monthly Track
+            if self.drawdown_limits.get("monthly_start_month") != month_str:
+                self.drawdown_limits["monthly_start_month"] = month_str
+                self.drawdown_limits["monthly_start_balance"] = balance
+                self.drawdown_limits["monthly_peak_equity"] = equity
+            else:
+                self.drawdown_limits["monthly_peak_equity"] = max(
+                    float(self.drawdown_limits.get("monthly_peak_equity", equity) or equity), equity
+                )
+
+            # Calculate Drawdowns
+            d_base = max(float(self.drawdown_limits.get("daily_start_balance") or balance), float(self.drawdown_limits.get("daily_peak_equity") or equity))
+            d_dd_usd = max(0.0, d_base - equity)
+            d_dd_pct = (d_dd_usd / d_base * 100.0) if d_base > 0 else 0.0
+
+            w_base = max(float(self.drawdown_limits.get("weekly_start_balance") or balance), float(self.drawdown_limits.get("weekly_peak_equity") or equity))
+            w_dd_usd = max(0.0, w_base - equity)
+            w_dd_pct = (w_dd_usd / w_base * 100.0) if w_base > 0 else 0.0
+
+            m_base = max(float(self.drawdown_limits.get("monthly_start_balance") or balance), float(self.drawdown_limits.get("monthly_peak_equity") or equity))
+            m_dd_usd = max(0.0, m_base - equity)
+            m_dd_pct = (m_dd_usd / m_base * 100.0) if m_base > 0 else 0.0
+
+            # Check limits
+            breach_reason = None
+            if self.drawdown_limits.get("daily_usd") and float(self.drawdown_limits["daily_usd"]) > 0 and d_dd_usd >= float(self.drawdown_limits["daily_usd"]):
+                breach_reason = f"Daily Max Drawdown Hit: -${d_dd_usd:.2f} (Limit: ${float(self.drawdown_limits['daily_usd']):.2f})"
+            elif self.drawdown_limits.get("daily_pct") and float(self.drawdown_limits["daily_pct"]) > 0 and d_dd_pct >= float(self.drawdown_limits["daily_pct"]):
+                breach_reason = f"Daily Max Drawdown Hit: -{d_dd_pct:.2f}% (Limit: {float(self.drawdown_limits['daily_pct']):.2f}%)"
+            elif self.drawdown_limits.get("weekly_usd") and float(self.drawdown_limits["weekly_usd"]) > 0 and w_dd_usd >= float(self.drawdown_limits["weekly_usd"]):
+                breach_reason = f"Weekly Max Drawdown Hit: -${w_dd_usd:.2f} (Limit: ${float(self.drawdown_limits['weekly_usd']):.2f})"
+            elif self.drawdown_limits.get("weekly_pct") and float(self.drawdown_limits["weekly_pct"]) > 0 and w_dd_pct >= float(self.drawdown_limits["weekly_pct"]):
+                breach_reason = f"Weekly Max Drawdown Hit: -{w_dd_pct:.2f}% (Limit: {float(self.drawdown_limits['weekly_pct']):.2f}%)"
+            elif self.drawdown_limits.get("monthly_usd") and float(self.drawdown_limits["monthly_usd"]) > 0 and m_dd_usd >= float(self.drawdown_limits["monthly_usd"]):
+                breach_reason = f"Monthly Max Drawdown Hit: -${m_dd_usd:.2f} (Limit: ${float(self.drawdown_limits['monthly_usd']):.2f})"
+            elif self.drawdown_limits.get("monthly_pct") and float(self.drawdown_limits["monthly_pct"]) > 0 and m_dd_pct >= float(self.drawdown_limits["monthly_pct"]):
+                breach_reason = f"Monthly Max Drawdown Hit: -{m_dd_pct:.2f}% (Limit: {float(self.drawdown_limits['monthly_pct']):.2f}%)"
+
+            if breach_reason:
+                self.enabled = False
+                for c in self.strategy_configs.values():
+                    c["enabled"] = False
+                self.drawdown_limits["breached"] = True
+                self.drawdown_limits["breach_reason"] = breach_reason
+                print(f"[SCALPER_BOT:CIRCUIT_BREAKER] >>> {breach_reason}! Shutting down all trading.", flush=True)
+                send_discord_alert(
+                    title="🚨 CIRCUIT BREAKER: Account Max Drawdown Hit",
+                    description=f"**All trading has been autonomously HALTED.**\n\n"
+                                f"• **Reason:** `{breach_reason}`\n"
+                                f"• **Account Equity:** `${equity:.2f}`\n"
+                                f"• **Balance:** `${balance:.2f}`\n"
+                                f"• **Daily DD:** `-${d_dd_usd:.2f}` (`{d_dd_pct:.2f}%`)\n"
+                                f"• **Weekly DD:** `-${w_dd_usd:.2f}` (`{w_dd_pct:.2f}%`)\n"
+                                f"• **Monthly DD:** `-${m_dd_usd:.2f}` (`{m_dd_pct:.2f}%`)",
+                    color=0xff0000
+                )
+                if self.store:
+                    try:
+                        self.store.put("settings", "drawdown_limits", self.drawdown_limits)
+                        self.store.put("settings", "strategy_configs", self.strategy_configs)
+                    except Exception:
+                        pass
+                return True, breach_reason
+
+        except Exception as e:
+            logger.warning(f"Error checking account drawdown limits: {e}")
+
+        return False, None
+
     def status(self) -> Dict[str, Any]:
         """Return comprehensive telemetry of the bot for the UI and APIs."""
         algo_allowed = False
@@ -511,6 +696,8 @@ class ScalperBot:
             "haider_enhanced": self.strategy_configs.get("HAIDER_ENHANCED", {}),
             "champion_scalper": self.strategy_configs.get("CHAMPION_SCALPER", {}),
             "max_gold_lot": self.max_gold_lot,
+            "max_trades_per_tf": self.max_trades_per_tf,
+            "drawdown_limits": self.drawdown_limits,
             "mt5_connected": mt5_connected,
             "terminal_algo_trading": algo_allowed,
             "account_trade_allowed": account_trade_allowed,
@@ -586,6 +773,13 @@ class ScalperBot:
 
                 if a_info and not a_info.trade_allowed:
                     self.status_message = "Trading disabled on this MT5 account"
+                    self._stop_event.wait(5.0)
+                    continue
+
+                # ── Account Drawdown Guardian Check ──
+                dd_hit, dd_reason = self.check_account_drawdown_limits(a_info)
+                if dd_hit:
+                    self.status_message = f"CIRCUIT BREAKER: {dd_reason}"
                     self._stop_event.wait(5.0)
                     continue
 
@@ -674,7 +868,8 @@ class ScalperBot:
                             current_bar,
                             config_sym=config_sym,
                             strategy_name=strat_key,
-                            custom_lot=custom_lot
+                            custom_lot=custom_lot,
+                            timeframe=tf_str
                         )
 
                     # Also mirror to general symbol state for status() per_symbol telemetry
@@ -697,42 +892,125 @@ class ScalperBot:
 
             self._stop_event.wait(1.0)
 
-    def _has_open_position(self, symbol: str) -> bool:
-        """Check if bot already has an active open position for this symbol to prevent duplicate entries."""
-        # 1. Check in-memory active orders
-        for trade in self.active_bot_orders.values():
-            if trade.get("symbol") == symbol:
-                return True
-
-        # 2. Check directly in MT5 for any position with ScalperBot magic number (999333)
+    def count_open_trades_for_timeframe(self, symbol: str, timeframe: str) -> int:
+        """
+        Count active trade setups for a specific symbol and timeframe.
+        Multi-tranche orders belonging to the same entry setup count as 1 trade.
+        """
+        tf_norm = str(timeframe or "5M").strip().upper()
+        sym_clean = clean_base_symbol(symbol)
+        
+        # 1. Group in-memory orders
+        active_setups = set()
+        matched_tickets = set()
+        
+        # Group by setup_id if available, or by (symbol, direction, tf, opened_at cluster)
+        for ticket, trade in list(self.active_bot_orders.items()):
+            t_sym = clean_base_symbol(trade.get("symbol", ""))
+            if t_sym != sym_clean:
+                continue
+            
+            # Match timeframe
+            t_tf = str(trade.get("timeframe") or "").strip().upper()
+            if not t_tf:
+                cmt = str(trade.get("comment") or "").upper()
+                for cand in ("1M", "5M", "15M", "30M", "1H", "4H", "1D"):
+                    if f"-{cand}" in cmt or f"_{cand}" in cmt or f" {cand}" in cmt:
+                        t_tf = cand
+                        break
+            if not t_tf:
+                t_tf = "5M"
+            
+            if t_tf != tf_norm:
+                continue
+            
+            matched_tickets.add(ticket)
+            setup_id = trade.get("setup_id")
+            if setup_id:
+                active_setups.add(str(setup_id))
+            else:
+                # Fallback cluster by 10s window
+                cluster_time = int(trade.get("opened_at", 0)) // 10
+                active_setups.add(f"{t_sym}_{trade.get('type')}_{t_tf}_{cluster_time}")
+        
+        # 2. Check directly in MT5 for positions with ScalperBot magic number (999333)
         if MT5_AVAILABLE:
             try:
                 with self.mt5_lock:
-                    positions = mt5.positions_get(symbol=symbol)
+                    positions = mt5.positions_get()
                     if positions:
                         for p in positions:
-                            if getattr(p, "magic", None) == 999333:
-                                return True
+                            if getattr(p, "magic", None) != 999333:
+                                continue
+                            if clean_base_symbol(p.symbol) != sym_clean:
+                                continue
+                            if p.ticket in matched_tickets:
+                                continue  # Already counted in setup
+                            
+                            # Parse timeframe from comment or active orders
+                            cmt = str(getattr(p, "comment", "") or "").upper()
+                            p_tf = None
+                            for cand in ("1M", "5M", "15M", "30M", "1H", "4H", "1D"):
+                                if f"-{cand}" in cmt or f"_{cand}" in cmt or f" {cand}" in cmt:
+                                    p_tf = cand
+                                    break
+                            if not p_tf:
+                                p_tf = "5M"
+                            
+                            if p_tf != tf_norm:
+                                continue
+                            
+                            cluster_time = int(getattr(p, "time", 0)) // 10
+                            active_setups.add(f"mt5_{sym_clean}_{p.type}_{p_tf}_{cluster_time}")
             except Exception:
                 pass
-        return False
+        
+        return len(active_setups)
+
+    def _has_open_position(self, symbol: str, timeframe: Optional[str] = None) -> bool:
+        """
+        Check if the bot has reached the maximum allowed open trades.
+        If timeframe is None, checks if any active position exists on symbol (backwards-compatible).
+        If timeframe is provided, checks if count >= self.max_trades_per_tf (default 2).
+        """
+        if timeframe is None:
+            sym_clean = clean_base_symbol(symbol)
+            for trade in self.active_bot_orders.values():
+                if clean_base_symbol(trade.get("symbol", "")) == sym_clean:
+                    return True
+            if MT5_AVAILABLE:
+                try:
+                    with self.mt5_lock:
+                        positions = mt5.positions_get()
+                        if positions:
+                            for p in positions:
+                                if getattr(p, "magic", None) == 999333 and clean_base_symbol(p.symbol) == sym_clean:
+                                    return True
+                except Exception:
+                    pass
+            return False
+        else:
+            open_count = self.count_open_trades_for_timeframe(symbol, timeframe)
+            return open_count >= self.max_trades_per_tf
 
     # ─────────────────────────────────────────────────────────────────────────
     # Closed Bar Setup Evaluator for a Specific Symbol & Strategy
     # ─────────────────────────────────────────────────────────────────────────
     def _process_closed_bar_for_symbol(self, broker_sym: str, sym_state: Dict[str, Any], closed_rates, current_bar,
                                        config_sym: Optional[str] = None, strategy_name: Optional[str] = None,
-                                       custom_lot: Optional[float] = None):
+                                       custom_lot: Optional[float] = None, timeframe: Optional[str] = None):
         if config_sym is None:
             config_sym = broker_sym
+        if timeframe is None:
+            timeframe = sym_state.get("timeframe", "5M")
         active_strat = strategy_name if strategy_name else self.strategy
         n = len(closed_rates)
         if n < 20:
             return
 
-        # Safeguard: prevent opening duplicate positions if a bot trade is already active on this symbol
-        if self._has_open_position(broker_sym):
-            sym_state["scan_status"] = f"POSITION_ACTIVE ({broker_sym})"
+        # Safeguard: prevent opening duplicate positions if max trades per timeframe already reached
+        if self._has_open_position(broker_sym, timeframe=timeframe):
+            sym_state["scan_status"] = f"MAX_TRADES_ACTIVE ({broker_sym} {timeframe})"
             return
 
         highs = [float(r["high"]) for r in closed_rates]
@@ -870,35 +1148,16 @@ class ScalperBot:
                 "tp1": tp1
             }
             print(f"[SCALPER_BOT] >>> SELL Signal ({active_strat}) on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
-            if custom_lot is not None:
-                try:
-                    self._execute_signal(
-                        symbol=broker_sym,
-                        signal_type="SELL",
-                        entry=entry,
-                        sl=sl,
-                        tp1=tp1,
-                        strategy_name=strat_name,
-                        custom_lot=custom_lot
-                    )
-                except TypeError:
-                    self._execute_signal(
-                        symbol=broker_sym,
-                        signal_type="SELL",
-                        entry=entry,
-                        sl=sl,
-                        tp1=tp1,
-                        strategy_name=strat_name
-                    )
-            else:
-                self._execute_signal(
-                    symbol=broker_sym,
-                    signal_type="SELL",
-                    entry=entry,
-                    sl=sl,
-                    tp1=tp1,
-                    strategy_name=strat_name
-                )
+            self._execute_signal(
+                symbol=broker_sym,
+                signal_type="SELL",
+                entry=entry,
+                sl=sl,
+                tp1=tp1,
+                strategy_name=strat_name,
+                custom_lot=custom_lot,
+                timeframe=timeframe
+            )
 
         elif is_buy:
             entry = float(current_bar["open"])
@@ -926,41 +1185,22 @@ class ScalperBot:
                 "tp1": tp1
             }
             print(f"[SCALPER_BOT] >>> BUY Signal ({active_strat}) on {broker_sym} @ {entry:.3f}! Executing trade immediately (< 3s)...", flush=True)
-            if custom_lot is not None:
-                try:
-                    self._execute_signal(
-                        symbol=broker_sym,
-                        signal_type="BUY",
-                        entry=entry,
-                        sl=sl,
-                        tp1=tp1,
-                        strategy_name=strat_name,
-                        custom_lot=custom_lot
-                    )
-                except TypeError:
-                    self._execute_signal(
-                        symbol=broker_sym,
-                        signal_type="BUY",
-                        entry=entry,
-                        sl=sl,
-                        tp1=tp1,
-                        strategy_name=strat_name
-                    )
-            else:
-                self._execute_signal(
-                    symbol=broker_sym,
-                    signal_type="BUY",
-                    entry=entry,
-                    sl=sl,
-                    tp1=tp1,
-                    strategy_name=strat_name
-                )
+            self._execute_signal(
+                symbol=broker_sym,
+                signal_type="BUY",
+                entry=entry,
+                sl=sl,
+                tp1=tp1,
+                strategy_name=strat_name,
+                custom_lot=custom_lot,
+                timeframe=timeframe
+            )
 
     # ─────────────────────────────────────────────────────────────────────────
     # 2-Tranche Institutional Execution with Auto-BE Registration
     # ─────────────────────────────────────────────────────────────────────────
     def _execute_signal(self, symbol: str, signal_type: str, entry: float, sl: float, tp1: float, strategy_name: str,
-                        custom_lot: Optional[float] = None, **kwargs):
+                        custom_lot: Optional[float] = None, timeframe: Optional[str] = None, **kwargs):
         # Strict user risk constraint: Gold lot size <= 1.0
         is_gold = "XAU" in symbol.upper() or "GOLD" in symbol.upper()
         if custom_lot is not None:
@@ -985,28 +1225,31 @@ class ScalperBot:
             tp2 = (entry + t_dist * 2.2) if direction == 1 else max(0.001, entry - t_dist * 2.2)
             trail_active = False
 
+        # Resolve timeframe & unique setup id
+        tf_label = str(timeframe or kwargs.get("timeframe") or "5M").strip().upper()
+        setup_id = f"{symbol}_{tf_label}_{int(time.time() * 1000)}"
+
         # Tranche volume calculation
         is_multi_tranche = (strat in ("TAYYAB_ENHANCED", "CHAMPION_SCALPER", "HAIDER_ENHANCED"))
         if strat == "TAYYAB_ENHANCED":
-            base_label = "Tayyab-Enhanced"
+            base_label = "Tayyab"
         elif strat == "CHAMPION_SCALPER":
-            base_label = "Champion-Scalp"
+            base_label = "Champion"
         elif strat == "HAIDER_ENHANCED":
-            base_label = "Haider-Enhanced"
+            base_label = "Haider"
         else:
-            base_label = "Haider-Gold"
+            base_label = "Gold"
 
         if total_lot >= 0.02 and is_multi_tranche:
             tranche_1_vol = round(total_lot * 0.5, 2)
             tranche_2_vol = round(total_lot - tranche_1_vol, 2)
-            extended_tp = (entry + t_dist * 12.0) if direction == 1 else max(0.001, entry - t_dist * 12.0)
             orders_to_place = [
-                {"vol": tranche_1_vol, "tp": tp1, "comment": f"{base_label} [TP1]", "is_runner": False},
-                {"vol": tranche_2_vol, "tp": extended_tp, "comment": f"{base_label} [Runner]", "is_runner": True, "auto_be_target": tp1, "tp2_milestone": tp2, "trail_runner": trail_active}
+                {"vol": tranche_1_vol, "tp": tp1, "comment": f"{base_label}-{tf_label} [TP1]", "is_runner": False},
+                {"vol": tranche_2_vol, "tp": tp2, "comment": f"{base_label}-{tf_label} [TP2]", "is_runner": True, "auto_be_target": tp1, "tp2_milestone": tp2, "trail_runner": trail_active}
             ]
         else:
             orders_to_place = [
-                {"vol": total_lot, "tp": tp1, "comment": base_label, "is_runner": False}
+                {"vol": total_lot, "tp": tp1, "comment": f"{base_label}-{tf_label}", "is_runner": False}
             ]
 
         executed_orders = []
@@ -1024,6 +1267,9 @@ class ScalperBot:
                 trade_info = {
                     "ticket": ticket,
                     "symbol": symbol,
+                    "timeframe": tf_label,
+                    "setup_id": setup_id,
+                    "strategy": strat,
                     "type": signal_type,
                     "volume": plan["vol"],
                     "entry_price": res.get("price", entry),
@@ -1219,9 +1465,10 @@ class ScalperBot:
                 for p in positions:
                     if getattr(p, "magic", None) == 999333 and p.ticket not in self.active_bot_orders:
                         cmt = getattr(p, "comment", "") or ""
-                        is_runner = "[Runner]" in cmt or "Runner" in cmt
-                        # Derive Auto-BE target for runner: 50% retracement of impulse
-                        target_be = (float(p.price_open) + (abs(float(p.tp) - float(p.price_open)) / 2.2)) if is_runner and p.tp else None
+                        is_runner = "[Runner]" in cmt or "Runner" in cmt or "[TP2]" in cmt
+                        direction = 1 if p.type == 0 else -1
+                        # Derive Auto-BE target for runner with correct directional offset
+                        target_be = (float(p.price_open) + direction * (abs(float(p.tp) - float(p.price_open)) / 2.2)) if is_runner and p.tp else None
                         self.active_bot_orders[p.ticket] = {
                             "ticket": p.ticket,
                             "symbol": p.symbol,
@@ -1237,7 +1484,6 @@ class ScalperBot:
                             "comment": cmt
                         }
                         if is_runner and p.ticket not in neural_sentinel.active_tracks:
-                            direction = 1 if p.type == 0 else -1
                             t_dist = abs(float(p.tp) - float(p.price_open)) / 6.0 if p.tp else 1.0
                             neural_sentinel.register_trade(
                                 ticket=p.ticket,
@@ -1264,6 +1510,17 @@ class ScalperBot:
                     curr_sl = float(pos.sl)
                     is_buy = (pos.type == 0)
 
+                    # Query true symbol info for accurate digits and point specifications
+                    s_info = None
+                    try:
+                        with self.mt5_lock:
+                            s_info = mt5.symbol_info(pos.symbol)
+                    except Exception:
+                        pass
+                    is_jpy_or_gold = "JPY" in pos.symbol.upper() or "XAU" in pos.symbol.upper() or "GOLD" in pos.symbol.upper()
+                    digits = int(s_info.digits) if (s_info and s_info.digits is not None) else (3 if is_jpy_or_gold else 5)
+                    point = float(s_info.point) if (s_info and s_info.point is not None) else (0.001 if is_jpy_or_gold else 0.00001)
+
                     # 1. Neural Sentinel Multi-Neuron Real-Time Evaluation
                     bars_data = None
                     try:
@@ -1277,7 +1534,6 @@ class ScalperBot:
                     except Exception:
                         bars_data = None
 
-                    point = getattr(pos, 'point', 0.001) or 0.001
                     eval_res = neural_sentinel.evaluate_trade(
                         ticket=ticket,
                         current_price=float(pos.price_current),
@@ -1287,24 +1543,22 @@ class ScalperBot:
 
                     if eval_res.get("should_update_mt5"):
                         new_sl = eval_res["proposed_sl"]
-                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
                         req = {
                             "action": mt5.TRADE_ACTION_SLTP,
                             "position": ticket,
                             "symbol": pos.symbol,
                             "sl": round(new_sl, digits),
-                            "tp": float(pos.tp),
+                            "tp": round(float(pos.tp), digits) if pos.tp else 0.0,
                         }
                         with self.mt5_lock:
                             res = mt5.order_send(req)
                         if res and res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, 'TRADE_RETCODE_PLACED', 10008)):
                             trade["current_sl"] = new_sl
-                            print(f"[SCALPER_BOT:NEURAL-RATCHET] >>> Ratcheted SL for #{ticket} ({pos.symbol}) to {new_sl:.3f} | Milestone: {eval_res['milestone']} | Extra Profit Locked: +${eval_res.get('extra_profit_captured', 0):.2f}", flush=True)
+                            print(f"[SCALPER_BOT:NEURAL-RATCHET] >>> Ratcheted SL for #{ticket} ({pos.symbol}) to {new_sl:.{digits}f} | Milestone: {eval_res['milestone']} | Extra Profit Locked: +${eval_res.get('extra_profit_captured', 0):.2f}", flush=True)
 
                     # If Neural Sentinel is actively managing this runner, it controls all trailing ratchets
                     if ticket in neural_sentinel.active_tracks:
                         continue
-
 
                     # 2. Initial Auto-BE to entry price when TP1 reached
                     should_be = False
@@ -1314,24 +1568,24 @@ class ScalperBot:
                         should_be = True
 
                     if should_be:
-                        digits = getattr(pos, 'digits', 3) if (hasattr(pos, 'digits') and pos.digits is not None) else 3
                         req = {
                             "action": mt5.TRADE_ACTION_SLTP,
                             "position": ticket,
                             "symbol": pos.symbol,
                             "sl": round(entry_px, digits),
-                            "tp": float(pos.tp),
+                            "tp": round(float(pos.tp), digits) if pos.tp else 0.0,
                         }
                         with self.mt5_lock:
                             res = mt5.order_send(req)
                         if res and res.retcode in (mt5.TRADE_RETCODE_DONE, getattr(mt5, 'TRADE_RETCODE_PLACED', 10008)):
                             trade["be_done"] = True
-                            print(f"[SCALPER_BOT:AUTO-BE] >>> Moved SL for #{ticket} ({pos.symbol}) to Breakeven @ {entry_px:.3f}!", flush=True)
+                            print(f"[SCALPER_BOT:AUTO-BE] >>> Moved SL for #{ticket} ({pos.symbol}) to Breakeven @ {entry_px:.{digits}f}!", flush=True)
                             send_discord_alert(
                                 title=f"🛡️ Auto-Breakeven Activated: #{ticket} ({pos.symbol})",
-                                description=f"Tranche 2 Runner hit TP1 target `{target_tp1:.3f}` on **{pos.symbol}**. Stop Loss automatically moved to Breakeven (`{entry_px:.3f}`). Trade is now 100% risk-free!",
+                                description=f"Tranche 2 Runner hit TP1 target `{target_tp1:.{digits}f}` on **{pos.symbol}**. Stop Loss automatically moved to Breakeven (`{entry_px:.{digits}f}`). Trade is now 100% risk-free!",
                                 color=0x089981
                             )
+
             except Exception as e:
                 logger.error(f"Error in autobe loop: {e}")
 

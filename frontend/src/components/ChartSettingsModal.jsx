@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   X, Sliders, Palette, Eye, Grid, Globe, Zap, Check, 
   Layers, Target, BookOpen, ExternalLink, Activity, 
-  Flame, Trophy, Cpu, ShieldCheck 
+  Flame, Trophy, Cpu, ShieldCheck, AlertTriangle 
 } from 'lucide-react';
 
 export default function ChartSettingsModal({ 
@@ -26,6 +26,118 @@ export default function ChartSettingsModal({
   const [showPriceLine, setShowPriceLine] = useState(currentSettings.showPriceLine !== false);
   const [showWatermark, setShowWatermark] = useState(currentSettings.showWatermark || false);
   const [timezone, setTimezone] = useState(currentSettings.timezone || 'UTC');
+
+  // Drawdown Guardian State (default unset/empty for future activation)
+  const [dailyPct, setDailyPct] = useState('');
+  const [dailyUsd, setDailyUsd] = useState('');
+  const [weeklyPct, setWeeklyPct] = useState('');
+  const [weeklyUsd, setWeeklyUsd] = useState('');
+  const [monthlyPct, setMonthlyPct] = useState('');
+  const [monthlyUsd, setMonthlyUsd] = useState('');
+  const [ddLoading, setDdLoading] = useState(false);
+  const [ddSaveSuccess, setDdSaveSuccess] = useState(false);
+  const [ddBreached, setDdBreached] = useState(false);
+  const [ddBreachReason, setDdBreachReason] = useState(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      fetch('/api/scalper/bot/drawdown-limits')
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.drawdown_limits) {
+            const dl = data.drawdown_limits;
+            setDailyPct(dl.daily_pct != null ? String(dl.daily_pct) : '');
+            setDailyUsd(dl.daily_usd != null ? String(dl.daily_usd) : '');
+            setWeeklyPct(dl.weekly_pct != null ? String(dl.weekly_pct) : '');
+            setWeeklyUsd(dl.weekly_usd != null ? String(dl.weekly_usd) : '');
+            setMonthlyPct(dl.monthly_pct != null ? String(dl.monthly_pct) : '');
+            setMonthlyUsd(dl.monthly_usd != null ? String(dl.monthly_usd) : '');
+            setDdBreached(Boolean(dl.breached));
+            setDdBreachReason(dl.breach_reason || null);
+          }
+        })
+        .catch(err => console.error('Failed to fetch drawdown limits:', err));
+    }
+  }, [isOpen]);
+
+  const handleSaveDrawdownLimits = async () => {
+    setDdLoading(true);
+    setDdSaveSuccess(false);
+    try {
+      const payload = {
+        daily_pct: dailyPct.trim() !== '' ? parseFloat(dailyPct) : null,
+        daily_usd: dailyUsd.trim() !== '' ? parseFloat(dailyUsd) : null,
+        weekly_pct: weeklyPct.trim() !== '' ? parseFloat(weeklyPct) : null,
+        weekly_usd: weeklyUsd.trim() !== '' ? parseFloat(weeklyUsd) : null,
+        monthly_pct: monthlyPct.trim() !== '' ? parseFloat(monthlyPct) : null,
+        monthly_usd: monthlyUsd.trim() !== '' ? parseFloat(monthlyUsd) : null
+      };
+      const res = await fetch('/api/scalper/bot/drawdown-limits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDdSaveSuccess(true);
+        setTimeout(() => setDdSaveSuccess(false), 3000);
+      }
+    } catch (e) {
+      console.error('Error saving drawdown limits:', e);
+    } finally {
+      setDdLoading(false);
+    }
+  };
+
+  const handleClearDrawdownLimits = async () => {
+    setDailyPct('');
+    setDailyUsd('');
+    setWeeklyPct('');
+    setWeeklyUsd('');
+    setMonthlyPct('');
+    setMonthlyUsd('');
+    setDdLoading(true);
+    try {
+      await fetch('/api/scalper/bot/drawdown-limits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          daily_pct: null,
+          daily_usd: null,
+          weekly_pct: null,
+          weekly_usd: null,
+          monthly_pct: null,
+          monthly_usd: null,
+          reset_breach: true
+        })
+      });
+      setDdBreached(false);
+      setDdBreachReason(null);
+      setDdSaveSuccess(true);
+      setTimeout(() => setDdSaveSuccess(false), 2500);
+    } catch (e) {
+      console.error('Error clearing drawdown limits:', e);
+    } finally {
+      setDdLoading(false);
+    }
+  };
+
+  const handleResetBreach = async () => {
+    try {
+      const res = await fetch('/api/scalper/bot/drawdown-limits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reset_breach: true })
+      });
+      const data = await res.json();
+      if (data.success) {
+        setDdBreached(false);
+        setDdBreachReason(null);
+      }
+    } catch (e) {
+      console.error('Error resetting breach:', e);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -123,6 +235,7 @@ export default function ChartSettingsModal({
           }}>
             {[
               { id: 'signals', label: 'Signals & Auto-Trade', icon: Zap, badge: 'Live MT5' },
+              { id: 'drawdown', label: 'Drawdown Guardian', icon: ShieldCheck, badge: ddBreached ? 'TRIPPED' : 'Safety' },
               { id: 'modules', label: 'Analysis Tools & Tabs', icon: Layers },
               { id: 'symbol', label: 'Candles & Palette', icon: Palette },
               { id: 'appearance', label: 'Canvas & Grid', icon: Grid },
@@ -505,6 +618,369 @@ export default function ChartSettingsModal({
                     </div>
                   </div>
 
+                </div>
+              </div>
+            )}
+
+            {/* DRAWDOWN GUARDIAN TAB */}
+            {activeTab === 'drawdown' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <ShieldCheck size={18} color="#00f2fe" />
+                    <span style={{ fontSize: 14, fontWeight: 700, color: '#fff', textTransform: 'uppercase', letterSpacing: 0.5 }}>
+                      Account Max Drawdown Guardian (Circuit Breaker)
+                    </span>
+                  </div>
+                  <div style={{ fontSize: 12, color: '#8b949e', lineHeight: 1.5 }}>
+                    Set daily, weekly, and monthly account equity drawdown limits in percentage (%) and money USD ($). If any limit is breached, the bot <strong style={{ color: '#f23645' }}>instantly halts all autonomous trading</strong> and dispatches an urgent notification to safeguard capital.
+                    <br />
+                    <span style={{ color: '#c084fc', fontStyle: 'italic' }}>* Currently dormant for future activation. Leave inputs blank / empty for unrestricted trading.</span>
+                  </div>
+                </div>
+
+                {/* Tripped Alert Banner */}
+                {ddBreached && (
+                  <div style={{
+                    padding: '12px 14px',
+                    borderRadius: 6,
+                    background: 'rgba(242, 54, 69, 0.15)',
+                    border: '1px solid #f23645',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 12
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <AlertTriangle size={20} color="#f23645" />
+                      <div>
+                        <div style={{ fontSize: 12.5, fontWeight: 700, color: '#f23645' }}>
+                          CIRCUIT BREAKER TRIGGERED: ALL TRADING HALTED
+                        </div>
+                        <div style={{ fontSize: 11.5, color: '#ffb3ba' }}>
+                          {ddBreachReason || 'A max drawdown limit was reached.'}
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleResetBreach}
+                      style={{
+                        padding: '6px 14px',
+                        background: '#f23645',
+                        color: '#fff',
+                        border: 'none',
+                        borderRadius: 4,
+                        fontSize: 11,
+                        fontWeight: 700,
+                        cursor: 'pointer'
+                      }}
+                    >
+                      Reset & Re-arm
+                    </button>
+                  </div>
+                )}
+
+                {/* 3 Limit Cards */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {/* LIMIT 1: DAILY */}
+                  <div style={{
+                    padding: '14px 16px',
+                    borderRadius: 6,
+                    background: '#181c27',
+                    border: '1px solid #2a2e39',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          padding: '2px 6px',
+                          borderRadius: 3,
+                          background: 'rgba(0, 242, 254, 0.15)',
+                          color: '#00f2fe',
+                          border: '1px solid rgba(0, 242, 254, 0.3)'
+                        }}>
+                          DAILY
+                        </span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Daily Max Drawdown</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Resets at 00:00 UTC</span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                          Max Drawdown (% of Equity)
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#131722', border: '1px solid #2a2e39', borderRadius: 4, padding: '0 8px' }}>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            placeholder="No limit set (e.g. 3.0)"
+                            value={dailyPct}
+                            onChange={e => setDailyPct(e.target.value)}
+                            style={{
+                              flex: 1,
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#fff',
+                              padding: '8px 0',
+                              fontSize: 12,
+                              outline: 'none'
+                            }}
+                          />
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>%</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                          Max Drawdown (Money USD $)
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#131722', border: '1px solid #2a2e39', borderRadius: 4, padding: '0 8px' }}>
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700, marginRight: 4 }}>$</span>
+                          <input
+                            type="number"
+                            step="10"
+                            min="0"
+                            placeholder="No limit set (e.g. 300)"
+                            value={dailyUsd}
+                            onChange={e => setDailyUsd(e.target.value)}
+                            style={{
+                              flex: 1,
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#fff',
+                              padding: '8px 0',
+                              fontSize: 12,
+                              outline: 'none'
+                            }}
+                          />
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>USD</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* LIMIT 2: WEEKLY */}
+                  <div style={{
+                    padding: '14px 16px',
+                    borderRadius: 6,
+                    background: '#181c27',
+                    border: '1px solid #2a2e39',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          padding: '2px 6px',
+                          borderRadius: 3,
+                          background: 'rgba(168, 85, 247, 0.15)',
+                          color: '#c084fc',
+                          border: '1px solid rgba(168, 85, 247, 0.3)'
+                        }}>
+                          WEEKLY
+                        </span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Weekly Max Drawdown</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Resets Mondays 00:00 UTC</span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                          Max Drawdown (% of Equity)
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#131722', border: '1px solid #2a2e39', borderRadius: 4, padding: '0 8px' }}>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            placeholder="No limit set (e.g. 6.0)"
+                            value={weeklyPct}
+                            onChange={e => setWeeklyPct(e.target.value)}
+                            style={{
+                              flex: 1,
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#fff',
+                              padding: '8px 0',
+                              fontSize: 12,
+                              outline: 'none'
+                            }}
+                          />
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>%</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                          Max Drawdown (Money USD $)
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#131722', border: '1px solid #2a2e39', borderRadius: 4, padding: '0 8px' }}>
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700, marginRight: 4 }}>$</span>
+                          <input
+                            type="number"
+                            step="25"
+                            min="0"
+                            placeholder="No limit set (e.g. 600)"
+                            value={weeklyUsd}
+                            onChange={e => setWeeklyUsd(e.target.value)}
+                            style={{
+                              flex: 1,
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#fff',
+                              padding: '8px 0',
+                              fontSize: 12,
+                              outline: 'none'
+                            }}
+                          />
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>USD</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* LIMIT 3: MONTHLY */}
+                  <div style={{
+                    padding: '14px 16px',
+                    borderRadius: 6,
+                    background: '#181c27',
+                    border: '1px solid #2a2e39',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <span style={{
+                          fontSize: 10,
+                          fontWeight: 800,
+                          padding: '2px 6px',
+                          borderRadius: 3,
+                          background: 'rgba(245, 158, 11, 0.15)',
+                          color: '#fbbf24',
+                          border: '1px solid rgba(245, 158, 11, 0.3)'
+                        }}>
+                          MONTHLY
+                        </span>
+                        <span style={{ fontSize: 13, fontWeight: 700, color: '#fff' }}>Monthly Max Drawdown</span>
+                      </div>
+                      <span style={{ fontSize: 11, color: '#8b949e' }}>Resets 1st of month 00:00 UTC</span>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                          Max Drawdown (% of Equity)
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#131722', border: '1px solid #2a2e39', borderRadius: 4, padding: '0 8px' }}>
+                          <input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            placeholder="No limit set (e.g. 10.0)"
+                            value={monthlyPct}
+                            onChange={e => setMonthlyPct(e.target.value)}
+                            style={{
+                              flex: 1,
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#fff',
+                              padding: '8px 0',
+                              fontSize: 12,
+                              outline: 'none'
+                            }}
+                          />
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>%</span>
+                        </div>
+                      </div>
+
+                      <div>
+                        <label style={{ display: 'block', fontSize: 11, color: '#8b949e', marginBottom: 4 }}>
+                          Max Drawdown (Money USD $)
+                        </label>
+                        <div style={{ display: 'flex', alignItems: 'center', background: '#131722', border: '1px solid #2a2e39', borderRadius: 4, padding: '0 8px' }}>
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700, marginRight: 4 }}>$</span>
+                          <input
+                            type="number"
+                            step="50"
+                            min="0"
+                            placeholder="No limit set (e.g. 1000)"
+                            value={monthlyUsd}
+                            onChange={e => setMonthlyUsd(e.target.value)}
+                            style={{
+                              flex: 1,
+                              background: 'transparent',
+                              border: 'none',
+                              color: '#fff',
+                              padding: '8px 0',
+                              fontSize: 12,
+                              outline: 'none'
+                            }}
+                          />
+                          <span style={{ fontSize: 11, color: '#8b949e', fontWeight: 700 }}>USD</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Save & Reset Actions */}
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 6 }}>
+                  <button
+                    onClick={handleClearDrawdownLimits}
+                    disabled={ddLoading}
+                    style={{
+                      padding: '8px 14px',
+                      background: 'transparent',
+                      border: '1px solid #2a2e39',
+                      color: '#8b949e',
+                      borderRadius: 4,
+                      fontSize: 11.5,
+                      fontWeight: 600,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Clear All Limits
+                  </button>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                    {ddSaveSuccess && (
+                      <span style={{ fontSize: 12, color: '#10b981', fontWeight: 700, display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <Check size={14} /> Limits Saved!
+                      </span>
+                    )}
+                    <button
+                      onClick={handleSaveDrawdownLimits}
+                      disabled={ddLoading}
+                      style={{
+                        padding: '8px 18px',
+                        background: '#00f2fe',
+                        color: '#000',
+                        border: 'none',
+                        borderRadius: 4,
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 6
+                      }}
+                    >
+                      <ShieldCheck size={15} />
+                      {ddLoading ? 'Saving...' : 'Save Drawdown Limits'}
+                    </button>
+                  </div>
                 </div>
               </div>
             )}

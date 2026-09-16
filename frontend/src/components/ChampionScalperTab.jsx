@@ -1114,7 +1114,23 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
                 {activeChampionOrders.map((ord, idx) => (
                   <tr key={idx} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                     <td style={{ padding: '8px 10px', color: '#ffffff', fontWeight: 600 }}>#{ord.ticket}</td>
-                    <td style={{ padding: '8px 10px', color: '#10b981', fontWeight: 700 }}>{ord.symbol}</td>
+                    <td style={{ padding: '8px 10px', color: '#10b981', fontWeight: 700 }}>
+                      {ord.symbol}
+                      {ord.timeframe && (
+                        <span style={{
+                          marginLeft: 6,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          padding: '1px 5px',
+                          borderRadius: 3,
+                          background: 'rgba(16, 185, 129, 0.22)',
+                          color: '#6ee7b7',
+                          border: '1px solid rgba(16, 185, 129, 0.4)'
+                        }}>
+                          {ord.timeframe}
+                        </span>
+                      )}
+                    </td>
                     <td style={{ padding: '8px 10px', color: ord.type === 'BUY' ? '#089981' : '#f23645', fontWeight: 700 }}>
                       {ord.type}
                     </td>

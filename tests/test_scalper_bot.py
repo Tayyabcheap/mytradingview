@@ -149,12 +149,12 @@ class TestScalperBot(unittest.TestCase):
         sym_state["last_bar_time"] = base_time + 29 * 300
 
         executed_calls = []
-        def mock_execute(symbol, signal_type, entry, sl, tp1, strategy_name):
+        def mock_execute(symbol, signal_type, entry, sl, tp1, strategy_name, *args, **kwargs):
             executed_calls.append({
                 "symbol": symbol, "type": signal_type, "entry": entry, "sl": sl, "tp1": tp1, "strat": strategy_name
             })
         self.bot._execute_signal = mock_execute
-        self.bot._has_open_position = lambda sym: False
+        self.bot._has_open_position = lambda sym, *args, **kwargs: False
 
         t_start = time.perf_counter()
         self.bot._process_closed_bar_for_symbol("XAUUSDc", sym_state, bars, current_bar)
@@ -263,7 +263,7 @@ class TestScalperBot(unittest.TestCase):
         self.assertEqual(self.bot.get_lot_for_symbol("XAUUSD"), 0.05)
 
     def test_order_comments_strategy_labeling_and_length(self):
-        """Ensure order comments clearly state Haider-Enhanced and stay strictly <= 27 characters."""
+        """Ensure order comments clearly state strategy and stay strictly <= 27 characters."""
         sent_orders = []
         def mock_send(symbol, order_type_str, volume, sl, tp, comment):
             sent_orders.append({"vol": volume, "comment": comment})
@@ -273,28 +273,28 @@ class TestScalperBot(unittest.TestCase):
 
         # 1. Enhanced strategy with 2-tranche split
         self.bot.strategy = "HAIDER_ENHANCED"
-        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Haider-Scalper-Enhanced")
+        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Haider-Scalper-Enhanced", timeframe="5M")
         self.assertEqual(len(sent_orders), 2)
-        self.assertEqual(sent_orders[0]["comment"], "Haider-Enhanced [TP1]")
-        self.assertEqual(sent_orders[1]["comment"], "Haider-Enhanced [Runner]")
+        self.assertEqual(sent_orders[0]["comment"], "Haider-5M [TP1]")
+        self.assertEqual(sent_orders[1]["comment"], "Haider-5M [TP2]")
         for order in sent_orders:
             self.assertLessEqual(len(order["comment"]), 27, f"Comment {order['comment']} exceeds 27 chars!")
 
         # 2. Baseline REAL_DIP strategy
         sent_orders.clear()
         self.bot.strategy = "REAL_DIP"
-        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Haider-Gold-Scalper")
+        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Haider-Gold-Scalper", timeframe="5M")
         self.assertEqual(len(sent_orders), 1)
-        self.assertEqual(sent_orders[0]["comment"], "Haider-Gold")
+        self.assertEqual(sent_orders[0]["comment"], "Gold-5M")
         self.assertLessEqual(len(sent_orders[0]["comment"]), 27)
 
         # 3. Champion Scalper strategy with 2-tranche split
         sent_orders.clear()
         self.bot.strategy = "CHAMPION_SCALPER"
-        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Champion-Scalper")
+        self.bot._execute_signal("XAUUSDc", "BUY", entry=2000.0, sl=1985.0, tp1=2010.0, strategy_name="Champion-Scalper", timeframe="5M")
         self.assertEqual(len(sent_orders), 2)
-        self.assertEqual(sent_orders[0]["comment"], "Champion-Scalp [TP1]")
-        self.assertEqual(sent_orders[1]["comment"], "Champion-Scalp [Runner]")
+        self.assertEqual(sent_orders[0]["comment"], "Champion-5M [TP1]")
+        self.assertEqual(sent_orders[1]["comment"], "Champion-5M [TP2]")
         for order in sent_orders:
             self.assertLessEqual(len(order["comment"]), 27, f"Comment {order['comment']} exceeds 27 chars!")
 
@@ -312,25 +312,48 @@ class TestScalperBot(unittest.TestCase):
         self.assertIn("USDJPYm", self.bot.symbols)
 
     def test_has_open_position_prevents_duplicate_entries(self):
-        """Verify that _has_open_position detects active trades and prevents duplicate entries on the same symbol."""
+        """Verify that _has_open_position detects active trades and allows max 2 trades per timeframe."""
         self.bot.active_bot_orders.clear()
         self.assertFalse(self.bot._has_open_position("TESTUSD"))
 
-        # Add active order in memory
+        # Setup 1 on 5M: allowed
         self.bot.active_bot_orders[999001] = {
             "ticket": 999001,
             "symbol": "TESTUSD",
+            "timeframe": "5M",
+            "setup_id": "setup_1",
             "type": "BUY",
             "volume": 0.05
         }
+        # With max_trades_per_tf = 2, 1 open trade still allows a 2nd trade on 5M
+        self.assertFalse(self.bot._has_open_position("TESTUSD", timeframe="5M"))
+        # But backwards-compatible timeframe=None check returns True
         self.assertTrue(self.bot._has_open_position("TESTUSD"))
-        self.assertFalse(self.bot._has_open_position("EURUSDc"))
 
-        # Verify _process_closed_bar_for_symbol aborts if position already active
+        # Setup 2 on 5M: allowed
+        self.bot.active_bot_orders[999002] = {
+            "ticket": 999002,
+            "symbol": "TESTUSD",
+            "timeframe": "5M",
+            "setup_id": "setup_2",
+            "type": "BUY",
+            "volume": 0.05
+        }
+        # Now 2 trades are active on 5M, reaching the cap!
+        self.assertTrue(self.bot._has_open_position("TESTUSD", timeframe="5M"))
+        # But 15M timeframe on the same pair is still free!
+        self.assertFalse(self.bot._has_open_position("TESTUSD", timeframe="15M"))
+
+        # Verify _process_closed_bar_for_symbol aborts if max trades already active on 5M
         sym_state = self.bot._get_symbol_state("TESTUSD")
         sym_state["scan_status"] = "PENDING"
-        self.bot._process_closed_bar_for_symbol("TESTUSD", sym_state, [{"open": 1, "high": 2, "low": 0.5, "close": 1.5, "time": 100}] * 30, {"open": 1.5})
-        self.assertEqual(sym_state["scan_status"], "POSITION_ACTIVE (TESTUSD)")
+        self.bot._process_closed_bar_for_symbol(
+            "TESTUSD", sym_state,
+            [{"open": 1, "high": 2, "low": 0.5, "close": 1.5, "time": 100}] * 30,
+            {"open": 1.5},
+            timeframe="5M"
+        )
+        self.assertEqual(sym_state["scan_status"], "MAX_TRADES_ACTIVE (TESTUSD 5M)")
 
     def test_multi_timeframe_and_strategy_parameter_separation(self):
         """Test multi-timeframe mapping in TF_TIMEFRAME_MAP and distinct parameters."""
@@ -683,6 +706,147 @@ class TestNeuralSentinel(unittest.TestCase):
         self.assertEqual(del_res.status_code, 200)
         del_data = del_res.get_json()
         self.assertTrue(del_data["success"])
+
+    def test_max_trades_per_timeframe_isolation(self):
+        """Verify 2 trades per timeframe per pair limit with tranche deduplication and multi-TF isolation."""
+        bot = ScalperBot()
+        bot.active_bot_orders.clear()
+
+        # Multi-tranche setup 1 (TP1 and TP2 belonging to same setup_id)
+        bot.active_bot_orders[101] = {
+            "ticket": 101, "symbol": "EURUSDm", "timeframe": "5M",
+            "setup_id": "setup_alpha", "comment": "Tayyab-5M [TP1]"
+        }
+        bot.active_bot_orders[102] = {
+            "ticket": 102, "symbol": "EURUSDm", "timeframe": "5M",
+            "setup_id": "setup_alpha", "comment": "Tayyab-5M [TP2]"
+        }
+        # Multi-tranche must be counted as 1 distinct setup!
+        self.assertEqual(bot.count_open_trades_for_timeframe("EURUSDm", "5M"), 1)
+        self.assertFalse(bot._has_open_position("EURUSDm", timeframe="5M"))
+
+        # Multi-tranche setup 2 on same timeframe
+        bot.active_bot_orders[103] = {
+            "ticket": 103, "symbol": "EURUSDm", "timeframe": "5M",
+            "setup_id": "setup_beta", "comment": "Tayyab-5M [TP1]"
+        }
+        bot.active_bot_orders[104] = {
+            "ticket": 104, "symbol": "EURUSDm", "timeframe": "5M",
+            "setup_id": "setup_beta", "comment": "Tayyab-5M [TP2]"
+        }
+        # Now exactly 2 setups open on 5M -> cap reached!
+        self.assertEqual(bot.count_open_trades_for_timeframe("EURUSDm", "5M"), 2)
+        self.assertTrue(bot._has_open_position("EURUSDm", timeframe="5M"))
+
+        # Other timeframes on same pair (e.g. 15M, 1H) are independent and still open
+        self.assertEqual(bot.count_open_trades_for_timeframe("EURUSDm", "15M"), 0)
+        self.assertFalse(bot._has_open_position("EURUSDm", timeframe="15M"))
+        self.assertFalse(bot._has_open_position("EURUSDm", timeframe="1H"))
+
+        # Other pairs on 5M are independent and still open
+        self.assertEqual(bot.count_open_trades_for_timeframe("GBPJPYm", "5M"), 0)
+        self.assertFalse(bot._has_open_position("GBPJPYm", timeframe="5M"))
+
+    def test_drawdown_limits_circuit_breaker(self):
+        """Verify Daily, Weekly, and Monthly Max Drawdown circuit breakers halt trading when breached."""
+        bot = ScalperBot()
+        class MockAccountInfo:
+            def __init__(self, balance, equity):
+                self.balance = balance
+                self.equity = equity
+
+        # 1. Daily USD Limit Breached
+        bot.configure(drawdown_limits={
+            "daily_usd": 200.0,
+            "daily_pct": None,
+            "weekly_usd": None,
+            "weekly_pct": None,
+            "monthly_usd": None,
+            "monthly_pct": None
+        })
+        bot.enabled = True
+        bot.strategy_configs["TAYYAB_ENHANCED"]["enabled"] = True
+
+        # First tick initializes daily balance = 10000, equity = 10000
+        a1 = MockAccountInfo(balance=10000.0, equity=10000.0)
+        breached, _ = bot.check_account_drawdown_limits(a_info=a1)
+        self.assertFalse(breached)
+        self.assertTrue(bot.enabled)
+
+        # Equity drops to 9750 (-$250 > $200 limit) -> Breached!
+        a2 = MockAccountInfo(balance=10000.0, equity=9750.0)
+        breached, reason = bot.check_account_drawdown_limits(a_info=a2)
+        self.assertTrue(breached)
+        self.assertIn("Daily Max Drawdown Hit", reason)
+        self.assertFalse(bot.enabled)
+        self.assertFalse(bot.strategy_configs["TAYYAB_ENHANCED"]["enabled"])
+        self.assertTrue(bot.drawdown_limits["breached"])
+
+        # 2. Reset breach
+        bot.configure(drawdown_limits={"reset_breach": True})
+        self.assertFalse(bot.drawdown_limits.get("breached", False))
+
+        # 3. Daily Pct Limit Breached (e.g. 2.0%)
+        bot.configure(drawdown_limits={
+            "daily_usd": None,
+            "daily_pct": 2.0
+        })
+        bot.enabled = True
+        # Equity drops to 9750 (-2.5% > 2.0% limit) -> Breached!
+        breached, reason = bot.check_account_drawdown_limits(a_info=a2)
+        self.assertTrue(breached)
+        self.assertIn("Daily Max Drawdown Hit", reason)
+        self.assertFalse(bot.enabled)
+
+    def test_drawdown_limits_api_endpoints(self):
+        """Verify GET and POST /api/scalper/bot/drawdown-limits."""
+        # 1. GET initial limits
+        get_res = self.client.get("/api/scalper/bot/drawdown-limits")
+        self.assertEqual(get_res.status_code, 200)
+        data = get_res.get_json()
+        self.assertTrue(data.get("success"))
+        self.assertIn("drawdown_limits", data)
+
+        # 2. POST update limits
+        post_payload = {
+            "daily_pct": 3.0,
+            "daily_usd": 300.0,
+            "weekly_pct": 6.0,
+            "weekly_usd": 600.0,
+            "monthly_pct": 10.0,
+            "monthly_usd": 1000.0
+        }
+        post_res = self.client.post("/api/scalper/bot/drawdown-limits", json=post_payload)
+        self.assertEqual(post_res.status_code, 200)
+        post_data = post_res.get_json()
+        self.assertTrue(post_data.get("success"))
+        limits = post_data["drawdown_limits"]
+        self.assertEqual(limits["daily_pct"], 3.0)
+        self.assertEqual(limits["daily_usd"], 300.0)
+        self.assertEqual(limits["weekly_pct"], 6.0)
+        self.assertEqual(limits["weekly_usd"], 600.0)
+        self.assertEqual(limits["monthly_pct"], 10.0)
+        self.assertEqual(limits["monthly_usd"], 1000.0)
+
+        # 3. Clear/empty limits (as user instructed: set no value there for now)
+        clear_payload = {
+            "daily_pct": None,
+            "daily_usd": None,
+            "weekly_pct": None,
+            "weekly_usd": None,
+            "monthly_pct": None,
+            "monthly_usd": None,
+            "reset_breach": True
+        }
+        clear_res = self.client.post("/api/scalper/bot/drawdown-limits", json=clear_payload)
+        self.assertEqual(clear_res.status_code, 200)
+        c_limits = clear_res.get_json()["drawdown_limits"]
+        self.assertIsNone(c_limits["daily_pct"])
+        self.assertIsNone(c_limits["daily_usd"])
+        self.assertIsNone(c_limits["weekly_pct"])
+        self.assertIsNone(c_limits["weekly_usd"])
+        self.assertIsNone(c_limits["monthly_pct"])
+        self.assertIsNone(c_limits["monthly_usd"])
 
 
 if __name__ == "__main__":
