@@ -409,6 +409,9 @@ class ScalperBot:
                     base_s = clean_base_symbol(clean_s)
                     if base_s:
                         cfg["symbol_lot_sizes"][base_s] = clamped
+                        for existing_k in list(cfg["symbol_lot_sizes"].keys()):
+                            if clean_base_symbol(existing_k) == base_s:
+                                cfg["symbol_lot_sizes"][existing_k] = clamped
                 except (ValueError, TypeError):
                     pass
 
@@ -419,10 +422,13 @@ class ScalperBot:
                 if isinstance(tfs, list):
                     clean_tfs = [str(tf).strip().upper() for tf in tfs if tf]
                     clean_s = str(s).strip()
-                    cfg["symbol_timeframes"][clean_s] = clean_tfs
                     base_s = clean_base_symbol(clean_s)
+                    cfg["symbol_timeframes"][clean_s] = clean_tfs
                     if base_s:
                         cfg["symbol_timeframes"][base_s] = clean_tfs
+                        for existing_k in list(cfg["symbol_timeframes"].keys()):
+                            if clean_base_symbol(existing_k) == base_s:
+                                cfg["symbol_timeframes"][existing_k] = clean_tfs
 
         # Collect union of all strategy symbols to keep self.symbols and worker loop synchronized
         all_strat_syms = []
@@ -588,7 +594,8 @@ class ScalperBot:
                 if tayyab_on:
                     for s in tayyab_cfg.get("symbols", []):
                         lot = tayyab_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
-                        raw_tfs = tayyab_cfg.get("symbol_timeframes", {}).get(s, ["5M"])
+                        base_s = clean_base_symbol(s)
+                        raw_tfs = tayyab_cfg.get("symbol_timeframes", {}).get(s) or (tayyab_cfg.get("symbol_timeframes", {}).get(base_s) if base_s else None) or ["5M"]
                         if not raw_tfs or not isinstance(raw_tfs, list):
                             raw_tfs = ["5M"]
                         for tf in raw_tfs:

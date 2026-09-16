@@ -9,6 +9,71 @@ import PresetBar from './PresetBar';
 
 const AVAILABLE_TIMEFRAMES = ['1M', '5M', '15M', '30M', '1H'];
 
+// Dedicated robust lot input cell: allows typing decimals, backspacing, and Enter commit without jumping
+function LotInputCell({ sym, isGold, isBtc, value, onCommit }) {
+  const [text, setText] = useState(null);
+  const isFocusedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isFocusedRef.current) {
+      setText(null);
+    }
+  }, [value]);
+
+  const numVal = Number(value);
+  const displayVal = text !== null ? text : (!isNaN(numVal) && numVal > 0 ? numVal.toFixed(2) : (isGold ? '0.10' : isBtc ? '1.00' : '0.10'));
+
+  const handleCommit = (rawStr) => {
+    let num = parseFloat(rawStr);
+    const maxL = isGold ? 1.0 : 50.0;
+    if (isNaN(num) || num < 0.01) num = 0.01;
+    if (num > maxL) num = maxL;
+    num = parseFloat(num.toFixed(2));
+    setText(null);
+    onCommit(sym, num);
+  };
+
+  return (
+    <input
+      type="text"
+      inputMode="decimal"
+      value={displayVal}
+      onFocus={() => {
+        isFocusedRef.current = true;
+        setText(String(value ?? (isGold ? '0.10' : isBtc ? '1.00' : '0.10')));
+      }}
+      onChange={(e) => {
+        const sanitized = e.target.value.replace(/[^0-9.]/g, '');
+        const parts = sanitized.split('.');
+        const clean = parts[0] + (parts.length > 1 ? '.' + parts.slice(1).join('') : '');
+        setText(clean);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') {
+          e.target.blur();
+        }
+      }}
+      onBlur={() => {
+        isFocusedRef.current = false;
+        if (text !== null) {
+          handleCommit(text);
+        }
+      }}
+      style={{
+        width: 60,
+        textAlign: 'center',
+        background: '#151124',
+        border: '1px solid #3b3054',
+        borderRadius: 4,
+        color: '#ffffff',
+        fontWeight: 700,
+        fontSize: 12.5,
+        padding: '3px 4px'
+      }}
+    />
+  );
+}
+
 export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, onSelectSymbolAndGoToChart }) {
   const [loading, setLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState(null);
@@ -76,9 +141,10 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     }, 3200);
   };
 
+  const cleanBaseSymbol = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
+
   const resolveBrokerSymbol = (rawSym) => {
     if (!rawSym) return '';
-    const clean = (s) => (s || '').replace(/(\.m|\.c|_i|m\.raw|c\.raw|pro|raw|[cmk])$/i, '').toUpperCase();
     const raw = rawSym.trim().toUpperCase();
     if (!brokerSymbols || !brokerSymbols.length) return raw;
 
@@ -90,10 +156,10 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     if (exact) return typeof exact === 'string' ? exact : exact.name;
 
     // 2. Base match
-    const base = clean(raw);
+    const base = cleanBaseSymbol(raw);
     const baseMatch = brokerSymbols.find(s => {
       const name = typeof s === 'string' ? s : s.name;
-      return name && clean(name) === base;
+      return name && cleanBaseSymbol(name) === base;
     });
     if (baseMatch) return typeof baseMatch === 'string' ? baseMatch : baseMatch.name;
 
@@ -107,6 +173,40 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     return raw;
   };
 
+  const lastUserEditTimeRef = useRef(0);
+
+  const getLotForSymbol = (sym) => {
+    const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
+    const isBtc = sym.toUpperCase().includes('BTC');
+    const defaultLot = isGold ? 0.10 : (isBtc ? 1.0 : 0.10);
+    if (!sym) return defaultLot;
+    const lotMap = strategyConfig.symbol_lot_sizes || {};
+    if (typeof lotMap[sym] === 'number') return lotMap[sym];
+
+    const base = cleanBaseSymbol(sym);
+    if (typeof lotMap[base] === 'number') return lotMap[base];
+
+    const resolved = resolveBrokerSymbol(sym);
+    if (typeof lotMap[resolved] === 'number') return lotMap[resolved];
+
+    return defaultLot;
+  };
+
+  const getTimeframesForSymbol = (sym) => {
+    if (!sym) return ['5M'];
+    const tfMap = strategyConfig.symbol_timeframes || {};
+    if (Array.isArray(tfMap[sym]) && tfMap[sym].length > 0) return tfMap[sym];
+
+    const base = cleanBaseSymbol(sym);
+    if (Array.isArray(tfMap[base]) && tfMap[base].length > 0) return tfMap[base];
+
+    const resolved = resolveBrokerSymbol(sym);
+    if (resolved && Array.isArray(tfMap[resolved]) && tfMap[resolved].length > 0) return tfMap[resolved];
+
+    const isBtc = sym.toUpperCase().includes('BTC');
+    return isBtc ? ['1M', '5M'] : ['5M', '15M'];
+  };
+
   // Fetch bot status and strategy config
   const fetchBotConfig = async () => {
     try {
@@ -115,13 +215,16 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
         const data = await res.json();
         const cfg = data.TAYYAB_ENHANCED || data.tayyab_enhanced || (data.strategy_configs && data.strategy_configs.TAYYAB_ENHANCED);
         if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
+          const isRecent = (Date.now() - lastUserEditTimeRef.current) < 5000;
           setStrategyConfig(prev => ({
             ...prev,
             ...cfg,
-            symbol_timeframes: {
-              ...(prev.symbol_timeframes || {}),
-              ...(cfg.symbol_timeframes || {})
-            }
+            symbol_lot_sizes: isRecent && prev.symbol_lot_sizes
+              ? { ...(cfg.symbol_lot_sizes || {}), ...prev.symbol_lot_sizes }
+              : (cfg.symbol_lot_sizes || prev.symbol_lot_sizes || {}),
+            symbol_timeframes: isRecent && prev.symbol_timeframes
+              ? { ...(cfg.symbol_timeframes || {}), ...prev.symbol_timeframes }
+              : (cfg.symbol_timeframes || prev.symbol_timeframes || {})
           }));
           try { localStorage.setItem('tayyab_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
@@ -146,6 +249,7 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
   }, []);
 
   const saveConfig = async (newCfg) => {
+    lastUserEditTimeRef.current = Date.now();
     setStrategyConfig(newCfg);
     try { localStorage.setItem('tayyab_strategy_config', JSON.stringify(newCfg)); } catch (e) {}
     setSavingConfig(true);
@@ -168,10 +272,8 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
           setStrategyConfig(prev => ({
             ...prev,
             ...cfg,
-            symbol_timeframes: {
-              ...(prev.symbol_timeframes || {}),
-              ...(cfg.symbol_timeframes || {})
-            }
+            symbol_lot_sizes: newCfg.symbol_lot_sizes || cfg.symbol_lot_sizes || prev.symbol_lot_sizes,
+            symbol_timeframes: newCfg.symbol_timeframes || cfg.symbol_timeframes || prev.symbol_timeframes
           }));
           try { localStorage.setItem('tayyab_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
@@ -189,17 +291,34 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
   };
 
   const handleUpdateLot = (sym, newLot) => {
+    lastUserEditTimeRef.current = Date.now();
     const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
     let clamped = Math.max(0.01, +(newLot).toFixed(2));
     if (isGold) clamped = Math.min(1.0, clamped);
-    const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [sym]: clamped };
+
+    const base = cleanBaseSymbol(sym);
+    const resolved = resolveBrokerSymbol(sym);
+    const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}) };
+    updatedLots[sym] = clamped;
+    if (base) {
+      updatedLots[base] = clamped;
+      for (const k of Object.keys(updatedLots)) {
+        if (cleanBaseSymbol(k) === base) {
+          updatedLots[k] = clamped;
+        }
+      }
+    }
+    if (resolved) updatedLots[resolved] = clamped;
+
     const updated = { ...strategyConfig, symbol_lot_sizes: updatedLots };
     saveConfig(updated);
+    triggerToast(`Updated ${sym} lot size to ${clamped.toFixed(2)}`, 'success');
   };
 
   // Toggle or add multiple timeframes for a pair
   const handleToggleTimeframe = (sym, tf) => {
-    const currentTfs = strategyConfig.symbol_timeframes?.[sym] || ['5M'];
+    lastUserEditTimeRef.current = Date.now();
+    const currentTfs = getTimeframesForSymbol(sym);
     let updatedTfs;
     if (currentTfs.includes(tf)) {
       // Don't allow removing if it's the only active timeframe
@@ -214,20 +333,41 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
       triggerToast(`✓ Added ${tf} to ${sym}`, 'success');
     }
 
-    const updatedMap = {
-      ...(strategyConfig.symbol_timeframes || {}),
-      [sym]: updatedTfs
-    };
+    const base = cleanBaseSymbol(sym);
+    const resolved = resolveBrokerSymbol(sym);
+    const updatedMap = { ...(strategyConfig.symbol_timeframes || {}) };
+    updatedMap[sym] = updatedTfs;
+    if (base) {
+      updatedMap[base] = updatedTfs;
+      for (const k of Object.keys(updatedMap)) {
+        if (cleanBaseSymbol(k) === base) {
+          updatedMap[k] = updatedTfs;
+        }
+      }
+    }
+    if (resolved) updatedMap[resolved] = updatedTfs;
+
     const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
     saveConfig(updated);
   };
 
   // Quick preset timeframes for a pair
   const handleSetPresetTimeframes = (sym, presetTfs, label) => {
-    const updatedMap = {
-      ...(strategyConfig.symbol_timeframes || {}),
-      [sym]: presetTfs
-    };
+    lastUserEditTimeRef.current = Date.now();
+    const base = cleanBaseSymbol(sym);
+    const resolved = resolveBrokerSymbol(sym);
+    const updatedMap = { ...(strategyConfig.symbol_timeframes || {}) };
+    updatedMap[sym] = presetTfs;
+    if (base) {
+      updatedMap[base] = presetTfs;
+      for (const k of Object.keys(updatedMap)) {
+        if (cleanBaseSymbol(k) === base) {
+          updatedMap[k] = presetTfs;
+        }
+      }
+    }
+    if (resolved) updatedMap[resolved] = presetTfs;
+
     const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
     saveConfig(updated);
     triggerToast(`Set ${sym} to ${label} (${presetTfs.join(', ')})`, 'success');
@@ -587,8 +727,8 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
               {(strategyConfig.symbols || []).map((sym, idx) => {
                 const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
                 const isBtc = sym.toUpperCase().includes('BTC');
-                const lot = strategyConfig.symbol_lot_sizes?.[sym] || (isBtc ? 1.0 : 0.10);
-                const activeTfs = strategyConfig.symbol_timeframes?.[sym] || (isBtc ? ['1M', '5M'] : ['5M', '15M']);
+                const lot = getLotForSymbol(sym);
+                const activeTfs = getTimeframesForSymbol(sym);
 
                 return (
                   <tr key={sym} style={{
@@ -744,24 +884,12 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
                         >
                           −
                         </button>
-                        <input
-                          type="number"
-                          step={isBtc ? "0.10" : "0.01"}
-                          min="0.01"
-                          max={isGold ? 1.0 : 50.0}
+                        <LotInputCell
+                          sym={sym}
+                          isGold={isGold}
+                          isBtc={isBtc}
                           value={lot}
-                          onChange={(e) => handleUpdateLot(sym, parseFloat(e.target.value) || 0.01)}
-                          style={{
-                            width: 60,
-                            textAlign: 'center',
-                            background: '#151124',
-                            border: '1px solid #3b3054',
-                            borderRadius: 4,
-                            color: '#ffffff',
-                            fontWeight: 700,
-                            fontSize: 12.5,
-                            padding: '3px 4px'
-                          }}
+                          onCommit={handleUpdateLot}
                         />
                         <button
                           onClick={() => handleUpdateLot(sym, lot + (isBtc ? 0.10 : 0.01))}
