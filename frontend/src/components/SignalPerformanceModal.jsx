@@ -74,37 +74,6 @@ const DEFAULT_STRATEGY_PERFORMANCE = [
     ]
   },
   {
-    id: 'REAL_DIP',
-    name: 'Haider-Gold-Scalper',
-    timeframe: '5M (Exclusively)',
-    badgeColor: '#089981',
-    winRate: 68.4,
-    totalSignals: 158,
-    wins: 108,
-    losses: 49,
-    scratches: 1,
-    profitFactor: 1.49,
-    netPnL: '+6,575.09',
-    maxDrawdown: 15.15,
-    avgTradesPerDay: '5.3 trades / day',
-    pipsPerDay: '+219.2 pips / day',
-    usdPerDay: '+$219.17 / day',
-    avgTpPips: '+18.6 pips',
-    avgTpUsd: '+$18.61',
-    avgTpPts: '186.1 pts',
-    avgSlPips: '-11.2 pips',
-    avgSlUsd: '-$11.25',
-    avgSlPts: '112.5 pts',
-    minRR: 1.65,
-    expectedPerTrade: '+$41.61 net / trade',
-    description: 'ATR Volatility Impulse + RSI(14) Exhaustion dynamic Mean-Reversion engine.',
-    rules: [
-      'Active exclusively on 5-Minute (5M) candlestick charts.',
-      'Executes automatically on MT5 only when signal prints on 5M timeframe.',
-      'Auto SL to Breakeven at TP1 secures zero-risk position once initial target is reached.'
-    ]
-  },
-  {
     id: 'HAIDER_ENHANCED',
     name: 'Haider-Scalper-Enhanced',
     timeframe: '5M (Exclusively)',
@@ -148,7 +117,7 @@ export default function SignalPerformanceModal({
   currentSymbol = 'XAUUSDc',
   availableSymbols = []
 }) {
-  const [selectedStratId, setSelectedStratId] = useState('CHAMPION_SCALPER');
+  const [selectedStratId, setSelectedStratId] = useState('TAYYAB_ENHANCED');
   const [selectedSymbol, setSelectedSymbol] = useState(currentSymbol || 'XAUUSDc');
   const [perfCache, setPerfCache] = useState({});
   const [batchData, setBatchData] = useState([]);
@@ -181,7 +150,7 @@ export default function SignalPerformanceModal({
       const res = await fetch(`/api/scalper/performance?symbol=${encodeURIComponent(sym)}&bars=3000&lot_size=0.10`);
       if (res.ok) {
         const data = await res.json();
-        if (data && (data.CHAMPION_SCALPER || data.HAIDER_ENHANCED)) {
+        if (data && (data.CHAMPION_SCALPER || data.HAIDER_ENHANCED || data.TAYYAB_ENHANCED)) {
           setPerfCache(prev => ({ ...prev, [sym]: data }));
         }
       }
@@ -209,7 +178,7 @@ export default function SignalPerformanceModal({
           // Also populate individual cache entries
           const newCache = {};
           data.instruments.forEach(item => {
-            if (item && item.symbol && (item.CHAMPION_SCALPER || item.HAIDER_ENHANCED)) {
+            if (item && item.symbol && (item.CHAMPION_SCALPER || item.HAIDER_ENHANCED || item.TAYYAB_ENHANCED)) {
               newCache[item.symbol] = item;
             }
           });
@@ -235,11 +204,11 @@ export default function SignalPerformanceModal({
 
   // Active symbol dataset
   const activePerf = perfCache[selectedSymbol];
-  const championData = activePerf?.CHAMPION_SCALPER || DEFAULT_STRATEGY_PERFORMANCE[0];
-  const baselineData = activePerf?.REAL_DIP || DEFAULT_STRATEGY_PERFORMANCE[1];
+  const tayyabData = activePerf?.TAYYAB_ENHANCED || DEFAULT_STRATEGY_PERFORMANCE[0];
+  const championData = activePerf?.CHAMPION_SCALPER || DEFAULT_STRATEGY_PERFORMANCE[1];
   const enhancedData = activePerf?.HAIDER_ENHANCED || DEFAULT_STRATEGY_PERFORMANCE[2];
 
-  const current = selectedStratId === 'REAL_DIP' ? baselineData : (selectedStratId === 'HAIDER_ENHANCED' ? enhancedData : championData);
+  const current = selectedStratId === 'TAYYAB_ENHANCED' ? tayyabData : (selectedStratId === 'HAIDER_ENHANCED' ? enhancedData : championData);
   const isEnabled = activeSignalStrategies && activeSignalStrategies[current.id];
 
   // Batch ranking summary metrics
@@ -466,9 +435,9 @@ export default function SignalPerformanceModal({
         }}>
           {/* Strategy Tabs */}
           {[
-            { id: 'CHAMPION_SCALPER', name: 'Champion Scalper (90% Target)', color: '#ffd700', badge: `${championData.winRate}% WR` },
-            { id: 'HAIDER_ENHANCED', name: 'Haider-Scalper-Enhanced', color: '#00f2fe', badge: `${enhancedData.winRate}% WR` },
-            { id: 'REAL_DIP', name: 'Haider-Gold-Scalper', color: '#089981', badge: `${baselineData.winRate}% WR` },
+            { id: 'TAYYAB_ENHANCED', name: 'Tayyab Scalper (94%+ Target)', color: '#a855f7', badge: `${tayyabData.winRate}% WR` },
+            { id: 'CHAMPION_SCALPER', name: 'Champion Scalper (93%+ Target)', color: '#10b981', badge: `${championData.winRate}% WR` },
+            { id: 'HAIDER_ENHANCED', name: 'Haider-Scalper-Enhanced (90%+ Target)', color: '#00f2fe', badge: `${enhancedData.winRate}% WR` },
           ].map(strat => {
             const isTabActive = selectedStratId === strat.id;
             const activeFlag = activeSignalStrategies && activeSignalStrategies[strat.id];
@@ -648,8 +617,8 @@ export default function SignalPerformanceModal({
                   <tbody>
                     {validBatchItems.map((item, idx) => {
                       const enh = item.HAIDER_ENHANCED || {};
-                      const base = item.REAL_DIP || {};
-                      const wrGain = (enh.winRate - base.winRate).toFixed(1);
+                      const base = item.CHAMPION_SCALPER || item.TAYYAB_ENHANCED || {};
+                      const wrGain = (enh.winRate - (base.winRate || 90)).toFixed(1);
                       const isGold = item.symbol.toUpperCase().includes('XAU');
                       const isSelected = selectedSymbol === item.symbol;
 

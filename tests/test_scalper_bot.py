@@ -590,6 +590,100 @@ class TestNeuralSentinel(unittest.TestCase):
         self.assertIsNotNone(xau_tf_key)
         self.assertEqual(t_cfg["symbol_timeframes"][xau_tf_key], ["5M", "15M", "30M"])
 
+    def test_multi_timeframe_haider_and_champion(self):
+        """Verify Haider and Champion accept multi-timeframe matrix in strategy-config."""
+        # Haider multi-timeframe configuration
+        post_haider = {
+            "strategy": "HAIDER_ENHANCED",
+            "enabled": True,
+            "symbols": ["XAUUSDm", "BTCUSDm"],
+            "symbol_lot_sizes": {"XAUUSDm": 0.10, "BTCUSDm": 0.50},
+            "symbol_timeframes": {"XAUUSDm": ["1M", "5M"], "BTCUSDm": ["5M", "15M"]}
+        }
+        res = self.client.post("/api/scalper/bot/strategy-config", json=post_haider)
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        cfg = data.get("HAIDER_ENHANCED") or data.get("haider_enhanced")
+        self.assertIn("symbol_timeframes", cfg)
+        self.assertEqual(cfg["symbol_timeframes"]["XAUUSDm"], ["1M", "5M"])
+        self.assertEqual(cfg["symbol_timeframes"]["BTCUSDm"], ["5M", "15M"])
+
+        # Champion multi-timeframe configuration
+        post_champ = {
+            "strategy": "CHAMPION_SCALPER",
+            "enabled": True,
+            "symbols": ["BTCUSDm", "GBPJPYm"],
+            "symbol_lot_sizes": {"BTCUSDm": 0.50, "GBPJPYm": 0.50},
+            "symbol_timeframes": {"BTCUSDm": ["5M", "1H"], "GBPJPYm": ["1M", "5M", "15M"]}
+        }
+        res2 = self.client.post("/api/scalper/bot/strategy-config", json=post_champ)
+        self.assertEqual(res2.status_code, 200)
+        data2 = res2.get_json()
+        c_cfg = data2.get("CHAMPION_SCALPER") or data2.get("champion_scalper")
+        self.assertIn("symbol_timeframes", c_cfg)
+        self.assertEqual(c_cfg["symbol_timeframes"]["BTCUSDm"], ["5M", "1H"])
+        self.assertEqual(c_cfg["symbol_timeframes"]["GBPJPYm"], ["1M", "5M", "15M"])
+
+    def test_presets_api_endpoints(self):
+        """Verify preset list, save, apply, and delete lifecycle."""
+        # 1. GET presets
+        get_res = self.client.get("/api/scalper/bot/presets")
+        self.assertEqual(get_res.status_code, 200)
+        presets = get_res.get_json().get("presets", [])
+        self.assertTrue(len(presets) >= 1)
+        default_p = next((p for p in presets if p.get("is_default")), None)
+        self.assertIsNotNone(default_p)
+        self.assertIn("HAIDER_ENHANCED", default_p["config"])
+        self.assertIn("CHAMPION_SCALPER", default_p["config"])
+        self.assertIn("TAYYAB_ENHANCED", default_p["config"])
+
+        # Check default preset lots & timeframes
+        haider_cfg = default_p["config"]["HAIDER_ENHANCED"]
+        self.assertEqual(haider_cfg["symbols"], ["XAUUSDm", "BTCUSDm", "GBPUSDm"])
+        self.assertEqual(haider_cfg["symbol_lot_sizes"]["XAUUSDm"], 0.10)
+        self.assertEqual(haider_cfg["symbol_lot_sizes"]["BTCUSDm"], 0.50)
+        self.assertEqual(haider_cfg["symbol_lot_sizes"]["GBPUSDm"], 0.50)
+
+        champ_cfg = default_p["config"]["CHAMPION_SCALPER"]
+        self.assertEqual(champ_cfg["symbols"], ["BTCUSDm", "GBPJPYm"])
+        self.assertEqual(champ_cfg["symbol_lot_sizes"]["BTCUSDm"], 0.50)
+        self.assertEqual(champ_cfg["symbol_lot_sizes"]["GBPJPYm"], 0.50)
+
+        tayyab_cfg = default_p["config"]["TAYYAB_ENHANCED"]
+        self.assertEqual(tayyab_cfg["symbols"], ["BTCUSDm", "XAUUSDm", "GBPUSDm", "GBPJPYm"])
+        self.assertEqual(tayyab_cfg["symbol_lot_sizes"]["BTCUSDm"], 1.00)
+        self.assertEqual(tayyab_cfg["symbol_lot_sizes"]["XAUUSDm"], 0.50)
+        self.assertEqual(tayyab_cfg["symbol_lot_sizes"]["GBPUSDm"], 1.70)
+        self.assertEqual(tayyab_cfg["symbol_lot_sizes"]["GBPJPYm"], 0.82)
+
+        # 2. POST save a custom preset
+        custom_payload = {
+            "name": "Unit Test Custom Preset",
+            "strategy": "HAIDER_ENHANCED",
+            "config": {
+                "enabled": True,
+                "symbols": ["EURUSDm"],
+                "symbol_lot_sizes": {"EURUSDm": 0.20},
+                "symbol_timeframes": {"EURUSDm": ["15M"]}
+            }
+        }
+        save_res = self.client.post("/api/scalper/bot/presets", json=custom_payload)
+        self.assertEqual(save_res.status_code, 200)
+        saved_data = save_res.get_json()
+        saved_id = saved_data["preset"]["id"]
+
+        # 3. POST apply the preset
+        apply_res = self.client.post("/api/scalper/bot/presets/apply", json={"id": saved_id})
+        self.assertEqual(apply_res.status_code, 200)
+        apply_data = apply_res.get_json()
+        self.assertTrue(apply_data["success"])
+
+        # 4. DELETE the custom preset
+        del_res = self.client.delete(f"/api/scalper/bot/presets/{saved_id}")
+        self.assertEqual(del_res.status_code, 200)
+        del_data = del_res.get_json()
+        self.assertTrue(del_data["success"])
+
 
 if __name__ == "__main__":
     unittest.main()

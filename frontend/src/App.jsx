@@ -147,100 +147,6 @@ sell = ta.crossunder(fast, slow)
 plotshape(buy, style=shape.triangleup, location=location.belowbar, color=color.green, text="BUY")
 plotshape(sell, style=shape.triangledown, location=location.abovebar, color=color.red, text="SELL")`;
 
-const REAL_DIP_PINE = `//@version=6
-indicator("Haider-Gold-Scalper [SL Buffer]", overlay=true, max_labels_count=500)
-
-// ==========================================
-// 1. INPUTS
-// ==========================================
-grp_settings = "Strategy Settings"
-atrLen = input.int(14, "ATR Length", group=grp_settings)
-impulseMult = input.float(1.0, "Big Candle Size (x ATR)", step=0.1, group=grp_settings)
-
-grp_rsi = "RSI Filter (Finding Real Dips)"
-rsiLen = input.int(14, "RSI Length", group=grp_rsi)
-rsiBuyLevel = input.float(35.0, "RSI Oversold (Buy Zone)", group=grp_rsi)
-rsiSellLevel = input.float(65.0, "RSI Overbought (Sell Zone)", group=grp_rsi)
-
-grp_levels = "Risk Management"
-targetLevel = input.float(50.0, "Target Level % (TP)", step=1.0, group=grp_levels)
-slBuffer = input.float(1.0, "SL Buffer (x ATR)", step=0.1, group=grp_levels)
-
-// ==========================================
-// 2. DETECT THE "BIG CANDLE" + EXHAUSTION
-// ==========================================
-float currentAtr = ta.atr(atrLen)
-float candleBody = math.abs(close - open)
-float candleRange = high - low
-
-float rsi = ta.rsi(close, rsiLen)
-
-bool isRealBuySetup = close < open and candleBody > (currentAtr * impulseMult) and rsi < rsiBuyLevel
-bool isRealSellSetup = close > open and candleBody > (currentAtr * impulseMult) and rsi > rsiSellLevel
-
-var int setupState = 0 
-var int setupBarIndex = na
-var float setupHigh = na
-var float setupLow = na
-var float setupRange = na
-var float tpLevel = na      
-var float slLevel = na      
-
-// ==========================================
-// 3. STATE MACHINE LOGIC (CONFIRMED CLOSE ONLY)
-// ==========================================
-if setupState == 1 and high > slLevel
-    setupState := 0
-if setupState == -1 and low < slLevel
-    setupState := 0
-
-if barstate.isconfirmed
-    if isRealSellSetup and setupState == 0
-        setupState := 1
-        setupBarIndex := bar_index
-        setupHigh := high
-        setupLow := low
-        setupRange := candleRange
-        tpLevel := setupHigh - (setupRange * (targetLevel / 100))
-        slLevel := setupHigh + (currentAtr * slBuffer) 
-
-    else if isRealBuySetup and setupState == 0
-        setupState := -1
-        setupBarIndex := bar_index
-        setupHigh := high
-        setupLow := low
-        setupRange := candleRange
-        tpLevel := setupLow + (setupRange * (targetLevel / 100))
-        slLevel := setupLow - (currentAtr * slBuffer) 
-
-// ==========================================
-// 4. SIGNAL GENERATION (NEXT CANDLE AFTER CLOSE)
-// ==========================================
-bool buySignal = false
-bool sellSignal = false
-float entry = na
-
-if setupState == 1 and bar_index > setupBarIndex
-    sellSignal := true
-    entry := open
-    setupState := 0 
-
-if setupState == -1 and bar_index > setupBarIndex
-    buySignal := true
-    entry := open
-    setupState := 0 
-
-// ==========================================
-// 5. VISUALS (SHAPES + LEVEL LINES)
-// ==========================================
-plot(setupState != 0 ? tpLevel : na, color=color.blue, linewidth=2, title="TP", style=plot.style_linebr)
-plot(setupState != 0 ? slLevel : na, color=color.red, linewidth=1, title="SL (Buffered)", style=plot.style_linebr)
-
-bgcolor(isRealBuySetup ? color.new(color.green, 90) : isRealSellSetup ? color.new(color.red, 90) : na)
-
-plotshape(buySignal, title="Buy Signal", text="BUY", style=shape.labelup, location=location.belowbar, color=color.green, textcolor=color.white, size=size.large)
-plotshape(sellSignal, title="Sell Signal", text="SELL", style=shape.labeldown, location=location.abovebar, color=color.red, textcolor=color.white, size=size.large)`;
-
 // Initial default active indicators
 const INITIAL_INDICATORS = [
   {
@@ -299,38 +205,26 @@ const INITIAL_INDICATORS = [
 const INITIAL_WORKSPACE_TABS = [
   { id: 'dashboard', title: 'Dashboard', type: 'dashboard', closable: false },
   { id: 'chart-main', title: 'Chart: XAUUSDc', type: 'chart', symbol: 'XAUUSDc', timeframe: '1H', closable: false },
-  { id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false },
-  { id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false },
   { id: 'tayyab_scalper', title: 'Tayyab Scalper', type: 'tayyab_scalper', closable: false },
-  { id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false },
-  { id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: false },
-  { id: 'journal', title: 'Trade Journal', type: 'journal', closable: false },
-  { id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false }
+  { id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false },
+  { id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false }
 ];
 
 function App() {
-  // Top Workspace Tabs
+  // Top Workspace Tabs (Clean primary tabs; secondary tools accessible via Chart Settings)
   const [workspaceTabs, setWorkspaceTabs] = useState(() => {
     const loaded = loadLS('workspaceTabs', INITIAL_WORKSPACE_TABS);
-    if (!loaded.some(t => t.id === 'neural_sentinel')) {
-      loaded.push({ id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false });
+    const filtered = loaded.filter(t => !['gold_order_blocks', 'support_resistance', 'journal', 'monte_carlo'].includes(t.id));
+    if (!filtered.some(t => t.id === 'tayyab_scalper')) {
+      filtered.push({ id: 'tayyab_scalper', title: 'Tayyab Scalper', type: 'tayyab_scalper', closable: false });
     }
-    if (!loaded.some(t => t.id === 'champion_scalper')) {
-      loaded.push({ id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false });
+    if (!filtered.some(t => t.id === 'champion_scalper')) {
+      filtered.push({ id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false });
     }
-    if (!loaded.some(t => t.id === 'tayyab_scalper')) {
-      loaded.push({ id: 'tayyab_scalper', title: 'Tayyab Scalper', type: 'tayyab_scalper', closable: false });
+    if (!filtered.some(t => t.id === 'neural_sentinel')) {
+      filtered.push({ id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false });
     }
-    if (!loaded.some(t => t.id === 'monte_carlo')) {
-      loaded.push({ id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: false });
-    }
-    if (!loaded.some(t => t.id === 'gold_order_blocks')) {
-      loaded.push({ id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: false });
-    }
-    if (!loaded.some(t => t.id === 'support_resistance')) {
-      loaded.push({ id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: false });
-    }
-    return loaded;
+    return filtered;
   });
   const [activeTabId, setActiveTabId] = useState(() => loadLS('activeTabId', 'chart-main'));
 
@@ -343,7 +237,7 @@ function App() {
   
   // Backtest state
   const [showBacktest, setShowBacktest] = useState(false);
-  const [btStrategy, setBtStrategy] = useState(() => loadLS('btStrategy', 'real_dip'));
+  const [btStrategy, setBtStrategy] = useState(() => loadLS('btStrategy', 'tayyab_enhanced'));
   const [btData, setBtData] = useState(null);
   const [btLoading, setBtLoading] = useState(false);
   const [btError, setBtError] = useState(null);
@@ -396,12 +290,11 @@ function App() {
   const [indicators, setIndicators] = useState(() => loadLS('indicators', INITIAL_INDICATORS));
   const [editingIndicator, setEditingIndicator] = useState(null);
 
-  // Signals State (Haider-Gold-Scalper & Haider-Scalper-Enhanced)
+  // Signals State (Tayyab, Champion, Haider)
   const DEFAULT_SIGNAL_STRATEGIES = {
     TAYYAB_ENHANCED: true,
     CHAMPION_SCALPER: true,
-    HAIDER_ENHANCED: true,
-    REAL_DIP: false
+    HAIDER_ENHANCED: true
   };
   const [signalsEnabled, setSignalsEnabled] = useState(() => loadLS('signalsEnabled', true));
   const [activeSignalStrategies, setActiveSignalStrategies] = useState(() => {
@@ -410,11 +303,10 @@ function App() {
       return {
         TAYYAB_ENHANCED: saved.TAYYAB_ENHANCED !== undefined ? !!saved.TAYYAB_ENHANCED : true,
         CHAMPION_SCALPER: saved.CHAMPION_SCALPER !== undefined ? !!saved.CHAMPION_SCALPER : true,
-        HAIDER_ENHANCED: !!saved.HAIDER_ENHANCED,
-        REAL_DIP: !!saved.REAL_DIP
+        HAIDER_ENHANCED: saved.HAIDER_ENHANCED !== undefined ? !!saved.HAIDER_ENHANCED : true
       };
     }
-    return { TAYYAB_ENHANCED: true, CHAMPION_SCALPER: true, HAIDER_ENHANCED: true, REAL_DIP: false };
+    return { TAYYAB_ENHANCED: true, CHAMPION_SCALPER: true, HAIDER_ENHANCED: true };
   });
   const [showSignalsMenu, setShowSignalsMenu] = useState(false);
   const [signalsList, setSignalsList] = useState([]);
@@ -775,10 +667,22 @@ function App() {
   // Persist state to localStorage
   useEffect(() => { saveLS('workspaceTabs', workspaceTabs); }, [workspaceTabs]);
 
-  // Ensure workspace tabs reflect current structure and purge deleted tabs (academy, secret, brains, manual)
+  // Ensure workspace tabs reflect current structure and keep top tab bar clean (secondary tools accessible via Chart Settings)
   useEffect(() => {
     setWorkspaceTabs(prev => {
-      let next = prev.filter(t => !['academy', 'secret', 'brains', 'brainsactivity', 'brainsperf', 'manual'].includes(t.type));
+      let next = prev.filter(t => 
+        !['academy', 'secret', 'brains', 'brainsactivity', 'brainsperf', 'manual', 'order_blocks', 'support_resistance', 'journal', 'monte_carlo'].includes(t.type) &&
+        !['gold_order_blocks', 'support_resistance', 'journal', 'monte_carlo'].includes(t.id)
+      );
+      if (!next.some(t => t.id === 'tayyab_scalper')) {
+        next.push({ id: 'tayyab_scalper', title: 'Tayyab Scalper', type: 'tayyab_scalper', closable: false });
+      }
+      if (!next.some(t => t.id === 'champion_scalper')) {
+        next.push({ id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false });
+      }
+      if (!next.some(t => t.id === 'neural_sentinel')) {
+        next.push({ id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false });
+      }
       return next;
     });
     setActiveTabId(curr => (['secret', 'academy', 'brains', 'brainsactivity', 'brainsperf', 'manual'].includes(curr) ? 'chart-main' : curr));
@@ -970,6 +874,33 @@ function App() {
     });
   };
 
+  // Open secondary tools (or switch to primary tabs) from Chart Settings Modal
+  const handleNavigateToTab = (tabId) => {
+    setShowSettingsModal(false);
+    const secondaryTabs = {
+      gold_order_blocks: { id: 'gold_order_blocks', title: 'Gold Order Blocks', type: 'order_blocks', closable: true },
+      support_resistance: { id: 'support_resistance', title: 'Support & Resistance', type: 'support_resistance', closable: true },
+      journal: { id: 'journal', title: 'Trade Journal', type: 'journal', closable: true },
+      monte_carlo: { id: 'monte_carlo', title: 'Monte Carlo Stress Lab', type: 'monte_carlo', closable: true },
+      tayyab_scalper: { id: 'tayyab_scalper', title: 'Tayyab Scalper', type: 'tayyab_scalper', closable: false },
+      champion_scalper: { id: 'champion_scalper', title: 'Champion Scalper', type: 'champion_scalper', closable: false },
+      neural_sentinel: { id: 'neural_sentinel', title: 'Haider Scalper Neural', type: 'neural_sentinel', closable: false },
+      dashboard: { id: 'dashboard', title: 'Dashboard', type: 'dashboard', closable: false },
+      'chart-main': { id: 'chart-main', title: `Chart: ${symbol}`, type: 'chart', symbol, timeframe, closable: false }
+    };
+    if (secondaryTabs[tabId]) {
+      setWorkspaceTabs(prev => {
+        if (!prev.some(t => t.id === tabId)) {
+          return [...prev, secondaryTabs[tabId]];
+        }
+        return prev;
+      });
+      setActiveTabId(tabId);
+    } else {
+      setActiveTabId(tabId);
+    }
+  };
+
   // Drag-to-reorder workspace tabs
   const handleReorderTab = (fromId, toId) => {
     setWorkspaceTabs(prev => {
@@ -1140,14 +1071,14 @@ function App() {
     const signalsInd = indicators.find(i => i.id === 'SIGNALS');
     if (nextState) {
       const hasAny = Object.values(activeSignalStrategies).some(Boolean);
-      const strats = hasAny ? activeSignalStrategies : { REAL_DIP: true };
+      const strats = hasAny ? activeSignalStrategies : { TAYYAB_ENHANCED: true, CHAMPION_SCALPER: true, HAIDER_ENHANCED: true };
       if (!hasAny) setActiveSignalStrategies(strats);
       if (signalsInd) {
         setIndicators(prev => prev.map(i => i.id === 'SIGNALS' ? { ...i, visible: true, params: { ...i.params, strategy: strats, timeframe } } : i));
       } else {
         handleToggleIndicator({
           id: 'SIGNALS',
-          name: 'Haider-Gold-Scalper Signals',
+          name: 'Autonomous Scalper Signals',
           shortName: 'Signals',
           isStack: false,
           isOverlay: true
@@ -1174,7 +1105,7 @@ function App() {
         return;
       }
       const hasAny = Object.values(activeSignalStrategies || {}).some(Boolean);
-      const stratsToTest = hasAny ? activeSignalStrategies : { HAIDER_ENHANCED: true, REAL_DIP: true };
+      const stratsToTest = hasAny ? activeSignalStrategies : { TAYYAB_ENHANCED: true, CHAMPION_SCALPER: true, HAIDER_ENHANCED: true };
       const series = computeSignalSeries(data, stratsToTest, 20, timeframe);
       const combined = scoreSignalSeries(series);
       const longs = scoreSignalSeries(series.filter(d => !d || d.signalType !== 'SELL'));
@@ -1195,7 +1126,8 @@ function App() {
 
   const handleToggleSignalStrategy = (strategyKey) => {
     setActiveSignalStrategies(prev => {
-      const next = { ...prev, [strategyKey]: !prev[strategyKey] };
+      const willBeActive = !prev[strategyKey];
+      const next = { ...prev, [strategyKey]: willBeActive };
       saveLS('activeSignalStrategies', next);
       const hasAny = Object.values(next).some(Boolean);
       setSignalsEnabled(hasAny);
@@ -1205,22 +1137,44 @@ function App() {
         params: { ...ind.params, strategy: next, timeframe }
       } : ind));
 
+      // User rule: When ticking a strategy box, immediately start taking trades on MT5
+      if (willBeActive && !autoTradeSignals) {
+        setAutoTradeSignals(true);
+        saveLS('autoTradeSignals', true);
+      }
+
       // Sync active strategy to backend autonomous bot with isolated strategy map
-      const activeStrat = next.TAYYAB_ENHANCED ? 'TAYYAB_ENHANCED' : (next.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (next.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP'));
+      const activeStrat = next.TAYYAB_ENHANCED ? 'TAYYAB_ENHANCED' : (next.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : 'HAIDER_ENHANCED');
       const stratMap = {
-        TAYYAB_ENHANCED: Boolean(next.TAYYAB_ENHANCED && autoTradeSignals),
-        CHAMPION_SCALPER: Boolean(next.CHAMPION_SCALPER && autoTradeSignals),
-        HAIDER_ENHANCED: Boolean(next.HAIDER_ENHANCED && autoTradeSignals),
-        REAL_DIP: Boolean(next.REAL_DIP && autoTradeSignals)
+        TAYYAB_ENHANCED: Boolean(next.TAYYAB_ENHANCED),
+        CHAMPION_SCALPER: Boolean(next.CHAMPION_SCALPER),
+        HAIDER_ENHANCED: Boolean(next.HAIDER_ENHANCED)
       };
+
+      // 1. Configure this specific strategy enabled state on backend
+      fetch('/api/scalper/bot/strategy-config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          strategy: strategyKey,
+          enabled: willBeActive
+        })
+      }).catch(() => {});
+
+      // 2. Toggle the bot daemon with the full strategies map
       fetch('/api/scalper/bot/toggle', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           strategy: activeStrat, 
-          enabled: hasAny && autoTradeSignals,
-          strategies: stratMap
+          enabled: hasAny,
+          strategies: stratMap,
+          lot_size: activeLotSize,
+          symbols: scalperSymbols,
+          symbol_lot_sizes: symbolLotSizes
         })
+      }).then(r => r.json()).then(data => {
+        if (data) setBotStatus(data);
       }).catch(() => {});
 
       return next;
@@ -1228,7 +1182,7 @@ function App() {
   };
 
   const handleSelectAllSignalStrategies = (enableAll = true) => {
-    const next = { TAYYAB_ENHANCED: enableAll, CHAMPION_SCALPER: enableAll, HAIDER_ENHANCED: enableAll, REAL_DIP: enableAll };
+    const next = { TAYYAB_ENHANCED: enableAll, CHAMPION_SCALPER: enableAll, HAIDER_ENHANCED: enableAll };
     setActiveSignalStrategies(next);
     saveLS('activeSignalStrategies', next);
     setSignalsEnabled(enableAll);
@@ -1238,18 +1192,58 @@ function App() {
       params: { ...ind.params, strategy: next, timeframe }
     } : ind));
 
+    if (enableAll && !autoTradeSignals) {
+      setAutoTradeSignals(true);
+      saveLS('autoTradeSignals', true);
+    }
+
     const stratMap = {
-      CHAMPION_SCALPER: Boolean(enableAll && autoTradeSignals),
-      HAIDER_ENHANCED: Boolean(enableAll && autoTradeSignals),
-      REAL_DIP: Boolean(enableAll && autoTradeSignals)
+      TAYYAB_ENHANCED: Boolean(enableAll),
+      CHAMPION_SCALPER: Boolean(enableAll),
+      HAIDER_ENHANCED: Boolean(enableAll)
     };
     fetch('/api/scalper/bot/toggle', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        enabled: enableAll && autoTradeSignals,
-        strategies: stratMap
+        enabled: enableAll,
+        strategies: stratMap,
+        lot_size: activeLotSize,
+        symbols: scalperSymbols,
+        symbol_lot_sizes: symbolLotSizes
       })
+    }).then(r => r.json()).then(data => {
+      if (data) setBotStatus(data);
+    }).catch(() => {});
+  };
+
+  const handleToggleAutoTradeSignals = () => {
+    const next = !autoTradeSignals;
+    setAutoTradeSignals(next);
+    saveLS('autoTradeSignals', next);
+    const hasAny = Object.values(activeSignalStrategies).some(Boolean);
+    const stratKey = activeSignalStrategies.TAYYAB_ENHANCED ? 'TAYYAB_ENHANCED' : (activeSignalStrategies.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : 'HAIDER_ENHANCED');
+    const stratMap = {
+      TAYYAB_ENHANCED: Boolean(activeSignalStrategies.TAYYAB_ENHANCED && next),
+      CHAMPION_SCALPER: Boolean(activeSignalStrategies.CHAMPION_SCALPER && next),
+      HAIDER_ENHANCED: Boolean(activeSignalStrategies.HAIDER_ENHANCED && next)
+    };
+    fetch('/api/scalper/bot/toggle', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ 
+        enabled: next && hasAny, 
+        strategy: stratKey, 
+        strategies: stratMap,
+        lot_size: activeLotSize, 
+        symbols: scalperSymbols, 
+        symbol_lot_sizes: symbolLotSizes 
+      })
+    }).then(r => r.json()).then(d => { if (d) setBotStatus(d); }).catch(() => {});
+    fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ auto_trade: next })
     }).catch(() => {});
   };
 
@@ -1388,13 +1382,10 @@ function App() {
         const ts = data[li] ? data[li].timestamp : li;
         const sig = series[li];
 
-        // STRICT USER DIRECTIVE: Haider Scalper strategies ONLY work on 5M and ONLY execute on 5M chart
+        // Scalper strategies validation
         const isChampionSig = sig.strategyId === 'CHAMPION_SCALPER' || sig.strategy === 'Champion-Scalper';
-        const isHaiderSig = sig.strategyId === 'REAL_DIP' || sig.strategy === 'Haider-Gold-Scalper';
         const isEnhancedSig = sig.strategyId === 'HAIDER_ENHANCED' || sig.strategy === 'Haider-Scalper-Enhanced';
-        if ((isChampionSig || isHaiderSig || isEnhancedSig) && timeframe.toUpperCase() !== '5M') {
-          return; // Strictly abort: Haider scalper strategies only execute on 5-minute chart
-        }
+        const isTayyabSig = sig.strategyId === 'TAYYAB_ENHANCED' || sig.strategy === 'Tayyab-Scalper-Enhanced';
 
         const key = `${symbol}|${timeframe}`;
 
@@ -1803,50 +1794,6 @@ function App() {
                     </span>
                   </div>
 
-                  {/* 1. Haider-Gold-Scalper (5M ONLY) */}
-                  <div
-                    onClick={() => handleToggleSignalStrategy('REAL_DIP')}
-                    style={{
-                      padding: '8px 12px',
-                      fontSize: 13,
-                      cursor: 'pointer',
-                      color: activeSignalStrategies.REAL_DIP ? '#089981' : 'var(--text)',
-                      background: activeSignalStrategies.REAL_DIP ? 'rgba(8, 153, 129, 0.12)' : 'transparent',
-                      borderLeft: activeSignalStrategies.REAL_DIP ? '3px solid #089981' : '3px solid transparent',
-                      transition: 'background 0.15s ease'
-                    }}
-                    onMouseEnter={e => { if (!activeSignalStrategies.REAL_DIP) e.currentTarget.style.background = '#2a2e39'; }}
-                    onMouseLeave={e => { if (!activeSignalStrategies.REAL_DIP) e.currentTarget.style.background = 'transparent'; }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontWeight: 700 }}>Haider-Gold-Scalper</span>
-                        <span style={{
-                          fontSize: 9,
-                          fontWeight: 800,
-                          padding: '1px 5px',
-                          borderRadius: 3,
-                          background: timeframe.toUpperCase() === '5M' ? 'rgba(8,153,129,0.25)' : 'rgba(247,166,0,0.2)',
-                          color: timeframe.toUpperCase() === '5M' ? '#089981' : '#f7a600',
-                          border: `1px solid ${timeframe.toUpperCase() === '5M' ? 'rgba(8,153,129,0.5)' : 'rgba(247,166,0,0.5)'}`
-                        }}>
-                          5M ONLY
-                        </span>
-                      </div>
-                      <div style={{
-                        width: 16, height: 16, borderRadius: 3,
-                        border: activeSignalStrategies.REAL_DIP ? '1px solid #089981' : '1px solid #555d6e',
-                        background: activeSignalStrategies.REAL_DIP ? '#089981' : 'transparent',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center'
-                      }}>
-                        {activeSignalStrategies.REAL_DIP && <Check size={12} color="#fff" strokeWidth={3} />}
-                      </div>
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>
-                      ATR Impulse + RSI Exhaustion {timeframe.toUpperCase() !== '5M' && activeSignalStrategies.REAL_DIP && '• Chart not 5M'}
-                    </div>
-                  </div>
-
                   {/* 1. Champion-Scalper (93%+ WR) */}
                   <div
                     onClick={() => handleToggleSignalStrategy('CHAMPION_SCALPER')}
@@ -2096,11 +2043,11 @@ function App() {
                       setAutoTradeSignals(next);
                       saveLS('autoTradeSignals', next);
                       const hasAny = Object.values(activeSignalStrategies).some(Boolean);
-                      const stratKey = activeSignalStrategies.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : (activeSignalStrategies.HAIDER_ENHANCED ? 'HAIDER_ENHANCED' : 'REAL_DIP');
+                      const stratKey = activeSignalStrategies.TAYYAB_ENHANCED ? 'TAYYAB_ENHANCED' : (activeSignalStrategies.CHAMPION_SCALPER ? 'CHAMPION_SCALPER' : 'HAIDER_ENHANCED');
                       const stratMap = {
+                        TAYYAB_ENHANCED: Boolean(activeSignalStrategies.TAYYAB_ENHANCED && next),
                         CHAMPION_SCALPER: Boolean(activeSignalStrategies.CHAMPION_SCALPER && next),
-                        HAIDER_ENHANCED: Boolean(activeSignalStrategies.HAIDER_ENHANCED && next),
-                        REAL_DIP: Boolean(activeSignalStrategies.REAL_DIP && next)
+                        HAIDER_ENHANCED: Boolean(activeSignalStrategies.HAIDER_ENHANCED && next)
                       };
                       fetch('/api/scalper/bot/toggle', {
                         method: 'POST',
@@ -2688,6 +2635,12 @@ function App() {
           setChartSettings(newSettings);
           chartRef.current?.applyCustomStyles(newSettings);
         }}
+        activeSignalStrategies={activeSignalStrategies}
+        onToggleSignalStrategy={handleToggleSignalStrategy}
+        botStatus={botStatus}
+        autoTradeSignals={autoTradeSignals}
+        onToggleAutoTrade={handleToggleAutoTradeSignals}
+        onNavigateToTab={handleNavigateToTab}
       />
 
       {/* SNAPSHOT MODAL */}
@@ -2754,10 +2707,6 @@ function App() {
                   style={{ background: 'var(--brand)', color: '#fff', fontWeight: 700, padding: '8px 18px' }}>
                   Add to Chart
                 </button>
-                <button className="top-btn" onClick={() => { setPineSource(REAL_DIP_PINE); setPineResult(null); }}
-                  style={{ background: 'rgba(8,153,129,0.18)', color: '#089981', border: '1px solid #089981', fontWeight: 600, padding: '8px 14px' }}>
-                  Load Haider-Gold-Scalper
-                </button>
                 <button className="top-btn" onClick={() => { setPineSource(DEFAULT_PINE); setPineResult(null); }}
                   style={{ color: 'var(--text-muted)' }}>
                   Reset to example
@@ -2781,8 +2730,8 @@ function App() {
                 {symbol} · {timeframe} · strategy: {
                   Object.keys(activeSignalStrategies || {})
                     .filter(k => activeSignalStrategies[k])
-                    .map(k => k === 'TAYYAB_ENHANCED' ? 'Tayyab-Scalper-Enhanced' : (k === 'CHAMPION_SCALPER' ? 'Champion-Scalper' : (k === 'HAIDER_ENHANCED' ? 'Haider-Scalper-Enhanced' : (k === 'REAL_DIP' ? 'Haider-Gold-Scalper' : k))))
-                    .join(', ') || 'Haider-Gold-Scalper'
+                    .map(k => k === 'TAYYAB_ENHANCED' ? 'Tayyab-Scalper-Enhanced' : (k === 'CHAMPION_SCALPER' ? 'Champion-Scalper' : (k === 'HAIDER_ENHANCED' ? 'Haider-Scalper-Enhanced' : k)))
+                    .join(', ') || 'Tayyab-Scalper-Enhanced'
                 }
               </div>
               {sigAccLoading && <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Running backtest on MT5 history…</div>}
@@ -2847,7 +2796,6 @@ function App() {
                   { id: 'tayyab_enhanced', label: 'Tayyab-Scalper-Enhanced (94%+)' },
                   { id: 'champion_scalper', label: 'Champion-Scalper (93%+)' },
                   { id: 'haider_enhanced', label: 'Haider-Scalper-Enhanced (90%+)' },
-                  { id: 'real_dip', label: 'Haider-Gold-Scalper' },
                   { id: 'gold_scalper', label: 'Gold Scalper Pro' }
                 ].map(s => (
                   <button

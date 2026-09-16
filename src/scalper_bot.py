@@ -90,38 +90,46 @@ class ScalperBot:
 
         # Isolated Per-Strategy Configurations (instruments & lot sizes)
         self.strategy_configs: Dict[str, Dict[str, Any]] = {
-            "TAYYAB_ENHANCED": {
+            "HAIDER_ENHANCED": {
                 "enabled": True,
-                "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm", "GBPJPYm", "USDJPYm"],
+                "symbols": ["XAUUSDm", "BTCUSDm", "GBPUSDm"],
                 "symbol_lot_sizes": {
-                    "BTCUSDm": 1.0,
                     "XAUUSDm": 0.10,
-                    "GBPUSDm": 0.10,
-                    "GBPJPYm": 0.10,
-                    "USDJPYm": 0.10
+                    "BTCUSDm": 0.50,
+                    "GBPUSDm": 0.50
                 },
                 "symbol_timeframes": {
-                    "BTCUSDm": ["1M", "5M"],
-                    "XAUUSDm": ["5M", "15M"],
-                    "GBPUSDm": ["5M", "15M"],
-                    "GBPJPYm": ["5M", "15M"],
-                    "USDJPYm": ["5M", "15M"]
+                    "XAUUSDm": ["5M"],
+                    "BTCUSDm": ["5M"],
+                    "GBPUSDm": ["5M"]
                 }
             },
-            "HAIDER_ENHANCED": {
-                "enabled": False,
-                "symbols": ["XAUUSDm"],
-                "symbol_lot_sizes": {"XAUUSDm": 0.10}
-            },
             "CHAMPION_SCALPER": {
-                "enabled": False,
-                "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm", "GBPJPYm", "USDJPYm"],
+                "enabled": True,
+                "symbols": ["BTCUSDm", "GBPJPYm"],
+                "symbol_lot_sizes": {
+                    "BTCUSDm": 0.50,
+                    "GBPJPYm": 0.50
+                },
+                "symbol_timeframes": {
+                    "BTCUSDm": ["5M"],
+                    "GBPJPYm": ["5M"]
+                }
+            },
+            "TAYYAB_ENHANCED": {
+                "enabled": True,
+                "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm", "GBPJPYm"],
                 "symbol_lot_sizes": {
                     "BTCUSDm": 1.0,
-                    "XAUUSDm": 0.10,
-                    "GBPUSDm": 0.10,
-                    "GBPJPYm": 0.10,
-                    "USDJPYm": 0.10
+                    "XAUUSDm": 0.50,
+                    "GBPUSDm": 1.70,
+                    "GBPJPYm": 0.82
+                },
+                "symbol_timeframes": {
+                    "BTCUSDm": ["5M", "15M", "1H"],
+                    "XAUUSDm": ["5M", "1H"],
+                    "GBPUSDm": ["5M", "15M", "1H"],
+                    "GBPJPYm": ["5M", "15M"]
                 }
             }
         }
@@ -174,6 +182,12 @@ class ScalperBot:
                 for k in ("TAYYAB_ENHANCED", "HAIDER_ENHANCED", "CHAMPION_SCALPER"):
                     if k in saved_strat_configs and isinstance(saved_strat_configs[k], dict):
                         self.strategy_configs[k].update(saved_strat_configs[k])
+                        if "symbol_timeframes" in saved_strat_configs[k] and isinstance(saved_strat_configs[k]["symbol_timeframes"], dict):
+                            if "symbol_timeframes" not in self.strategy_configs[k]:
+                                self.strategy_configs[k]["symbol_timeframes"] = {}
+                            for sym, tfs in saved_strat_configs[k]["symbol_timeframes"].items():
+                                if isinstance(tfs, list):
+                                    self.strategy_configs[k]["symbol_timeframes"][sym] = [str(x).strip().upper() for x in tfs if x]
                         for sym, l in list(self.strategy_configs[k].get("symbol_lot_sizes", {}).items()):
                             try:
                                 val = float(l)
@@ -582,11 +596,19 @@ class ScalperBot:
                 if haider_on:
                     for s in haider_cfg.get("symbols", []):
                         lot = haider_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
-                        active_plans.append(("HAIDER_ENHANCED", s, lot, "5M"))
+                        raw_tfs = haider_cfg.get("symbol_timeframes", {}).get(s, ["5M"])
+                        if not raw_tfs or not isinstance(raw_tfs, list):
+                            raw_tfs = ["5M"]
+                        for tf in raw_tfs:
+                            active_plans.append(("HAIDER_ENHANCED", s, lot, str(tf).strip().upper()))
                 if champ_on:
                     for s in champ_cfg.get("symbols", []):
                         lot = champ_cfg.get("symbol_lot_sizes", {}).get(s, self.lot_size)
-                        active_plans.append(("CHAMPION_SCALPER", s, lot, "5M"))
+                        raw_tfs = champ_cfg.get("symbol_timeframes", {}).get(s, ["5M"])
+                        if not raw_tfs or not isinstance(raw_tfs, list):
+                            raw_tfs = ["5M"]
+                        for tf in raw_tfs:
+                            active_plans.append(("CHAMPION_SCALPER", s, lot, str(tf).strip().upper()))
 
                 # Fallback to legacy single-strategy loop if master enabled but no specific configs enabled
                 if not active_plans and self.enabled:

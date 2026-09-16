@@ -7,6 +7,9 @@ import {
   Search, Compass, X
 } from 'lucide-react';
 import BrokerSymbolPickerModal from './BrokerSymbolPickerModal';
+import PresetBar from './PresetBar';
+
+const AVAILABLE_TIMEFRAMES = ['1M', '5M', '15M', '30M', '1H'];
 
 export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, onSelectSymbolAndGoToChart }) {
   const [loading, setLoading] = useState(true);
@@ -26,14 +29,15 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
       }
     } catch (e) {}
     return {
-      enabled: false,
-      symbols: ['BTCUSDc', 'XAUUSDc', 'GBPUSDc', 'GBPJPYc', 'USDJPYc'],
+      enabled: true,
+      symbols: ['BTCUSDm', 'GBPJPYm'],
       symbol_lot_sizes: {
-        'BTCUSDc': 1.0,
-        'XAUUSDc': 0.10,
-        'GBPUSDc': 0.10,
-        'GBPJPYc': 0.10,
-        'USDJPYc': 0.10
+        'BTCUSDm': 0.50,
+        'GBPJPYm': 0.50
+      },
+      symbol_timeframes: {
+        'BTCUSDm': ['5M'],
+        'GBPJPYm': ['5M']
       }
     };
   });
@@ -119,7 +123,13 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
       }
       if (backendCfg && Array.isArray(backendCfg.symbols) && backendCfg.symbols.length > 0) {
         const isChampEnabled = Boolean(backendCfg.enabled ?? (bData?.champion_scalper?.enabled || bData?.strategy_configs?.CHAMPION_SCALPER?.enabled));
-        const mergedCfg = { ...backendCfg, enabled: isChampEnabled };
+        const mergedCfg = { 
+          ...backendCfg, 
+          enabled: isChampEnabled,
+          symbol_timeframes: {
+            ...(backendCfg.symbol_timeframes || {})
+          }
+        };
         setStrategyConfig(mergedCfg);
         try { localStorage.setItem('champion_strategy_config', JSON.stringify(mergedCfg)); } catch (e) {}
       }
@@ -149,14 +159,22 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
           strategy: 'CHAMPION_SCALPER',
           enabled: newCfg.enabled,
           symbols: newCfg.symbols,
-          symbol_lot_sizes: newCfg.symbol_lot_sizes
+          symbol_lot_sizes: newCfg.symbol_lot_sizes,
+          symbol_timeframes: newCfg.symbol_timeframes
         })
       });
       if (res.ok) {
         const data = await res.json();
         const cfg = data.CHAMPION_SCALPER || data.champion_scalper || (data.strategy_configs && data.strategy_configs.CHAMPION_SCALPER);
         if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
-          setStrategyConfig(cfg);
+          setStrategyConfig(prev => ({
+            ...prev,
+            ...cfg,
+            symbol_timeframes: {
+              ...(prev.symbol_timeframes || {}),
+              ...(cfg.symbol_timeframes || {})
+            }
+          }));
           try { localStorage.setItem('champion_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
       }
@@ -186,6 +204,41 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
     saveConfig(updated);
   };
 
+  // Toggle or add multiple timeframes for a pair
+  const handleToggleTimeframe = (sym, tf) => {
+    const currentTfs = strategyConfig.symbol_timeframes?.[sym] || ['5M'];
+    let updatedTfs;
+    if (currentTfs.includes(tf)) {
+      if (currentTfs.length <= 1) {
+        triggerToast(`At least one timeframe must remain active for ${sym}`, 'warn');
+        return;
+      }
+      updatedTfs = currentTfs.filter(t => t !== tf);
+      triggerToast(`Removed ${tf} from ${sym}`, 'info');
+    } else {
+      updatedTfs = [...currentTfs, tf];
+      triggerToast(`✓ Added ${tf} to ${sym}`, 'success');
+    }
+
+    const updatedMap = {
+      ...(strategyConfig.symbol_timeframes || {}),
+      [sym]: updatedTfs
+    };
+    const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
+    saveConfig(updated);
+  };
+
+  // Quick preset timeframes for a pair
+  const handleSetPresetTimeframes = (sym, presetTfs, label) => {
+    const updatedMap = {
+      ...(strategyConfig.symbol_timeframes || {}),
+      [sym]: presetTfs
+    };
+    const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
+    saveConfig(updated);
+    triggerToast(`Set ${sym} to ${label} (${presetTfs.join(', ')})`, 'success');
+  };
+
   const handleAddSymbol = (symToAdd) => {
     const rawInput = (symToAdd !== undefined ? symToAdd : newSymbolInput).trim();
     if (!rawInput) {
@@ -209,10 +262,12 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
 
     const isGold = resolved.includes('XAU') || resolved.includes('GOLD');
     const isBtc = resolved.includes('BTC');
-    const defLot = isGold ? 0.10 : (isBtc ? 1.0 : 0.10);
+    const defLot = isGold ? 0.10 : (isBtc ? 0.50 : 0.50);
+    const defTfs = ['5M'];
     const updatedSymbols = [...(strategyConfig.symbols || []), resolved];
     const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [resolved]: defLot };
-    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+    const updatedTfs = { ...(strategyConfig.symbol_timeframes || {}), [resolved]: defTfs };
+    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots, symbol_timeframes: updatedTfs });
     triggerToast(`✓ Added ${resolved} to Champion Scalper (Lot: ${defLot.toFixed(2)})`, 'success');
     setNewSymbolInput('');
   };
@@ -221,7 +276,9 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
     const updatedSymbols = (strategyConfig.symbols || []).filter(s => s !== symToRemove);
     const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}) };
     delete updatedLots[symToRemove];
-    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+    const updatedTfs = { ...(strategyConfig.symbol_timeframes || {}) };
+    delete updatedTfs[symToRemove];
+    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots, symbol_timeframes: updatedTfs });
     triggerToast(`Removed ${symToRemove} from strategy`, 'info');
   };
 
@@ -484,6 +541,18 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
           </div>
         </div>
 
+        {/* Preset Management Bar */}
+        <PresetBar 
+          strategyKey="CHAMPION_SCALPER" 
+          currentConfig={strategyConfig} 
+          onPresetApplied={(stratCfg) => {
+            setStrategyConfig(prev => ({ ...prev, ...stratCfg }));
+            fetchBotConfig();
+          }} 
+          accentColor="#10b981"
+          triggerToast={triggerToast}
+        />
+
         {/* Instruments Table & Lot Size Steppers */}
         <div style={{
           background: '#0d1117',
@@ -496,6 +565,7 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
               <tr style={{ background: '#161b22', color: '#8b949e', borderBottom: '1px solid #21262d', textAlign: 'left' }}>
                 <th style={{ padding: '10px 14px', fontWeight: 600 }}>Active Instrument</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600 }}>Asset Class</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600 }}>Active Timeframes (Multi-Select)</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'center' }}>Lot Sizing & Steppers</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600 }}>Safety Rule</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
@@ -505,7 +575,8 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
               {(strategyConfig.symbols || []).map((sym, idx) => {
                 const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
                 const isBtc = sym.toUpperCase().includes('BTC');
-                const lot = strategyConfig.symbol_lot_sizes?.[sym] || (isBtc ? 1.0 : 0.10);
+                const lot = strategyConfig.symbol_lot_sizes?.[sym] || (isBtc ? 0.50 : 0.50);
+                const activeTfs = strategyConfig.symbol_timeframes?.[sym] || ['5M'];
                 return (
                   <tr key={sym} style={{
                     borderBottom: idx === strategyConfig.symbols.length - 1 ? 'none' : '1px solid rgba(48, 54, 61, 0.4)',
@@ -528,6 +599,94 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
                     </td>
                     <td style={{ padding: '10px 14px', color: isGold ? '#fbbf24' : isBtc ? '#f97316' : '#8b949e', fontSize: 11.5 }}>
                       {isGold ? 'Gold Commodity' : isBtc ? 'Bitcoin Crypto' : 'Forex Major'}
+                    </td>
+                    {/* Multi-Timeframe Matrix */}
+                    <td style={{ padding: '10px 14px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {/* Timeframe Pill Buttons */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                          {AVAILABLE_TIMEFRAMES.map(tf => {
+                            const isSelected = activeTfs.includes(tf);
+                            return (
+                              <button
+                                key={tf}
+                                onClick={() => handleToggleTimeframe(sym, tf)}
+                                style={{
+                                  background: isSelected ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+                                  border: isSelected ? '1px solid #10b981' : '1px solid #30363d',
+                                  color: isSelected ? '#ffffff' : '#8b949e',
+                                  fontWeight: isSelected ? 800 : 500,
+                                  fontSize: 11,
+                                  padding: '3px 8px',
+                                  borderRadius: 4,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  boxShadow: isSelected ? '0 0 8px rgba(16, 185, 129, 0.3)' : 'none',
+                                  transition: 'all 0.15s ease'
+                                }}
+                                title={`Toggle ${tf} for ${sym}`}
+                              >
+                                {isSelected && <Check size={10} color="#10b981" strokeWidth={3} />}
+                                <span>{tf}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Quick Presets per pair */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
+                          <span style={{ color: '#8b949e' }}>Presets:</span>
+                          <button
+                            onClick={() => handleSetPresetTimeframes(sym, ['1M', '5M'], 'Scalp')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#38bdf8',
+                              cursor: 'pointer',
+                              padding: '1px 3px',
+                              borderRadius: 2,
+                              fontSize: 10,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            1M+5M
+                          </button>
+                          <span style={{ color: '#30363d' }}>•</span>
+                          <button
+                            onClick={() => handleSetPresetTimeframes(sym, ['5M', '15M'], 'Standard')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#10b981',
+                              cursor: 'pointer',
+                              padding: '1px 3px',
+                              borderRadius: 2,
+                              fontSize: 10,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            5M+15M
+                          </button>
+                          <span style={{ color: '#30363d' }}>•</span>
+                          <button
+                            onClick={() => handleSetPresetTimeframes(sym, ['1M', '5M', '15M'], 'Triple Confluence')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#fbbf24',
+                              cursor: 'pointer',
+                              padding: '1px 3px',
+                              borderRadius: 2,
+                              fontSize: 10,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            1M+5M+15M
+                          </button>
+                        </div>
+                      </div>
                     </td>
                     <td style={{ padding: '10px 14px', textAlign: 'center' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -650,7 +809,7 @@ export default function ChampionScalperTab({ accountInfo, symbols: propSymbols, 
               })}
               {(!strategyConfig.symbols || strategyConfig.symbols.length === 0) && (
                 <tr>
-                  <td colSpan={5} style={{ padding: '16px', textAlign: 'center', color: '#8b949e' }}>
+                  <td colSpan={6} style={{ padding: '16px', textAlign: 'center', color: '#8b949e' }}>
                     No instruments selected for Champion Scalper. Add one below.
                   </td>
                 </tr>

@@ -12,7 +12,7 @@ export function computeSignalSeries(dataList, strategy = 'ALL', partialUsd = 20,
   } else if (typeof strategy === 'object' && strategy !== null) {
     enabledStrats = Object.keys(strategy).filter(k => !!strategy[k]);
   } else if (strategy === 'ALL') {
-    enabledStrats = ['TAYYAB_ENHANCED', 'CHAMPION_SCALPER', 'HAIDER_ENHANCED', 'REAL_DIP'];
+    enabledStrats = ['TAYYAB_ENHANCED', 'CHAMPION_SCALPER', 'HAIDER_ENHANCED'];
   } else {
     enabledStrats = [strategy];
   }

@@ -5,6 +5,7 @@ import {
   Search, Compass, X, Layers, Flame, Award, Clock
 } from 'lucide-react';
 import BrokerSymbolPickerModal from './BrokerSymbolPickerModal';
+import PresetBar from './PresetBar';
 
 const AVAILABLE_TIMEFRAMES = ['1M', '5M', '15M', '30M', '1H'];
 
@@ -27,20 +28,18 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
     } catch (e) {}
     return {
       enabled: true,
-      symbols: ['BTCUSDc', 'XAUUSDc', 'GBPUSDc', 'GBPJPYc', 'USDJPYc'],
+      symbols: ['BTCUSDm', 'XAUUSDm', 'GBPUSDm', 'GBPJPYm'],
       symbol_lot_sizes: {
-        'BTCUSDc': 1.0,
-        'XAUUSDc': 0.10,
-        'GBPUSDc': 0.10,
-        'GBPJPYc': 0.10,
-        'USDJPYc': 0.10
+        'BTCUSDm': 1.00,
+        'XAUUSDm': 0.50,
+        'GBPUSDm': 1.70,
+        'GBPJPYm': 0.82
       },
       symbol_timeframes: {
-        'BTCUSDc': ['1M', '5M'],
-        'XAUUSDc': ['5M', '15M'],
-        'GBPUSDc': ['5M', '15M'],
-        'GBPJPYc': ['5M', '15M'],
-        'USDJPYc': ['5M', '15M']
+        'BTCUSDm': ['5M', '15M', '1H'],
+        'XAUUSDm': ['5M', '1H'],
+        'GBPUSDm': ['5M', '15M', '1H'],
+        'GBPJPYm': ['5M', '15M']
       }
     };
   });
@@ -257,8 +256,8 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
 
     const isGold = resolved.includes('XAU') || resolved.includes('GOLD');
     const isBtc = resolved.includes('BTC');
-    const defLot = isGold ? 0.10 : (isBtc ? 1.0 : 0.10);
-    const defTfs = isBtc ? ['1M', '5M'] : ['5M', '15M'];
+    const defLot = isGold ? 0.50 : (isBtc ? 1.0 : 0.82);
+    const defTfs = isBtc ? ['5M', '15M', '1H'] : ['5M', '15M'];
 
     const updatedSymbols = [...(strategyConfig.symbols || []), resolved];
     const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [resolved]: defLot };
@@ -553,6 +552,18 @@ export default function TayyabScalperTab({ accountInfo, symbols: propSymbols, on
             </button>
           </div>
         </div>
+
+        {/* Preset Management Bar */}
+        <PresetBar 
+          strategyKey="TAYYAB_ENHANCED" 
+          currentConfig={strategyConfig} 
+          onPresetApplied={(stratCfg) => {
+            setStrategyConfig(prev => ({ ...prev, ...stratCfg }));
+            fetchBotConfig();
+          }} 
+          accentColor="#a855f7"
+          triggerToast={triggerToast}
+        />
 
         {/* Instruments Table, Multi-Timeframe Matrix & Lot Size Steppers */}
         <div style={{

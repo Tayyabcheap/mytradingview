@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import threading
+import uuid
 from typing import Dict, Any, List, Optional, Tuple
 
 # Ensure the src directory is in sys.path so modules can import each other
@@ -1887,6 +1888,185 @@ def scalper_bot_strategy_config():
     res["HAIDER_ENHANCED"] = bot.strategy_configs.get("HAIDER_ENHANCED", {})
     res["CHAMPION_SCALPER"] = bot.strategy_configs.get("CHAMPION_SCALPER", {})
     return jsonify(res)
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# Database Preset Management Endpoints
+# ─────────────────────────────────────────────────────────────────────────
+SCREENSHOT_DEFAULT_PRESET = {
+    "id": "preset_screenshot_default",
+    "name": "Default Startup Preset (3-Engine Matrix)",
+    "description": "Default multi-engine terminal setup from verified specifications.",
+    "created_at": 1789536000,
+    "is_default": True,
+    "strategy_configs": {
+        "HAIDER_ENHANCED": {
+            "enabled": True,
+            "symbols": ["XAUUSDm", "BTCUSDm", "GBPUSDm"],
+            "symbol_lot_sizes": {"XAUUSDm": 0.10, "BTCUSDm": 0.50, "GBPUSDm": 0.50},
+            "symbol_timeframes": {"XAUUSDm": ["5M"], "BTCUSDm": ["5M"], "GBPUSDm": ["5M"]}
+        },
+        "CHAMPION_SCALPER": {
+            "enabled": True,
+            "symbols": ["BTCUSDm", "GBPJPYm"],
+            "symbol_lot_sizes": {"BTCUSDm": 0.50, "GBPJPYm": 0.50},
+            "symbol_timeframes": {"BTCUSDm": ["5M"], "GBPJPYm": ["5M"]}
+        },
+        "TAYYAB_ENHANCED": {
+            "enabled": True,
+            "symbols": ["BTCUSDm", "XAUUSDm", "GBPUSDm", "GBPJPYm"],
+            "symbol_lot_sizes": {"BTCUSDm": 1.00, "XAUUSDm": 0.50, "GBPUSDm": 1.70, "GBPJPYm": 0.82},
+            "symbol_timeframes": {
+                "BTCUSDm": ["5M", "15M", "1H"],
+                "XAUUSDm": ["5M", "1H"],
+                "GBPUSDm": ["5M", "15M", "1H"],
+                "GBPJPYm": ["5M", "15M"]
+            }
+        }
+    }
+}
+SCREENSHOT_DEFAULT_PRESET["config"] = SCREENSHOT_DEFAULT_PRESET["strategy_configs"]
+
+
+@app.route("/api/scalper/bot/presets", methods=["GET", "POST"])
+def scalper_bot_presets():
+    """Retrieve all presets or save a new manual configuration preset to the database."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+
+    custom_presets = []
+    if store:
+        saved = store.get("settings", "scalper_presets", [])
+        if isinstance(saved, list):
+            custom_presets = saved
+
+    # Ensure all custom presets have both config and strategy_configs keys
+    normalized_custom = []
+    for p in custom_presets:
+        item = dict(p)
+        cfg = item.get("strategy_configs") or item.get("config") or {}
+        item["strategy_configs"] = cfg
+        item["config"] = cfg
+        normalized_custom.append(item)
+    custom_presets = normalized_custom
+
+    if request.method == "POST":
+        data = request.get_json(force=True) or {}
+        name = str(data.get("name") or "Custom Preset").strip()
+        description = str(data.get("description") or "").strip()
+        strategy_target = data.get("strategy")  # "ALL", "TAYYAB_ENHANCED", "HAIDER_ENHANCED", "CHAMPION_SCALPER", or None
+        
+        # If specific strategy_configs passed in payload, use that; otherwise snapshot current bot state
+        new_configs = data.get("strategy_configs") or data.get("config")
+        if not new_configs or not isinstance(new_configs, dict):
+            new_configs = {
+                "HAIDER_ENHANCED": dict(bot.strategy_configs.get("HAIDER_ENHANCED", {})),
+                "CHAMPION_SCALPER": dict(bot.strategy_configs.get("CHAMPION_SCALPER", {})),
+                "TAYYAB_ENHANCED": dict(bot.strategy_configs.get("TAYYAB_ENHANCED", {}))
+            }
+        else:
+            # If payload passed only a single strategy config, merge with current bot state
+            if strategy_target and strategy_target in ("HAIDER_ENHANCED", "CHAMPION_SCALPER", "TAYYAB_ENHANCED"):
+                merged = {
+                    "HAIDER_ENHANCED": dict(bot.strategy_configs.get("HAIDER_ENHANCED", {})),
+                    "CHAMPION_SCALPER": dict(bot.strategy_configs.get("CHAMPION_SCALPER", {})),
+                    "TAYYAB_ENHANCED": dict(bot.strategy_configs.get("TAYYAB_ENHANCED", {}))
+                }
+                merged[strategy_target] = new_configs
+                new_configs = merged
+
+        preset_id = f"preset_{int(time.time())}_{uuid.uuid4().hex[:6]}"
+        new_preset = {
+            "id": preset_id,
+            "name": name,
+            "description": description,
+            "strategy": strategy_target or "ALL",
+            "created_at": int(time.time()),
+            "is_default": False,
+            "strategy_configs": new_configs,
+            "config": new_configs
+        }
+
+        custom_presets = [new_preset] + [p for p in custom_presets if p.get("id") != preset_id]
+        if store:
+            store.put("settings", "scalper_presets", custom_presets)
+
+        return jsonify({
+            "success": True,
+            "preset": new_preset,
+            "presets": [SCREENSHOT_DEFAULT_PRESET] + custom_presets
+        })
+
+    return jsonify({
+        "success": True,
+        "presets": [SCREENSHOT_DEFAULT_PRESET] + custom_presets
+    })
+
+
+@app.route("/api/scalper/bot/presets/apply", methods=["POST"])
+def scalper_bot_apply_preset():
+    """Apply a saved preset or payload snapshot to active scalper strategies and database."""
+    from scalper_bot import get_scalper_bot
+    bot = get_scalper_bot(store=store, mt5_lock=mt5_lock)
+
+    data = request.get_json(force=True) or {}
+    preset_id = data.get("id") or data.get("preset_id")
+    target_configs = data.get("strategy_configs") or data.get("config")
+    applied_name = "Custom Configuration"
+
+    if preset_id:
+        if preset_id == SCREENSHOT_DEFAULT_PRESET["id"]:
+            target_configs = SCREENSHOT_DEFAULT_PRESET["strategy_configs"]
+            applied_name = SCREENSHOT_DEFAULT_PRESET["name"]
+        else:
+            custom_presets = store.get("settings", "scalper_presets", []) if store else []
+            found = next((p for p in custom_presets if p.get("id") == preset_id), None)
+            if found:
+                target_configs = found.get("strategy_configs")
+                applied_name = found.get("name", applied_name)
+
+    if not target_configs or not isinstance(target_configs, dict):
+        return jsonify({"error": "No valid preset or strategy_configs found to apply"}), 400
+
+    # Configure each strategy present in target_configs
+    for strat_key, strat_val in target_configs.items():
+        if isinstance(strat_val, dict):
+            s_key = strat_key.upper().replace("-", "_")
+            if s_key in ("HAIDER_ENHANCED", "CHAMPION_SCALPER", "TAYYAB_ENHANCED"):
+                bot.configure_strategy(
+                    strategy_key=s_key,
+                    enabled=strat_val.get("enabled"),
+                    symbols=strat_val.get("symbols"),
+                    symbol_lot_sizes=strat_val.get("symbol_lot_sizes"),
+                    symbol_timeframes=strat_val.get("symbol_timeframes")
+                )
+
+    if store:
+        store.put("settings", "strategy_configs", bot.strategy_configs)
+        store.put("settings", "scalper_symbols", bot.symbols)
+
+    res = bot.status()
+    res["success"] = True
+    res["applied_preset"] = applied_name
+    res["strategy_configs"] = bot.strategy_configs
+    return jsonify(res)
+
+
+@app.route("/api/scalper/bot/presets/<preset_id>", methods=["DELETE"])
+def scalper_bot_delete_preset(preset_id):
+    """Delete a custom preset from the database."""
+    if preset_id == SCREENSHOT_DEFAULT_PRESET["id"]:
+        return jsonify({"error": "Cannot delete default factory preset"}), 400
+
+    custom_presets = store.get("settings", "scalper_presets", []) if store else []
+    filtered = [p for p in custom_presets if p.get("id") != preset_id]
+    if store:
+        store.put("settings", "scalper_presets", filtered)
+
+    return jsonify({
+        "success": True,
+        "presets": [SCREENSHOT_DEFAULT_PRESET] + filtered
+    })
 
 
 @app.route("/api/scalper/bot/symbols", methods=["GET", "POST"])

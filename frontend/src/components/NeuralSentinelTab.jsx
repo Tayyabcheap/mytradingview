@@ -6,6 +6,9 @@ import {
   Sliders, Plus, Trash2, Check, ShieldCheck, DollarSign, Search, Compass, X
 } from 'lucide-react';
 import BrokerSymbolPickerModal from './BrokerSymbolPickerModal';
+import PresetBar from './PresetBar';
+
+const AVAILABLE_TIMEFRAMES = ['1M', '5M', '15M', '30M', '1H'];
 
 export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, onSelectSymbolAndGoToChart }) {
   const [telemetry, setTelemetry] = useState(null);
@@ -28,9 +31,10 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
       }
     } catch (e) {}
     return {
-      enabled: false,
-      symbols: ['XAUUSDc'],
-      symbol_lot_sizes: { 'XAUUSDc': 0.10 }
+      enabled: true,
+      symbols: ['XAUUSDm', 'BTCUSDm', 'GBPUSDm'],
+      symbol_lot_sizes: { 'XAUUSDm': 0.10, 'BTCUSDm': 0.50, 'GBPUSDm': 0.50 },
+      symbol_timeframes: { 'XAUUSDm': ['5M'], 'BTCUSDm': ['5M'], 'GBPUSDm': ['5M'] }
     };
   });
   const [savingConfig, setSavingConfig] = useState(false);
@@ -114,7 +118,13 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
       }
       if (backendCfg && Array.isArray(backendCfg.symbols) && backendCfg.symbols.length > 0) {
         const isHaiderEnabled = Boolean(backendCfg.enabled ?? (bStatus?.haider_enhanced?.enabled || bStatus?.strategy_configs?.HAIDER_ENHANCED?.enabled));
-        const mergedCfg = { ...backendCfg, enabled: isHaiderEnabled };
+        const mergedCfg = { 
+          ...backendCfg, 
+          enabled: isHaiderEnabled,
+          symbol_timeframes: {
+            ...(backendCfg.symbol_timeframes || {})
+          }
+        };
         setStrategyConfig(mergedCfg);
         try { localStorage.setItem('haider_strategy_config', JSON.stringify(mergedCfg)); } catch (e) {}
       }
@@ -141,14 +151,22 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
           strategy: 'HAIDER_ENHANCED',
           enabled: newCfg.enabled,
           symbols: newCfg.symbols,
-          symbol_lot_sizes: newCfg.symbol_lot_sizes
+          symbol_lot_sizes: newCfg.symbol_lot_sizes,
+          symbol_timeframes: newCfg.symbol_timeframes
         })
       });
       if (res.ok) {
         const data = await res.json();
         const cfg = data.HAIDER_ENHANCED || data.haider_enhanced || (data.strategy_configs && data.strategy_configs.HAIDER_ENHANCED);
         if (cfg && Array.isArray(cfg.symbols) && cfg.symbols.length > 0) {
-          setStrategyConfig(cfg);
+          setStrategyConfig(prev => ({
+            ...prev,
+            ...cfg,
+            symbol_timeframes: {
+              ...(prev.symbol_timeframes || {}),
+              ...(cfg.symbol_timeframes || {})
+            }
+          }));
           try { localStorage.setItem('haider_strategy_config', JSON.stringify(cfg)); } catch (e) {}
         }
       }
@@ -178,6 +196,41 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
     saveConfig(updated);
   };
 
+  // Toggle or add multiple timeframes for a pair
+  const handleToggleTimeframe = (sym, tf) => {
+    const currentTfs = strategyConfig.symbol_timeframes?.[sym] || ['5M'];
+    let updatedTfs;
+    if (currentTfs.includes(tf)) {
+      if (currentTfs.length <= 1) {
+        triggerToast(`At least one timeframe must remain active for ${sym}`, 'warn');
+        return;
+      }
+      updatedTfs = currentTfs.filter(t => t !== tf);
+      triggerToast(`Removed ${tf} from ${sym}`, 'info');
+    } else {
+      updatedTfs = [...currentTfs, tf];
+      triggerToast(`✓ Added ${tf} to ${sym}`, 'success');
+    }
+
+    const updatedMap = {
+      ...(strategyConfig.symbol_timeframes || {}),
+      [sym]: updatedTfs
+    };
+    const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
+    saveConfig(updated);
+  };
+
+  // Quick preset timeframes for a pair
+  const handleSetPresetTimeframes = (sym, presetTfs, label) => {
+    const updatedMap = {
+      ...(strategyConfig.symbol_timeframes || {}),
+      [sym]: presetTfs
+    };
+    const updated = { ...strategyConfig, symbol_timeframes: updatedMap };
+    saveConfig(updated);
+    triggerToast(`Set ${sym} to ${label} (${presetTfs.join(', ')})`, 'success');
+  };
+
   const handleAddSymbol = (symToAdd) => {
     const rawInput = (symToAdd !== undefined ? symToAdd : newSymbolInput).trim();
     if (!rawInput) {
@@ -200,10 +253,14 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
     }
 
     const isGold = resolved.includes('XAU') || resolved.includes('GOLD');
+    const isBtc = resolved.includes('BTC');
+    const defLot = isGold ? 0.10 : (isBtc ? 0.50 : 0.50);
+    const defTfs = ['5M'];
     const updatedSymbols = [...(strategyConfig.symbols || []), resolved];
-    const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [resolved]: isGold ? 0.10 : 0.10 };
-    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
-    triggerToast(`✓ Added ${resolved} to Haider Scalper (Lot: 0.10)`, 'success');
+    const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}), [resolved]: defLot };
+    const updatedTfs = { ...(strategyConfig.symbol_timeframes || {}), [resolved]: defTfs };
+    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots, symbol_timeframes: updatedTfs });
+    triggerToast(`✓ Added ${resolved} to Haider Scalper (Lot: ${defLot.toFixed(2)})`, 'success');
     setNewSymbolInput('');
   };
 
@@ -211,7 +268,9 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
     const updatedSymbols = (strategyConfig.symbols || []).filter(s => s !== symToRemove);
     const updatedLots = { ...(strategyConfig.symbol_lot_sizes || {}) };
     delete updatedLots[symToRemove];
-    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots });
+    const updatedTfs = { ...(strategyConfig.symbol_timeframes || {}) };
+    delete updatedTfs[symToRemove];
+    saveConfig({ ...strategyConfig, symbols: updatedSymbols, symbol_lot_sizes: updatedLots, symbol_timeframes: updatedTfs });
     triggerToast(`Removed ${symToRemove} from strategy`, 'info');
   };
 
@@ -612,6 +671,18 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
           </div>
         </div>
 
+        {/* Preset Management Bar */}
+        <PresetBar 
+          strategyKey="HAIDER_ENHANCED" 
+          currentConfig={strategyConfig} 
+          onPresetApplied={(stratCfg) => {
+            setStrategyConfig(prev => ({ ...prev, ...stratCfg }));
+            fetchBotConfig();
+          }} 
+          accentColor="#00f0ff"
+          triggerToast={triggerToast}
+        />
+
         {/* Instruments Table & Lot Size Steppers */}
         <div style={{
           background: '#0d1117',
@@ -624,6 +695,7 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
               <tr style={{ background: '#161b22', color: '#8b949e', borderBottom: '1px solid #21262d', textAlign: 'left' }}>
                 <th style={{ padding: '10px 14px', fontWeight: 600 }}>Active Instrument</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600 }}>Asset Class</th>
+                <th style={{ padding: '10px 14px', fontWeight: 600 }}>Active Timeframes (Multi-Select)</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'center' }}>Lot Sizing & Steppers</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600 }}>Safety Rule</th>
                 <th style={{ padding: '10px 14px', fontWeight: 600, textAlign: 'right' }}>Actions</th>
@@ -633,6 +705,7 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
               {(strategyConfig.symbols || []).map((sym, idx) => {
                 const isGold = sym.toUpperCase().includes('XAU') || sym.toUpperCase().includes('GOLD');
                 const lot = strategyConfig.symbol_lot_sizes?.[sym] || 0.10;
+                const activeTfs = strategyConfig.symbol_timeframes?.[sym] || ['5M'];
                 return (
                   <tr key={sym} style={{
                     borderBottom: idx === strategyConfig.symbols.length - 1 ? 'none' : '1px solid rgba(48, 54, 61, 0.4)',
@@ -655,6 +728,94 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
                     </td>
                     <td style={{ padding: '10px 14px', color: isGold ? '#fbbf24' : '#8b949e', fontSize: 11.5 }}>
                       {isGold ? 'Gold Commodity' : 'Forex Major'}
+                    </td>
+                    {/* Multi-Timeframe Matrix */}
+                    <td style={{ padding: '10px 14px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+                        {/* Timeframe Pill Buttons */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 5, flexWrap: 'wrap' }}>
+                          {AVAILABLE_TIMEFRAMES.map(tf => {
+                            const isSelected = activeTfs.includes(tf);
+                            return (
+                              <button
+                                key={tf}
+                                onClick={() => handleToggleTimeframe(sym, tf)}
+                                style={{
+                                  background: isSelected ? 'rgba(0, 240, 255, 0.25)' : 'rgba(255, 255, 255, 0.04)',
+                                  border: isSelected ? '1px solid #00f0ff' : '1px solid #30363d',
+                                  color: isSelected ? '#ffffff' : '#8b949e',
+                                  fontWeight: isSelected ? 800 : 500,
+                                  fontSize: 11,
+                                  padding: '3px 8px',
+                                  borderRadius: 4,
+                                  cursor: 'pointer',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 4,
+                                  boxShadow: isSelected ? '0 0 8px rgba(0, 240, 255, 0.3)' : 'none',
+                                  transition: 'all 0.15s ease'
+                                }}
+                                title={`Toggle ${tf} for ${sym}`}
+                              >
+                                {isSelected && <Check size={10} color="#00f0ff" strokeWidth={3} />}
+                                <span>{tf}</span>
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Quick Presets per pair */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 10 }}>
+                          <span style={{ color: '#8b949e' }}>Presets:</span>
+                          <button
+                            onClick={() => handleSetPresetTimeframes(sym, ['1M', '5M'], 'Scalp')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#38bdf8',
+                              cursor: 'pointer',
+                              padding: '1px 3px',
+                              borderRadius: 2,
+                              fontSize: 10,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            1M+5M
+                          </button>
+                          <span style={{ color: '#30363d' }}>•</span>
+                          <button
+                            onClick={() => handleSetPresetTimeframes(sym, ['5M', '15M'], 'Standard')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#00f0ff',
+                              cursor: 'pointer',
+                              padding: '1px 3px',
+                              borderRadius: 2,
+                              fontSize: 10,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            5M+15M
+                          </button>
+                          <span style={{ color: '#30363d' }}>•</span>
+                          <button
+                            onClick={() => handleSetPresetTimeframes(sym, ['1M', '5M', '15M'], 'Triple Confluence')}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: '#fbbf24',
+                              cursor: 'pointer',
+                              padding: '1px 3px',
+                              borderRadius: 2,
+                              fontSize: 10,
+                              textDecoration: 'underline'
+                            }}
+                          >
+                            1M+5M+15M
+                          </button>
+                        </div>
+                      </div>
                     </td>
                     <td style={{ padding: '10px 14px', textAlign: 'center' }}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
@@ -777,7 +938,7 @@ export default function NeuralSentinelTab({ accountInfo, symbols: propSymbols, o
               })}
               {(!strategyConfig.symbols || strategyConfig.symbols.length === 0) && (
                 <tr>
-                  <td colSpan={5} style={{ padding: '16px', textAlign: 'center', color: '#8b949e' }}>
+                  <td colSpan={6} style={{ padding: '16px', textAlign: 'center', color: '#8b949e' }}>
                     No instruments selected for Haider Scalper. Add one below.
                   </td>
                 </tr>
